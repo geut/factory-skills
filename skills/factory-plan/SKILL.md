@@ -48,4 +48,29 @@ Before finishing, verify that:
 
 In a supervised run, return the planning result and let the supervisor create or transition state. In a direct invocation, use `factory-state` when available; otherwise report the missing integration without inventing state edits.
 
-Finish with the paths created or updated, the ready issue frontier, remaining blockers, and any assumptions. Do not commit or publish anything.
+Do not commit or publish anything. End with exactly one JSON object so the supervisor can validate the stage boundary:
+
+```json
+{
+  "schema": "factory.plan.v1",
+  "factory": "issue-PROJ-123",
+  "status": "planned",
+  "plan": "factories/issue-PROJ-123/plan.md",
+  "adr": null,
+  "issues": [
+    {
+      "id": "01",
+      "path": "factories/issue-PROJ-123/01-issue-foundation.md",
+      "status": "ready",
+      "blockedBy": []
+    }
+  ],
+  "readyIssues": ["01"],
+  "contextChanged": false,
+  "prdChanged": false,
+  "assumptions": [],
+  "blocker": null
+}
+```
+
+`status` is either `planned` or `blocked`. A blocked result must identify the unresolved decision or missing evidence in `blocker`; it may contain partial artifact paths but must not advertise a ready issue frontier.

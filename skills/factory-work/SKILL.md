@@ -43,7 +43,7 @@ Run focused checks while working, then the relevant broader suite once. Do not s
 
 ## Finish the work stage
 
-Mark satisfied acceptance criteria and set the issue status to `implemented`, not `done`; review owns approval. Update durable context only for facts useful beyond this factory.
+Mark satisfied acceptance criteria and set the issue status to `ready_for_review`, not `done`; review owns approval. Update durable context only for facts useful beyond this factory.
 
 In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `factory-state` when available. Never edit `FACTORY-STATE.json` directly.
 
@@ -56,7 +56,7 @@ End with exactly one JSON object so the supervisor can relay it:
   "schema": "factory.work.v1",
   "factory": "<factory-id>",
   "issue": "<issue-number>",
-  "status": "ready_for_review|blocked",
+  "status": "ready_for_review",
   "summary": "<observable result>",
   "changed": ["<path>"],
   "tests": [{"command": "<command>", "result": "passed|failed|not_run", "note": "<why>"}],
@@ -66,3 +66,5 @@ End with exactly one JSON object so the supervisor can relay it:
   "blocker": null
 }
 ```
+
+`status` is either `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification.

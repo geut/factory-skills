@@ -1,6 +1,6 @@
 ---
 name: factory-review
-description: Adversarially review one implemented factory issue in a read-only, independently modeled Pi session and return schema-valid findings plus a verdict. Use only for the review-agent stage; it never edits code or applies its own findings.
+description: Adversarially review one ready-for-review factory issue in a read-only, independently modeled Pi session and return schema-valid findings plus a verdict. Use only for the review-agent stage; it never edits code or applies its own findings.
 ---
 
 # Factory Review
@@ -19,17 +19,16 @@ The supervisor must start this session with a model different from the work mode
 
 ## Review
 
-Read [references/review-contract.md](references/review-contract.md).
+Read [references/review-contract.md](references/review-contract.md) for findings and verdict rules. Read [references/code-quality.md](references/code-quality.md) and apply its lightweight structural lens after checking behavior.
 
 Check, in order:
 
 1. The implementation satisfies the user story and every acceptance criterion.
 2. Tests would fail if the required behavior regressed and do not merely mirror the code.
 3. Failure paths, boundaries, concurrency, security, and data integrity are handled where relevant.
-4. The solution follows existing ownership and abstractions or has evidence for changing them.
-5. The code is the shortest clear path to this problem, without premature generalization.
-6. The change can be logged, diagnosed, and instrumented without redesign when that is operationally relevant.
-7. Scope contains no unrelated cleanup or hidden behavior change.
+4. The implementation passes the code-quality lens without introducing avoidable structural complexity.
+5. The change can be logged, diagnosed, and instrumented without redesign when that is operationally relevant.
+6. Scope contains no unrelated cleanup or hidden behavior change.
 
 For later rounds, verify claimed fixes and regressions first. Retain unresolved finding IDs when the underlying issue is the same. Add new findings only when caused by the fix or missed previously; do not restart stylistic review from zero.
 

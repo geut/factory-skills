@@ -79,6 +79,15 @@ Expected unit/integration seam and relevant end-to-end story. If E2E automation 
 Only evidence and constraints the work agent would otherwise have to rediscover.
 ```
 
+Issue status uses one lifecycle vocabulary:
+
+```text
+ready → working → ready_for_review → done
+          └────────────────────────→ blocked
+```
+
+`ready_for_review` means implementation and its claimed verification are complete enough for independent review. Only review approval moves an issue to `done`.
+
 Do not predesign implementation in the issue unless a constraint or agreed contract makes it necessary.
 
 ## `adr.md`

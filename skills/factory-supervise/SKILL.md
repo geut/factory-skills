@@ -29,7 +29,7 @@ planning → planned → working → reviewing → wrapping → done
 
 At every stage boundary:
 
-1. Validate the specialist's structured result.
+1. Validate the specialist result against its stage contract: `factory.plan.v1`, `factory.work.v1`, `factory.review.v1`, or the wrap-up handoff requirements.
 2. Snapshot Pi token and cost usage for that stage.
 3. Apply one atomic state transition through `factory-state`.
 4. Update the Herdr workspace's display metadata when useful.
@@ -39,7 +39,7 @@ Record only meaningful messages and blockers. Do not mirror every agent lifecycl
 
 ## Review loop
 
-Start one reviewer with `models.review`, which must differ from `models.work`, and a read-only tool allowlist. Wait for the session to settle, obtain its native Pi session reference through Herdr, and extract the final assistant message from Pi's JSONL session. Validate it as `factory.review.v1`.
+Start one reviewer with `models.review`, which must differ from `models.work`, and a read-only tool allowlist. Wait for the session to settle, obtain its native Pi session reference through Herdr, and extract the final assistant message from Pi's JSONL session. Validate it as `factory.review.v1`. Planning must likewise produce `factory.plan.v1` before the factory transitions to `planned`.
 
 If parsing fails, ask the reviewer once to repeat only the JSON object. If the response is still unavailable, allow a temporary-file handoff and remove it after relay. Do not create a persistent review directory or file.
 

@@ -15,7 +15,7 @@ Review details remain in Pi sessions in v0. The company state keeps the verdict,
 | Skill | Responsibility | Main output |
 | --- | --- | --- |
 | `factory-supervise` | Coordinates Herdr workspaces, Pi role sessions, worktrees, state, budgets, and the review loop. | A factory advanced safely through its lifecycle. |
-| `factory-plan` | Researches one ticket, resolves material uncertainty, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, and numbered issue files. |
+| `factory-plan` | Researches one ticket, resolves material uncertainty, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered issue files, and `factory.plan.v1` JSON. |
 | `factory-work` | Implements one ready issue using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and `factory.work.v1` JSON. |
 | `factory-review` | Reviews an implementation adversarially from a different, read-only model session. | `factory.review.v1` findings and verdict JSON. |
 | `factory-wrapup` | Updates durable knowledge and prepares the change for human PR submission. | PR summary, artifact list, test evidence, and progressive explanations. |
@@ -158,6 +158,8 @@ that remain blocking after the third round.
 ```
 
 The supervisor works the ready issue frontier. Each issue moves through work and review before dependent issues become eligible. Wrap-up starts only after all required issues are approved.
+
+Issue files use one status lifecycle: `ready` → `working` → `ready_for_review` → `done`, with `blocked` available when progress cannot continue.
 
 For a small, well-understood ticket, the initial prompt may authorize the complete flow instead of stopping after planning. The planning gate is recommended while the skills are being evaluated.
 

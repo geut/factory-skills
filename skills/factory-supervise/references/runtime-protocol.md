@@ -48,6 +48,17 @@ Each mutation must acquire an exclusive lock, validate the schema and expected r
 
 Herdr's `working`, `idle`, `done`, and `blocked` values describe agent lifecycle. Factory phase describes domain progress. Keep them separate.
 
+## Stage contracts
+
+The supervisor validates these exact boundaries:
+
+- Planning returns `factory.plan.v1` with status `planned` or `blocked`.
+- Work returns `factory.work.v1` with status `ready_for_review` or `blocked`.
+- Review returns `factory.review.v1` with verdict `approve`, `changes_requested`, or `blocked`.
+- Wrap-up satisfies its human handoff requirements; v0 does not give it a machine JSON envelope.
+
+Issue files use `ready`, `working`, `ready_for_review`, `done`, and `blocked`. `ready_for_review` is the only successful work-stage status; do not introduce `implemented` as an alias. Dependencies determine the executable frontier independently of status.
+
 ## Session relay
 
 Use Herdr for lifecycle, prompt delivery, and native Pi session identity. Use the Pi session JSONL for structured assistant messages and usage. Terminal reads are a diagnostic fallback, not the structured source of truth.
