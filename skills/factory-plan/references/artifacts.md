@@ -3,16 +3,16 @@
 Persist only durable guidance:
 
 ```text
-<company>/
+<code-root>/.factory/
 ├── CONTEXT.md
 ├── FACTORY.json
 ├── FACTORY-STATE.json
 ├── PRD.md                         # optional
-└── factories/<factory-id>/
+└── tickets/<ticket-id>/
     ├── plan.md
     ├── adr.md                     # optional
-    ├── 01-issue-<slug>.md
-    └── 02-issue-<slug>.md
+    ├── 01-task-<slug>.md
+    └── 02-task-<slug>.md
 ```
 
 ## `plan.md`
@@ -20,7 +20,7 @@ Persist only durable guidance:
 Use the sections that carry information; omit empty ceremony.
 
 ```markdown
-# <task title>
+# <ticket title>
 
 ## Outcome
 What changes for the user or system, and how success is observed.
@@ -37,8 +37,8 @@ Compatibility, security, performance, operational, and budget constraints.
 ## Test seams
 The highest existing seams that can prove the behavior. Note any missing seam.
 
-## Issue map
-Numbered issues, their outcomes, and blocking edges.
+## Task map
+Numbered tasks, their outcomes, and blocking edges.
 
 ## Risks and open questions
 Only unresolved items that could change the work.
@@ -47,27 +47,27 @@ Only unresolved items that could change the work.
 New information learned during implementation that changed this plan.
 ```
 
-`plan.md` is the living guide. Later agents update `Discoveries`, scope, or the issue map when evidence changes the plan; they explain the change rather than silently drifting.
+`plan.md` is the living guide. Later agents update `Discoveries`, scope, or the task map when evidence changes the plan; they explain the change rather than silently drifting.
 
-## Issue file
+## Task file
 
-Number files in dependency order. Keep one issue per file.
+Number files in dependency order. Keep one task per file.
 
 ```markdown
-# <issue title>
+# <task title>
 
-Status: ready
+Status: pending
 Type: bug | feature | performance | refactor | investigation
-Blocked by: none | <issue numbers>
+Blocked by: none | <task numbers>
 
 ## User story
 As <actor>, I want <behavior>, so that <benefit>.
 
 ## Outcome
-The independently observable result this issue delivers.
+The independently observable result this task delivers.
 
 ## Scope
-What belongs in this issue and what explicitly does not.
+What belongs in this task and what explicitly does not.
 
 ## Acceptance criteria
 - [ ] Observable, testable behavior.
@@ -76,19 +76,19 @@ What belongs in this issue and what explicitly does not.
 Expected unit/integration seam and relevant end-to-end story. If E2E automation is not feasible, state why and give a human verification path.
 
 ## Context
-Only evidence and constraints the work agent would otherwise have to rediscover.
+Only evidence and constraints the worker would otherwise have to rediscover.
 ```
 
-Issue status uses one lifecycle vocabulary:
+Task status uses one lifecycle vocabulary:
 
 ```text
-ready → working → ready_for_review → done
-          └────────────────────────→ blocked
+pending → in_progress → ready_for_review → done
+             └─────────────────────→ blocked
 ```
 
-`ready_for_review` means implementation and its claimed verification are complete enough for independent review. Only review approval moves an issue to `done`.
+`ready_for_review` means implementation and its claimed verification are complete enough for independent review. Only review approval moves a task to `done`.
 
-Do not predesign implementation in the issue unless a constraint or agreed contract makes it necessary.
+Do not predesign implementation in the task unless a constraint or agreed contract makes it necessary.
 
 ## `adr.md`
 

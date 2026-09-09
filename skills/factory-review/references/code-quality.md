@@ -1,6 +1,6 @@
 # Lightweight code-quality review
 
-This is a scoped adaptation of pstack's [code-quality review](https://github.com/cursor/plugins/blob/main/pstack/skills/interrogate/references/code-quality-review.md) for a single-reviewer, budget-limited factory.
+This is a scoped adaptation of pstack's [code-quality review](https://github.com/cursor/plugins/blob/main/pstack/skills/interrogate/references/code-quality-review.md) for a single-reviewer, budget-limited ticket workflow.
 
 Apply this lens after correctness and acceptance criteria. A different implementation is not automatically a better implementation; require a concrete maintainability benefit.
 
@@ -16,7 +16,7 @@ Ask whether one structural move could remove branches, helpers, modes, duplicate
 - **Boundaries:** make important invariants explicit at inputs, outputs, and state transitions. Flag loose types, unchecked shapes, casts, or optional fields only when they conceal a plausible failure or spread uncertainty.
 - **State and concurrency:** look for partial updates, inconsistent ownership, races, and unnecessary serialization. Ask for atomicity or parallelism only when the task and evidence require it.
 - **Diagnostics:** important failures should be observable with the project's existing logging and instrumentation seams. Do not demand an observability framework for a local change.
-- **Proportion:** the amount of code and machinery should match the issue. Flag unrelated cleanup and infrastructure for hypothetical future work.
+- **Proportion:** the amount of code and machinery should match the task. Flag unrelated cleanup and infrastructure for hypothetical future work.
 
 ## Findings bar
 

@@ -1,47 +1,49 @@
 ---
 name: factory-plan
-description: Research and plan one factory task, producing a local plan, dependency-ordered issue files, and only the durable context or ADR updates the task earns. Use before implementation when a ticket, feature, bug, refactor, or investigation needs to become executable work.
+description: Research and plan one ticket, producing a local plan, dependency-ordered task files, and only the durable context or ADR updates the ticket earns. Use before implementation when a feature, bug, refactor, performance task, or investigation needs to become executable work.
 ---
 
 # Factory Plan
 
-Turn one task into the smallest plan that another agent can execute without rediscovering the problem. Do not implement code.
+Turn one ticket into the smallest plan that another agent can execute without rediscovering the problem. Do not implement code.
 
 ## Start
 
-1. Locate the company root, code root, and factory identifier from the request or `FACTORY.json`.
-2. If the company has no factory naming convention, ask for it before creating the directory. Otherwise follow it without asking.
-3. Read `CONTEXT.md`, optional `PRD.md`, relevant code and tests, and any project instructions.
-4. Create or reuse `factories/<factory-id>/` and read [references/artifacts.md](references/artifacts.md).
+1. Derive the code root with `git rev-parse --show-toplevel`. Use `<code-root>/.factory` unless the request supplies a `--factory-root` or `FACTORY_ROOT` override.
+2. Read `.factory/FACTORY.json`. Obtain the ticket ID from the source or `ticketIdPattern`; if neither determines it, ask the user before creating artifacts.
+3. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions.
+4. Create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
 
-Do not create `reviews/`, `handoffs/`, `visuals/`, `decisions.md`, `wrapup.md`, or a per-factory state file.
+Do not create `reviews/`, `handoffs/`, `visuals/`, `decisions.md`, `wrapup.md`, or per-ticket state files.
 
 ## Resolve uncertainty economically
 
-Answer questions from the codebase and existing documents before asking the user. Ask one question at a time only when its answer changes scope, behavior, sequencing, or a hard-to-reverse decision. Offer a recommended answer and explain its consequence. Stop questioning as soon as the work is executable.
+Answer questions from the codebase and existing documents before asking the user. When a material unknown changes scope, behavior, sequencing, or a hard-to-reverse decision, request user attention and use `grill-with-docs`. Ask one focused question at a time, include a recommended answer and its consequence, and stop as soon as the ticket is executable.
+
+In a supervised child session, call `caller_ping` with the question. The supervisor sets the ticket status to `waiting_for_user`, presents the question, and resumes this same planning session with `subagent_resume` after the answer. Do not emit a final planning contract while waiting. In a direct session, ask the user and pause normally.
 
 When Matt Pocock's skills are installed, use their useful mechanics rather than copying their output locations:
 
 - `grill-with-docs`: use the focused interview and domain-modeling behavior for unresolved decisions.
 - `to-spec`: use its synthesis and test-seam thinking, but write `plan.md`; do not publish to a tracker.
-- `to-tickets`: use tracer-bullet slicing and explicit blocking edges, but write numbered files in this factory directory; do not publish externally or use `.scratch/`.
+- `to-tickets`: use tracer-bullet slicing and explicit blocking edges, but write numbered task files in the ticket directory; do not publish externally or use `.scratch/`.
 
-Factory paths and the user's no-publish requirement override upstream defaults.
+Factory paths and the user's no-publish requirement override upstream defaults. If `grill-with-docs` is unavailable, use the same focused one-question behavior and report the missing optional skill; do not guess.
 
 ## Build the plan
 
 Ground claims in inspected evidence. Capture the problem, desired behavior, constraints, non-goals, test seams, risks, and open questions. Prefer existing abstractions and seams. Propose a new abstraction only when it removes real duplication or hides complexity required by this task.
 
-Split the plan into the fewest independently verifiable issues. Prefer vertical behavior slices. Use expand-migrate-contract only when a wide refactor cannot remain green as vertical slices. Each issue must fit one fresh work session and declare its dependencies.
+Split the plan into the fewest independently verifiable tasks. Prefer vertical behavior slices. Use expand-migrate-contract only when a wide refactor cannot remain green as vertical slices. Each task must fit one fresh work session and declare its dependencies.
 
-Record a decision in `adr.md` only when it is hard to reverse, materially constrains future work, and has real alternatives. Update company `CONTEXT.md` only with durable vocabulary or facts useful beyond this factory. Do not create or update `PRD.md` for task-local knowledge.
+Record a decision in `adr.md` only when it is hard to reverse, materially constrains future work, and has real alternatives. Update `.factory/CONTEXT.md` only with durable vocabulary or facts useful beyond this ticket. Do not create or update `PRD.md` for ticket-local knowledge.
 
 ## Validate and hand off
 
 Before finishing, verify that:
 
-- Every success condition maps to at least one issue acceptance criterion.
-- Every issue has a user story or observable outcome, explicit scope, and a verification approach.
+- Every success condition maps to at least one task acceptance criterion.
+- Every task has a user story or observable outcome, explicit scope, and a verification approach.
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.
@@ -52,20 +54,20 @@ Do not commit or publish anything. End with exactly one JSON object so the super
 
 ```json
 {
-  "schema": "factory.plan.v1",
-  "factory": "issue-PROJ-123",
+  "schema": "factory.plan.v2",
+  "ticket": "PROJ-123",
   "status": "planned",
-  "plan": "factories/issue-PROJ-123/plan.md",
+  "plan": ".factory/tickets/PROJ-123/plan.md",
   "adr": null,
-  "issues": [
+  "tasks": [
     {
       "id": "01",
-      "path": "factories/issue-PROJ-123/01-issue-foundation.md",
-      "status": "ready",
+      "path": ".factory/tickets/PROJ-123/01-task-foundation.md",
+      "status": "pending",
       "blockedBy": []
     }
   ],
-  "readyIssues": ["01"],
+  "readyTasks": ["01"],
   "contextChanged": false,
   "prdChanged": false,
   "assumptions": [],
@@ -73,4 +75,4 @@ Do not commit or publish anything. End with exactly one JSON object so the super
 }
 ```
 
-`status` is either `planned` or `blocked`. A blocked result must identify the unresolved decision or missing evidence in `blocker`; it may contain partial artifact paths but must not advertise a ready issue frontier.
+`status` is either `planned` or `blocked`. A blocked result must identify the unresolved decision or missing evidence in `blocker`; it may contain partial artifact paths but must not advertise a ready task frontier.

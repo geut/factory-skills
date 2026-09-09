@@ -1,4 +1,4 @@
-# Issue playbooks
+# Task playbooks
 
 Use one playbook. These are decision guides, not mandatory ceremony.
 
@@ -40,7 +40,7 @@ Do not claim improvement from intuition or incomparable measurements.
 4. Remove the superseded path only after callers migrate.
 5. Confirm externally observable behavior is unchanged.
 
-If behavior must change, separate that change into a feature or bug issue.
+If behavior must change, separate that change into a feature or bug task.
 
 ## Investigation
 
@@ -48,4 +48,4 @@ If behavior must change, separate that change into a feature or bug issue.
 2. Gather the minimum evidence that can distinguish the plausible answers.
 3. Prefer a disposable experiment over production scaffolding.
 4. Record the conclusion, confidence, and remaining uncertainty.
-5. Update the plan or create implementation issues; do not smuggle prototype code into production.
+5. Update the plan or create implementation tasks; do not smuggle prototype code into production.

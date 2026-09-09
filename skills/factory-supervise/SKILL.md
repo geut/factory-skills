@@ -1,62 +1,81 @@
 ---
 name: factory-supervise
-description: Run or resume one or more software factories inside a Herdr-managed Pi sandbox, coordinating role sessions, isolated worktrees, atomic factory state, usage accounting, and at most three work-review rounds. Use for factory orchestration rather than implementation or review itself.
+description: Run or resume one or more tickets inside a Herdr-managed Pi sandbox, coordinating specialist subagents, isolated worktrees, atomic factory state, usage accounting, and at most three work-review rounds. Use for factory orchestration rather than planning, implementation, or review itself.
 ---
 
 # Factory Supervise
 
-Coordinate factory stages without doing their specialist work. Herdr owns live sessions; factory files hold durable guidance; `FACTORY-STATE.json` holds authoritative operational state.
+Coordinate ticket stages without doing specialist work. Herdr owns live sessions, `.factory/` holds durable guidance, and `.factory/FACTORY-STATE.json` holds operational state.
 
-Read [references/runtime-protocol.md](references/runtime-protocol.md) before starting or resuming a managed factory.
+Read [references/runtime-protocol.md](references/runtime-protocol.md) before starting or resuming supervision.
 
 ## Establish the runtime
 
-Verify that the session is inside Herdr, the Pi integration is current, and `herdr`, `pi`, and `factory-state` are available. Read `FACTORY.json` and validate the requested factory identifier against its naming convention. If company configuration is missing, ask only for the company root, code root, naming convention, model assignments, and concurrency limit needed to initialize it; do not invent model identifiers or budgets.
+Derive the code root with `git rev-parse --show-toplevel` and default the factory root to `<code-root>/.factory`. Use an explicit `--factory-root` or `FACTORY_ROOT` override only when supplied. Read `<factory-root>/FACTORY.json`; obtain the ticket ID from its source or `ticketIdPattern`, asking the user when neither determines it.
 
-Use one Herdr workspace and one isolated code worktree per active factory. Never run two factories in the same checkout. Respect `maxFactories` and `maxAgents`; queue excess work instead of silently exceeding the budget.
+Verify that:
 
-Create role sessions only when their stage is active. Planning, review, arbiter, and wrap-up agents do not need to consume tokens while work is running.
+- Pi runs in a persistent Herdr pane.
+- Herdr is at least 0.8.2.
+- `subagent`, `subagent_resume`, `subagent_interrupt`, and `subagents_list` are provided by `pi-herdr-subagents`.
+- The extension's bundled Herdr plugin is linked and enabled.
+- `factory-state` is available before relying on supervised state changes.
 
-## Coordinate stages
+If the subagent tools are absent, report the setup problem. Do not fall back to typing commands into panes, scraping terminal output, or polling session files for completion.
 
-Use explicit factory transitions; do not infer domain completion merely because a Pi agent is idle.
+Use one Herdr workspace and one isolated worktree per active ticket. The extension places child panes beside their supervisor, so each ticket has its own supervisor workspace. Never run two tickets in the same checkout. Respect `maxTickets` and `maxAgents`; queue excess work.
+
+## Start specialist subagents
+
+Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTORY.json` rather than maintaining model-specific agent definitions:
+
+- Plan: `model=models.plan`, `skills=factory-plan`, ticket worktree as `cwd`, and only research-capable tools.
+- Work: `model=models.work`, `skills=factory-work`, ticket worktree as `cwd`, and the tools needed to edit and verify code.
+- Review: `model=models.review`, `skills=factory-review`, ticket worktree as `cwd`, and read-only tools. Supply the diff and test evidence in the task when the reviewer cannot obtain them with its allowlist.
+- Wrap-up: `model=models.wrapup`, `skills=factory-wrapup`, ticket worktree as `cwd`, and only the tools needed for documentation and evidence.
+
+The reviewer model must differ from the work model. Create a subagent only when its stage is active. The spawn call returns immediately; continue independent work or end the turn and wait for the extension's steer message. Never fabricate a result or poll for one.
+
+Use `subagent_resume` to continue the same planner after `caller_ping`, the same worker after findings, and the same reviewer during later rounds. Use `subagent_interrupt` only to stop work that is no longer valid or explicitly exceeds a limit.
+
+## Coordinate ticket stages
 
 ```text
-planning → planned → working → reviewing → wrapping → done
-                         ↑          |
-                         └── fixing ┘    maximum three review rounds
+plan → work → review → wrapup → done
+          ↑       |
+          └───────┘    changes requested; maximum three review rounds
 ```
 
-At every stage boundary:
+At each stage boundary:
 
-1. Validate the specialist result against its stage contract: `factory.plan.v1`, `factory.work.v1`, `factory.review.v1`, or the wrap-up handoff requirements.
-2. Snapshot Pi token and cost usage for that stage.
-3. Apply one atomic state transition through `factory-state`.
-4. Update the Herdr workspace's display metadata when useful.
-5. Start or prompt the next role with only the context it needs.
+1. Validate `factory.plan.v2`, `factory.work.v2`, `factory.review.v2`, or the wrap-up handoff requirements.
+2. Record numeric Pi token and cost usage for the completed or paused session through `factory-state usage record`.
+3. Apply one atomic ticket transition through `factory-state`.
+4. Record only meaningful progress or blockers.
+5. Start or resume the next role with only the context it needs.
 
-Record only meaningful messages and blockers. Do not mirror every agent lifecycle event into factory state.
+Stage is `plan`, `work`, `review`, `wrapup`, or `done`. Status is independently `active`, `waiting_for_user`, `blocked`, `failed`, or `complete`. Herdr lifecycle status is not ticket status, and an idle child is not proof that a stage succeeded.
+
+When a planner calls `caller_ping`, set the ticket to `waiting_for_user`, present its question, and stop. After the user responds, return the ticket to `active` and resume the same planner session with the answer.
 
 ## Review loop
 
-Start one reviewer with `models.review`, which must differ from `models.work`, and a read-only tool allowlist. Wait for the session to settle, obtain its native Pi session reference through Herdr, and extract the final assistant message from Pi's JSONL session. Validate it as `factory.review.v1`. Planning must likewise produce `factory.plan.v1` before the factory transitions to `planned`.
+On review completion, validate the final assistant message from the extension's steer as `factory.review.v2`. If parsing fails, resume the reviewer once and request only the JSON object. A temporary file is an allowed fallback only when the steer cannot carry the result; remove it after relay and do not create a review archive.
 
-If parsing fails, ask the reviewer once to repeat only the JSON object. If the response is still unavailable, allow a temporary-file handoff and remove it after relay. Do not create a persistent review directory or file.
-
-Send blocking findings to the work session. Validate its `factory.work.v1` response, including a disposition and evidence for each relayed finding, then send the response and current diff back to the same reviewer session. Stop when:
+Relay blocking findings to the existing work session. Validate its `factory.work.v2` response, including a disposition and evidence for each finding, then resume the same reviewer with the response, current diff, and updated test evidence. Stop when:
 
 - The reviewer approves with no findings.
 - Three review rounds have completed.
-- A stage reports a genuine blocker requiring the user.
+- A role reports a genuine blocker requiring the user.
 
-After round three, unresolved blocking findings produce `awaiting_human`; never begin a fourth round without explicit user authorization.
+After round three, unresolved blocking findings set the ticket to `waiting_for_user`. Never begin a fourth round without explicit authorization.
 
-The supervisor is the default arbiter: it enforces schemas, identity, ordering, limits, and evidence relay. It does not overrule technical judgment. If work and review explicitly disagree, optionally make one bounded call using `models.arbiter` with only the disputed findings and evidence. Otherwise escalate to the user rather than paying for a third full review.
+The supervisor is the default arbiter: it enforces schemas, identity, ordering, limits, and evidence relay without overruling technical judgment. If work and review explicitly disagree, it may make one bounded call using `models.arbiter` with only the disputed findings and evidence. Otherwise ask the user rather than paying for another full review.
 
-After an issue is approved, set its status to `done`, reset the per-issue review counter, and move to the next issue whose dependencies are all done. Start wrap-up only when every required issue is done.
+After approval, set the task to `done`, reset its review counter, and choose the next `pending` task whose dependencies are all `done`. Start wrap-up only after every required task is `done` and required checks pass.
 
 ## Finish
 
-Start wrap-up only after all issue reviews approve and required checks succeed. Never commit, push, open a pull request, publish tickets, or delete a worktree unless the user explicitly requests it.
+Validate the wrap-up handoff, record its usage, and set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
 
-When multiple factories are active, keep their session references, state, worktrees, and prompts isolated. A blocker in one factory must not stop independent factories.
+Keep concurrent tickets' workspaces, worktrees, prompts, sessions, and state entries isolated. One ticket's blocker must not stop another ticket.

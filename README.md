@@ -2,56 +2,86 @@
 
 A small set of [Pi](https://github.com/earendil-works/pi) skills for running a budget-aware software factory inside the [sbx-shell-pi factory image](https://github.com/geut/sbx-shell-pi).
 
-The factory turns one ticket into a researched plan, dependency-ordered issues, tested code, a bounded adversarial review, and a human-ready pull-request handoff. It favors the shortest clear solution that satisfies the task: no speculative infrastructure, no unlimited review loops, and no automatic publishing.
+The factory takes one ticket through research, a small dependency-ordered task plan, tested implementation, bounded adversarial review, and a human-ready pull-request handoff. It favors the shortest clear solution that satisfies the ticket: no speculative infrastructure, unlimited review loops, or automatic publishing.
 
 ## Status
 
-This repository contains the v0 skills and their contracts. The fully supervised flow also expects a `factory-state` executable for atomic `FACTORY-STATE.json` updates. That executable is specified by `factory-supervise` but is not implemented here yet. Until it exists, use the manual workflow below or invoke individual skills directly.
+This repository contains the v0 skills and their contracts. The supervised flow expects:
 
-Review details remain in Pi sessions in v0. The company state keeps the verdict, round count, usage, and unresolved-blocker status; long-term review archives are intentionally deferred.
+- [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents) for asynchronous Pi role sessions inside Herdr.
+- A `factory-state` executable for atomic `FACTORY-STATE.json` updates and usage collection. Its contract is specified by `factory-supervise`, but the executable is not implemented here yet.
+
+Until `factory-state` exists, use the manual workflow below or invoke individual skills directly. Detailed reviews remain in Pi sessions in v0; state keeps only verdicts, round counts, token and cost usage, and unresolved blockers.
+
+## Vocabulary
+
+Use these terms consistently in prompts, files, schemas, and user-facing messages:
+
+| Term | Meaning |
+| --- | --- |
+| factory | The overall system and skill set. It is not a work item. |
+| ticket | The external unit of work, from GitHub, a local document, JSON, or plain text. |
+| ticket type | Bug, feature, refactor, performance task, or investigation. |
+| task | One dependency-ordered implementation slice produced during planning. |
+| supervisor | The Pi session that coordinates specialist agents and state. |
+| stage | Where a ticket is in the workflow: `plan`, `work`, `review`, `wrapup`, or `done`. |
+| status | The ticket's current condition: `active`, `waiting_for_user`, `blocked`, `failed`, or `complete`. |
+| worktree | The isolated Git checkout used to change code for one ticket. |
+| factory root | The repo-local, untracked `.factory/` directory. |
+| ticket directory | `.factory/tickets/<ticket-id>/`, containing the ticket's durable planning artifacts. |
+
+Prefer “Choose a ticket to work on,” “Working on task 01,” and “Ticket PROJ-123 is waiting for user input.” Avoid referring to a ticket or its directory as a factory.
+
+### Simple scenario
+
+Ticket `SHOP-42` asks the product to remember a user's catalog filter.
+
+1. `factory-plan` researches `SHOP-42`, writes `.factory/tickets/SHOP-42/plan.md`, and creates `01-task-store-filter.md` and `02-task-restore-filter.md`.
+2. `factory-work` implements task 01 in the ticket worktree and marks it `ready_for_review`.
+3. `factory-review`, running on a different model, either approves task 01 or returns focused findings. Work and review repeat for at most three rounds.
+4. The supervisor advances to task 02 only after task 01 is `done`.
+5. `factory-wrapup` summarizes the approved change, updates durable knowledge when warranted, and prints the commands the human can use to commit and merge the worktree.
 
 ## Skills
 
 | Skill | Responsibility | Main output |
 | --- | --- | --- |
-| `factory-supervise` | Coordinates Herdr workspaces, Pi role sessions, worktrees, state, budgets, and the review loop. | A factory advanced safely through its lifecycle. |
-| `factory-plan` | Researches one ticket, resolves material uncertainty, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered issue files, and `factory.plan.v1` JSON. |
-| `factory-work` | Implements one ready issue using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and `factory.work.v1` JSON. |
-| `factory-review` | Reviews an implementation adversarially from a different, read-only model session. | `factory.review.v1` findings and verdict JSON. |
-| `factory-wrapup` | Updates durable knowledge and prepares the change for human PR submission. | PR summary, artifact list, test evidence, and progressive explanations. |
+| `factory-supervise` | Coordinates tickets, Herdr subagents, worktrees, atomic state, budgets, and the review loop. | A ticket advanced safely through its stages. |
+| `factory-plan` | Researches one ticket, requests clarification when necessary, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered task files, and `factory.plan.v2` JSON. |
+| `factory-work` | Implements one ready task using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and `factory.work.v2` JSON. |
+| `factory-review` | Reviews one task adversarially from a different, read-only model session. | `factory.review.v2` findings and verdict JSON. |
+| `factory-wrapup` | Updates durable knowledge and prepares the change for human submission. | PR summary, artifact and test evidence, progressive explanations, and merge commands. |
 | `factory-reflect` | Finds reusable lessons and evaluates proposed skill or tooling improvements. | Human-approved learning and improvement proposals. |
 
-The work playbooks cover bugs, features, performance changes, refactors, and investigations. Reflection is not part of every ticket; use it after meaningful corrections, expensive failures, or repeated patterns.
+The work playbooks cover bugs, features, performance changes, refactors, and investigations. Reflection is not required for every ticket; use it after meaningful corrections, expensive failures, or repeated patterns.
 
 ## Requirements
 
-The intended runtime is one persistent sandbox per company:
+- The `ghcr.io/geut/sbx-shell-pi:node-24-factory` image, with Pi and Herdr.
+- [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents), with its Herdr plugin linked and enabled. It requires Herdr 0.8.2 or newer and Node.js 22 or newer.
+- A Git repository for the product code. Concurrent tickets use separate Herdr workspaces and worktrees.
+- A work model and a different review model.
+- The `factory-state` CLI for the fully supervised workflow.
 
-- The `ghcr.io/geut/sbx-shell-pi:node-24-factory` image, with Pi, Herdr, and the Herdr Pi integration.
-- A Git repository for the product code. Concurrent factories use separate worktrees.
-- A durable company directory, which may be inside or beside the code repository and does not need to be Git-tracked.
-- Two configured Pi models at minimum: a work model and a different review model.
-- The `factory-state` CLI for the supervised workflow.
-
-Matt Pocock's [`grill-with-docs`, `to-spec`, and `to-tickets`](https://github.com/mattpocock/skills) are optional but recommended. `factory-plan` reuses their interview, synthesis, and slicing mechanics while overriding their destinations: factory documents stay local and nothing is published to an issue tracker.
+Matt Pocock's [`grill-with-docs`, `to-spec`, and `to-tickets`](https://github.com/mattpocock/skills) are optional but recommended. `factory-plan` reuses their interview, synthesis, and slicing mechanics while overriding their destinations: artifacts stay local and nothing is published to an issue tracker.
 
 The architecture and review behavior are simplified, budget-conscious adaptations of ideas from [pstack](https://github.com/cursor/plugins/tree/main/pstack).
 
 ## Install the skills
 
-Pi discovers recursive `SKILL.md` files from package `skills/` directories. Once this repository is published, install it globally inside the factory sandbox:
+Pi discovers recursive `SKILL.md` files from package `skills/` directories. Once this repository is published, install it inside the sandbox:
 
 ```sh
 pi install git:github.com/geut/factory-skills
 ```
 
-Pin a tag or commit for reproducible factory images:
+Pin a tag or commit in reproducible factory images:
 
 ```sh
 pi install git:github.com/geut/factory-skills@<tag-or-commit>
 ```
 
-For local development, link the individual skill directories into Pi's global skill directory:
+For local development, link the skill directories into Pi's global skill directory:
 
 ```sh
 mkdir -p ~/.pi/agent/skills
@@ -60,39 +90,46 @@ for skill_dir in /path/to/factory-skills/skills/*; do
 done
 ```
 
-Start a new Pi session after installing or changing skills. Invoke a skill explicitly with `/skill:<name>`; Pi may also select a skill from its description when appropriate.
+Start a new Pi session after installing or changing skills. Invoke a skill explicitly with `/skill:<name>`; Pi may also select a skill from its description.
 
-## Company layout
+## Factory root
 
-The durable factory documents are deliberately small:
+The default factory root is `.factory/` inside the code repository. Keep it untracked. It contains only durable guidance and operational state:
 
 ```text
-<company>/
-├── CONTEXT.md
-├── FACTORY.json
-├── FACTORY-STATE.json
-├── PRD.md                         # optional
-├── factories/
-│   └── issue-PROJ-123/
-│       ├── plan.md
-│       ├── adr.md                 # optional
-│       ├── 01-issue-foundation.md
-│       └── 02-issue-behavior.md
-└── learnings/                     # created only for reusable findings
+<code-repository>/
+├── .factory/
+│   ├── CONTEXT.md
+│   ├── FACTORY.json
+│   ├── FACTORY-STATE.json
+│   ├── PRD.md                         # optional
+│   ├── tickets/
+│   │   └── PROJ-123/
+│   │       ├── plan.md
+│   │       ├── adr.md                 # optional
+│   │       ├── 01-task-foundation.md
+│   │       └── 02-task-behavior.md
+│   └── learnings/                     # created only for reusable findings
+└── <product code and tests>
 ```
 
-Code and tests live in the code repository or its factory worktree. Agent conversations, detailed reviews, handoffs, and wrap-up visuals remain in Herdr/Pi sessions unless explicitly promoted to durable project documentation.
+Agent conversations, detailed reviews, and temporary visuals remain in Herdr/Pi sessions unless explicitly promoted to durable project documentation.
 
-## First-time configuration
+## First-time setup
 
-`FACTORY.json` contains machine-readable company defaults. Keep company and domain prose in `CONTEXT.md`.
+From the code repository root:
+
+```sh
+mkdir -p .factory/tickets
+printf '/.factory/\n' >> .git/info/exclude
+```
+
+Create `.factory/FACTORY.json`:
 
 ```json
 {
-  "schemaVersion": 1,
-  "companyRoot": "/workspace/acme/factory",
-  "codeRoot": "/workspace/acme/code",
-  "factoryNamePattern": "issue-<ticket-id>",
+  "schemaVersion": 2,
+  "ticketIdPattern": "PROJ-<number>",
   "models": {
     "plan": "provider/planning-model",
     "work": "provider/work-model",
@@ -101,26 +138,38 @@ Code and tests live in the code repository or its factory worktree. Agent conver
     "arbiter": null
   },
   "limits": {
-    "maxFactories": 2,
+    "maxTickets": 2,
     "maxAgents": 4,
     "reviewRounds": 3
   }
 }
 ```
 
-Replace the example paths and model identifiers. `models.review` must differ from `models.work`. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
+Create `.factory/FACTORY-STATE.json`:
 
-The first supervised invocation can create missing company configuration, but it must ask for the roots, ticket naming convention, models, and concurrency limit rather than inventing them.
+```json
+{
+  "schemaVersion": 2,
+  "revision": 0,
+  "tickets": {}
+}
+```
 
-## Kick off a new ticket
+The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
 
-### 1. Enter the company sandbox
+Set `ticketIdPattern` to the project's existing convention. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review` must differ from `models.work`. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
+
+Before supervision, run Pi inside Herdr and confirm that `subagents_list` is available. The supervisor uses the extension's `subagent`, `subagent_resume`, and `subagent_interrupt` tools directly; it does not create panes by typing shell commands or poll terminals for completion.
+
+## Kick off a ticket
+
+### 1. Enter the sandbox
 
 ```sh
 sbx run -t ghcr.io/geut/sbx-shell-pi:node-24-factory shell <project-directory>
 ```
 
-The factory image opens Herdr. Start Pi in the initial pane if it is not already running.
+The image opens Herdr. Start Pi in the initial pane if it is not already running.
 
 ### 2. Start with a planning gate
 
@@ -129,90 +178,85 @@ In the supervisor Pi session:
 ```text
 /skill:factory-supervise
 
-Start a new factory for ticket PROJ-123.
+Start ticket PROJ-123.
 Ticket: <ticket URL or full ticket text>
-Company root: /workspace/acme/factory
-Code root: /workspace/acme/code
 
-Run the planning stage, then stop so I can review plan.md and the issue breakdown.
+Run the plan stage, then stop so I can review plan.md and the task breakdown.
 ```
 
-The supervisor should create or reuse the factory workspace, launch the planning role, and produce:
+The supervisor creates or reuses the ticket workspace, starts a planning subagent, and produces:
 
 ```text
-factories/issue-PROJ-123/plan.md
-factories/issue-PROJ-123/01-issue-<name>.md
-factories/issue-PROJ-123/02-issue-<name>.md
+.factory/tickets/PROJ-123/plan.md
+.factory/tickets/PROJ-123/01-task-<name>.md
+.factory/tickets/PROJ-123/02-task-<name>.md
 ```
 
-`adr.md` is created only when the ticket produces a consequential, hard-to-reverse architectural decision.
+`adr.md` is created only for a consequential, hard-to-reverse architectural decision. If material ticket information is missing, the planner asks one focused question using `grill-with-docs`; the supervisor requests user attention and resumes the same planning session after the answer.
 
 ### 3. Review the plan and continue
 
-After checking the scope, user stories, acceptance criteria, and dependency edges, tell the same supervisor session:
+After checking the scope, user stories, acceptance criteria, and dependency edges, tell the same supervisor:
 
 ```text
-Continue factory issue-PROJ-123 through work, review, and wrap-up.
+Continue ticket PROJ-123 through work, review, and wrap-up.
 Pause for unresolved product decisions, genuine blockers, or review findings
 that remain blocking after the third round.
 ```
 
-The supervisor works the ready issue frontier. Each issue moves through work and review before dependent issues become eligible. Wrap-up starts only after all required issues are approved.
+The supervisor works the ready task frontier. A task moves through `pending` → `in_progress` → `ready_for_review` → `done`; `blocked` is available when progress cannot continue. Wrap-up starts only after every required task is approved.
 
-Issue files use one status lifecycle: `ready` → `working` → `ready_for_review` → `done`, with `blocked` available when progress cannot continue.
-
-For a small, well-understood ticket, the initial prompt may authorize the complete flow instead of stopping after planning. The planning gate is recommended while the skills are being evaluated.
+For a small, well-understood ticket, the initial prompt may authorize the complete flow. The planning gate is recommended while the skills are being evaluated.
 
 ## Manual v0 workflow
 
 Until `factory-state` is available, run the roles explicitly in separate Herdr tabs:
 
-1. Planning tab:
+1. Plan:
 
    ```text
    /skill:factory-plan Plan ticket PROJ-123 from <URL or ticket text>.
-   Company root: <path>. Code root: <path>.
    ```
 
-2. For each dependency-ready issue, work tab:
+2. For each dependency-ready task, work:
 
    ```text
-   /skill:factory-work Implement issue 01 from factory issue-PROJ-123.
+   /skill:factory-work Implement task 01 for ticket PROJ-123.
    ```
 
-3. Start a fresh Pi reviewer tab with a different model and read-only tools, then prompt:
+3. Start a fresh Pi reviewer tab with a different model and read-only tools:
 
    ```text
-   /skill:factory-review Review issue 01 from factory issue-PROJ-123.
-   Use the issue, current diff, surrounding code, and supplied test evidence.
+   /skill:factory-review Review task 01 for ticket PROJ-123.
+   Use the task, current diff, surrounding code, and supplied test evidence.
    ```
 
-4. Relay blocking findings to the work tab. Return the work response and updated diff to the same reviewer tab. Stop after approval or three review rounds.
-5. Repeat for the next ready issue.
-6. After all issues approve, run:
+4. Relay blocking findings to the work tab. Return the work response and updated diff to the same reviewer tab. Stop after approval or three rounds.
+5. Repeat for the next ready task.
+6. After every task is approved, run:
 
    ```text
-   /skill:factory-wrapup Prepare factory issue-PROJ-123 for human PR submission.
+   /skill:factory-wrapup Prepare ticket PROJ-123 for human PR submission.
    ```
 
-7. Run `/skill:factory-reflect` only if the factory produced a reusable lesson worth evaluating.
+7. Run `/skill:factory-reflect` only when the ticket produced a reusable lesson worth evaluating.
 
-The reviewer returns JSON only and never edits code. The human remains responsible for committing, pushing, and opening the pull request.
+The reviewer returns JSON only and never edits code. The human remains responsible for committing, merging, pushing, and opening the pull request.
 
 ## Review outcomes
 
-- `approve`: no findings remain; the issue may become `done`.
+- `approve`: no findings remain; the task may become `done`.
 - `changes_requested`: blocking findings return to the existing work session.
-- `blocked`: the review lacks required evidence, model independence, or read-only isolation.
-- `awaiting_human`: blocking findings remain after three rounds or require a product decision.
+- `blocked`: review lacks required evidence, model independence, or read-only isolation.
+- `waiting_for_user`: blocking findings remain after three rounds or require a product decision.
 
 The supervisor enforces schemas and loop limits but does not overrule technical judgment. An optional arbiter model may receive one bounded dispute-only prompt; it does not perform another full review.
 
 ## What the factory does not do
 
-- It does not commit, push, publish tickets, or open pull requests.
+- It does not commit, merge, push, publish tickets, or open pull requests.
 - It does not create an ADR for every ticket.
-- It does not persist detailed review transcripts in the company directory.
+- It does not persist detailed review transcripts in `.factory/`.
 - It does not run more than three unattended review rounds.
 - It does not treat an idle agent as proof that a stage succeeded.
 - It does not automatically rewrite or install improved skills.

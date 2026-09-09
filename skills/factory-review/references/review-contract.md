@@ -4,9 +4,9 @@ Return one object:
 
 ```json
 {
-  "schema": "factory.review.v1",
-  "factory": "issue-PROJ-123",
-  "issue": "01",
+  "schema": "factory.review.v2",
+  "ticket": "PROJ-123",
+  "task": "01",
   "round": 1,
   "reviewModel": "provider/model",
   "verdict": "approve|changes_requested|blocked",
@@ -43,7 +43,7 @@ Severity and blocking are related but separate. A minor finding is normally non-
 
 The implementation is ready only when it:
 
-- Solves the actual issue rather than a nearby problem.
+- Solves the actual task and ticket outcome rather than a nearby problem.
 - Preserves relevant existing behavior.
 - Has proportionate behavioral evidence.
 - Places complexity behind the smallest useful interface.

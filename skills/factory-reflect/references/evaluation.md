@@ -11,7 +11,7 @@ Maintain small fixture repositories or reproducible cases covering:
 - One refactor where behavior must not change.
 - One performance claim requiring a baseline.
 - One review containing both a real blocker and a tempting false positive.
-- One multi-factory state-concurrency case.
+- One multi-ticket state-concurrency case.
 
 Run only scenarios touched by a candidate, plus one nearby regression case. Use the same model and comparable starting context for baseline and candidate. Repeat only when nondeterminism makes the result ambiguous.
 
@@ -36,4 +36,4 @@ Then apply a short human rubric:
 
 Promote a candidate only when it improves its target failure without a material regression in correctness, scope, or budget. A cheaper result that is wrong does not pass. A more expensive result needs a demonstrated quality gain worth the cost.
 
-Store durable evaluation results with the skills repository's evaluation harness, not in each factory directory. Company `learnings/` may hold a concise evidence link and proposal while it awaits evaluation or approval.
+Store durable evaluation results with the skills repository's evaluation harness, not in each ticket directory. `.factory/learnings/` may hold a concise evidence link and proposal while it awaits evaluation or approval.

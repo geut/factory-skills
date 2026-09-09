@@ -1,6 +1,6 @@
 ---
 name: factory-review
-description: Adversarially review one ready-for-review factory issue in a read-only, independently modeled Pi session and return schema-valid findings plus a verdict. Use only for the review-agent stage; it never edits code or applies its own findings.
+description: Adversarially review one ready-for-review ticket task in a read-only Pi subagent using a model different from the worker, then return schema-valid findings and a verdict. Use only for the review stage; it never edits code or applies its own findings.
 ---
 
 # Factory Review
@@ -10,7 +10,7 @@ Determine whether the implementation solves the stated problem with clear, direc
 ## Boundaries
 
 - Remain read-only. Never edit code, tests, plans, or state.
-- Review the issue's intent, acceptance criteria, diff, relevant surrounding code, and supplied test results.
+- Review the ticket's intent, the task's acceptance criteria, the diff, relevant surrounding code, and supplied test results.
 - Do not invent requirements, demand speculative abstractions, or turn preferences into blockers.
 - Do not accept a passing test suite as proof that the right behavior was implemented.
 - Do not review your own prior implementation session.
@@ -30,8 +30,8 @@ Check, in order:
 5. The change can be logged, diagnosed, and instrumented without redesign when that is operationally relevant.
 6. Scope contains no unrelated cleanup or hidden behavior change.
 
-For later rounds, verify claimed fixes and regressions first. Retain unresolved finding IDs when the underlying issue is the same. Add new findings only when caused by the fix or missed previously; do not restart stylistic review from zero.
+For later rounds, verify claimed fixes and regressions first. Retain unresolved finding IDs when the underlying problem is the same. Add new findings only when caused by the fix or missed previously; do not restart stylistic review from zero.
 
 ## Output
 
-Return exactly one JSON object matching `factory.review.v1`, with no Markdown fence or surrounding prose. An empty findings list is required for approval. Never write a review artifact to the factory directory.
+Return exactly one JSON object matching `factory.review.v2`, with no Markdown fence or surrounding prose. An empty findings list is required for approval. Never write a review artifact to the ticket directory.
