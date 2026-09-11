@@ -25,6 +25,17 @@ If the subagent tools are absent, report the setup problem. Do not fall back to 
 
 Use one Herdr workspace and one isolated worktree per active ticket. The extension places child panes beside their supervisor, so each ticket has its own supervisor workspace. Never run two tickets in the same checkout. Respect `maxTickets` and `maxAgents`; queue excess work.
 
+## Make live work legible
+
+Rename the supervisor pane to `<ticket-id> · supervisor`. Pass a compact, unique `name` on every `subagent` and `subagent_resume` call; `pi-herdr-subagents` uses it as the child pane label:
+
+- `<ticket-id> · plan`
+- `<ticket-id> · work T<task>`
+- `<ticket-id> · review T<task> R<round>`
+- `<ticket-id> · wrapup`
+
+After spawn returns a pane ID, report display-only Herdr metadata from source `factory-supervise`: `ticket`, `stage`, and, when applicable, `task` and `round`. Clear tokens that no longer apply. These are presentation hints, not lifecycle or factory state. A sidebar configured with `pane`, `$ticket`, `$stage`, `$task`, and `$round` then remains readable when tickets run in parallel. Store the pane label as `paneName` beside `paneId` in state.
+
 ## Start specialist subagents
 
 Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTORY.json` rather than maintaining model-specific agent definitions:
@@ -32,7 +43,7 @@ Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTOR
 - Plan: `model=models.plan`, `skills=factory-plan`, ticket worktree as `cwd`, and only research-capable tools.
 - Work: `model=models.work`, `skills=factory-work`, ticket worktree as `cwd`, and the tools needed to edit and verify code.
 - Review: `model=models.review`, `skills=factory-review`, ticket worktree as `cwd`, and read-only tools. Supply the diff and test evidence in the task when the reviewer cannot obtain them with its allowlist.
-- Wrap-up: `model=models.wrapup`, `skills=factory-wrapup`, ticket worktree as `cwd`, and only the tools needed for documentation and evidence.
+- Wrap-up: `model=models.wrapup`, `skills=factory-wrapup`, ticket worktree as `cwd`, and the tools needed for documentation, evidence, and the Pi summary plus Fresh diff surfaces.
 
 The reviewer model must differ from the work model. Create a subagent only when its stage is active. The spawn call returns immediately; continue independent work or end the turn and wait for the extension's steer message. Never fabricate a result or poll for one.
 
@@ -48,7 +59,7 @@ plan → work → review → wrapup → done
 
 At each stage boundary:
 
-1. Validate `factory.plan.v2`, `factory.work.v2`, `factory.review.v2`, or the wrap-up handoff requirements.
+1. Validate `factory.plan.v2`, `factory.work.v2`, `factory.review.v3`, or the wrap-up handoff requirements.
 2. Record numeric Pi token and cost usage for the completed or paused session through `factory-state usage record`.
 3. Apply one atomic ticket transition through `factory-state`.
 4. Record only meaningful progress or blockers.
@@ -60,11 +71,13 @@ When a planner calls `caller_ping`, set the ticket to `waiting_for_user`, presen
 
 ## Review loop
 
-On review completion, validate the final assistant message from the extension's steer as `factory.review.v2`. If parsing fails, resume the reviewer once and request only the JSON object. A temporary file is an allowed fallback only when the steer cannot carry the result; remove it after relay and do not create a review archive.
+Before review, send the reviewer a complete, task-scoped packet: ticket outcome, task user story and acceptance criteria, non-goals, base reference, changed-file inventory, full diff including new untracked files, exact test results, and prior-round evidence when applicable. Do not send only a worker summary.
+
+On review completion, validate the final assistant message from the extension's steer as `factory.review.v3`. Require one evidence check per acceptance criterion. If parsing fails, resume the reviewer once and request only the corrected JSON object. A temporary file is an allowed fallback only when the steer cannot carry the result; remove it after relay and do not create a review archive.
 
 Relay blocking findings to the existing work session. Validate its `factory.work.v2` response, including a disposition and evidence for each finding, then resume the same reviewer with the response, current diff, and updated test evidence. Stop when:
 
-- The reviewer approves with no findings.
+- The reviewer approves with no blocking findings and all required checks passing.
 - Three review rounds have completed.
 - A role reports a genuine blocker requiring the user.
 
@@ -76,6 +89,15 @@ After approval, set the task to `done`, reset its review counter, and choose the
 
 ## Finish
 
-Validate the wrap-up handoff, record its usage, and set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
+Validate the wrap-up handoff, record its usage, and render the final all-stage table described in [../factory-wrapup/references/usage-table.md](../factory-wrapup/references/usage-table.md). Include the table in the supervisor's user-facing completion message. Do not create a handoff artifact solely to carry it.
+
+`pi-herdr-subagents` closes a child pane after clean completion. Once the wrap-up result has been steered back, follow [../factory-wrapup/references/panes-handoff.md](../factory-wrapup/references/panes-handoff.md) to open two human-facing panes with its generic argv launcher and leave them open:
+
+- `<ticket-id> · summary` reopens the completed wrap-up Pi session with `pi --session` and no prompt.
+- `<ticket-id> · diff` opens Fresh in the worktree and runs the working-tree `Review Diff` command.
+
+Use absolute executable, session, and script paths in the generic launcher. Reopening the transcript must not call `subagent_resume`, send a prompt, or start a model turn. If either surface cannot be opened, report the exact limitation in the handoff rather than hiding it.
+
+After the handoff and usage table are complete, set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
 
 Keep concurrent tickets' workspaces, worktrees, prompts, sessions, and state entries isolated. One ticket's blocker must not stop another ticket.

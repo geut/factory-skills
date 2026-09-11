@@ -15,7 +15,7 @@ Read the plan, task files, optional ADR, approved review verdict, diff, and fina
 
 Update `.factory/CONTEXT.md`, `.factory/PRD.md`, or project documentation only when implementation established knowledge useful beyond this ticket. Keep ticket-local detail in `plan.md`. Add to `.factory/learnings/` only when an observation could improve another ticket or a factory skill; do not create a learning for routine success.
 
-Do not create `wrapup.md` or a `visuals/` directory by default. The Pi/Herdr wrap-up session is the output surface. Promote an artifact to project documentation only when it must survive the ticket session.
+Do not create `wrapup.md` or a `visuals/` directory in the factory root by default. The wrap-up Pi session is the human handoff. Promote an artifact to project documentation only when it must survive the ticket session.
 
 ## Build the handoff
 
@@ -30,6 +30,10 @@ Present:
 7. Exact commands the user may run later to commit and merge the ticket worktree.
 
 Open the diff, relevant code, runtime, or debugger when that lands the explanation faster than prose. Read [references/visual-explanations.md](references/visual-explanations.md) whenever the change has three or more moving parts or a spatial UI behavior.
+
+Read [references/usage-table.md](references/usage-table.md) for the final token and cost table. In a supervised run, do not estimate this wrap-up session's own usage: return the handoff first so the supervisor can record the completed session and show the all-stage table in its completion message. In a direct run, show all usage currently recorded and label the current wrap-up session as pending if it is not yet available.
+
+Read [references/panes-handoff.md](references/panes-handoff.md) for the two human-facing panes. In a supervised run, the supervisor reopens this completed Pi session for inspection after receiving its final output, and opens the diff separately in Fresh. Neither action starts another model turn. Leave both panes open until the human closes them.
 
 ## Prepare merge commands
 
@@ -57,4 +61,4 @@ git -C "<code-root>" branch -d "<ticket-branch>"
 
 Do not show cleanup unless the ticket is committed and the user can first verify the merge.
 
-In a supervised run, let the supervisor record wrap-up usage and transition the ticket to stage `done` with status `complete`. In a direct invocation, use `factory-state` when available. Do not commit, merge, push, open a pull request, publish, or clean up the worktree. The human owns submission.
+In a supervised run, let the supervisor record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to stage `done` with status `complete`. In a direct invocation, use `factory-state` when available; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, push, open a pull request, publish, or clean up the worktree. The human owns submission.
