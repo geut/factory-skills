@@ -132,10 +132,10 @@ Create `.factory/FACTORY.json`:
   "schemaVersion": 2,
   "ticketIdPattern": "PROJ-<number>",
   "models": {
-    "plan": "provider/planning-model",
-    "work": "provider/work-model",
-    "review": "other-provider-or-model/review-model",
-    "wrapup": "provider/wrapup-model",
+    "plan": { "model": "provider/planning-model", "thinking": "medium" },
+    "work": { "model": "provider/work-model", "thinking": "medium" },
+    "review": { "model": "other-provider-or-model/review-model", "thinking": "medium" },
+    "wrapup": { "model": "provider/wrapup-model", "thinking": "medium" },
     "arbiter": null
   },
   "limits": {
@@ -158,7 +158,7 @@ Create `.factory/FACTORY-STATE.json`:
 
 `FACTORY.json` and `FACTORY-STATE.json` have independent schema versions. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
 
-Set `ticketIdPattern` to the project's existing convention. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review` must differ from `models.work`. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
+Set `ticketIdPattern` to the project's existing convention. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review.model` must differ from `models.work.model`. Each role may set `thinking` to a Pi level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Omit `thinking` to use `medium`. A legacy string such as `"review": "provider/model"` is equivalent to `{ "model": "…", "thinking": "medium" }`. Do not append `:<thinking>` to the model id. Keep review at `medium` unless you raise it deliberately; `max` is expensive for adversarial review. When `arbiter` is set, it uses the same object shape. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
 
 Before supervision, run Pi inside Herdr and confirm that `subagents_list` is available. The supervisor uses the extension's `subagent`, `subagent_resume`, and `subagent_interrupt` tools directly; it does not create agent panes by typing shell commands or poll terminals for completion. Confirm that the extension's generic argv pane entrypoint is also enabled; wrap-up uses it to reopen the completed Pi session and launch Fresh without a shell-startup race.
 
@@ -217,7 +217,7 @@ For a small, well-understood ticket, the initial prompt may authorize the comple
 
 ## Manual v0 workflow
 
-To run roles without a supervisor, invoke them explicitly in separate Herdr tabs:
+To run roles without a supervisor, invoke them explicitly in separate Herdr tabs. Start each role tab with `pi --model <role-model> --thinking <level>` from that role in `FACTORY.json`; omit `thinking` in config to pass `--thinking medium`. Do not append `:<thinking>` to the model id.
 
 1. Plan:
 
@@ -231,10 +231,14 @@ To run roles without a supervisor, invoke them explicitly in separate Herdr tabs
    /skill:factory-work Implement task 01 for ticket PROJ-123.
    ```
 
-3. After work finishes, build the packet from the ticket worktree, then start a fresh Pi reviewer tab with a different model and `read`, `grep`, `find`, and `ls` (no `bash`, `edit`, or `write`):
+3. After work finishes, build the packet from the ticket worktree, then start a fresh Pi reviewer tab with a different model, `--thinking` from `models.review.thinking` (default `medium`), and `read`, `grep`, `find`, and `ls` (no `bash`, `edit`, or `write`):
+
+   ```sh
+   pi --model <review-model> --thinking medium --tools read,grep,find,ls
+   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --worktree <worktree> --out /tmp
+   ```
 
    ```text
-   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --worktree <worktree> --out /tmp
    /skill:factory-review Review ticket PROJ-123 task 01 round 1. Follow factory-review.
    Packet: /tmp/PROJ-123-T01-R1-packet.md
    Diff: /tmp/PROJ-123-T01-R1.diff

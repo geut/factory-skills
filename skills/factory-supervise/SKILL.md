@@ -38,16 +38,16 @@ After spawn returns a pane ID, report display-only Herdr metadata from source `f
 
 ## Start specialist subagents
 
-Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTORY.json` rather than maintaining model-specific agent definitions:
+Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTORY.json` rather than maintaining model-specific agent definitions. Read each role as `{ "model", "thinking" }`. A legacy string is `{ "model": "<string>", "thinking": "medium" }`. If `thinking` is omitted, use `medium`. Always pass both `model` and `thinking` on `subagent`; omitting `thinking` makes the child inherit the supervisor's level. Do not put a `:<thinking>` suffix on the model id. Allowed levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Keep review at `medium` unless `FACTORY.json` raises it. The extension launches `pi --model <id> --thinking <level>`; do not type those flags into a pane.
 
-- Plan: `model=models.plan`, `skills=factory-plan`, ticket worktree as `cwd`, and only research-capable tools.
-- Work: `model=models.work`, `skills=factory-work`, ticket worktree as `cwd`, and the tools needed to edit and verify code.
-- Review: `model=models.review`, `skills=factory-review`, ticket worktree as `cwd`, and `tools=read,grep,find,ls`. Never `bash`, `edit`, or `write`. After work `--check` passes, run [scripts/review-packet.py](scripts/review-packet.py) once and pass only the two output paths as the reviewer task.
-- Wrap-up: `model=models.wrapup`, `skills=factory-wrapup`, ticket worktree as `cwd`, and the tools needed for documentation, evidence, and the Pi summary plus Fresh diff surfaces.
+- Plan: `model=models.plan.model`, `thinking=models.plan.thinking`, `skills=factory-plan`, ticket worktree as `cwd`, and only research-capable tools.
+- Work: `model=models.work.model`, `thinking=models.work.thinking`, `skills=factory-work`, ticket worktree as `cwd`, and the tools needed to edit and verify code.
+- Review: `model=models.review.model`, `thinking=models.review.thinking`, `skills=factory-review`, ticket worktree as `cwd`, and `tools=read,grep,find,ls`. Never `bash`, `edit`, or `write`. After work `--check` passes, run [scripts/review-packet.py](scripts/review-packet.py) once and pass only the two output paths as the reviewer task.
+- Wrap-up: `model=models.wrapup.model`, `thinking=models.wrapup.thinking`, `skills=factory-wrapup`, ticket worktree as `cwd`, and the tools needed for documentation, evidence, and the Pi summary plus Fresh diff surfaces.
 
 The reviewer model must differ from the work model. Create a subagent only when its stage is active. The spawn call returns immediately; continue independent work or end the turn and wait for the extension's steer message. Never fabricate a result or poll for one. Tell each child to end with the skill Output template and not to add a recap after it.
 
-Use `subagent_resume` to continue the same planner after `caller_ping`, the same worker after findings, and the same reviewer during later rounds. Use `subagent_interrupt` only to stop work that is no longer valid or explicitly exceeds a limit.
+Use `subagent_resume` to continue the same planner after `caller_ping`, the same worker after findings, and the same reviewer during later rounds. Do not pass `thinking` on resume; the child session already has it. Use `subagent_interrupt` only to stop work that is no longer valid or explicitly exceeds a limit.
 
 After the steer, run [scripts/pi-session-reader.py](scripts/pi-session-reader.py) **once** against the child's `sessionFile`. Do not treat steered prose as the contract. Do not poll the file, and do not write inline Python to parse Pi JSONL.
 
@@ -109,7 +109,7 @@ Relay blocking findings to the existing work session as the parsed Findings list
 
 After round three, unresolved blocking findings set the ticket to `waiting_for_user`. Never begin a fourth round without explicit authorization.
 
-The supervisor is the default arbiter: it enforces Output templates, identity, ordering, limits, and evidence relay without overruling technical judgment. If work and review explicitly disagree, it may make one bounded call using `models.arbiter` with only the disputed findings and evidence. Otherwise ask the user rather than paying for another full review.
+The supervisor is the default arbiter: it enforces Output templates, identity, ordering, limits, and evidence relay without overruling technical judgment. If work and review explicitly disagree, it may make one bounded `subagent` call using `models.arbiter.model` and `models.arbiter.thinking` (default `medium`) with only the disputed findings and evidence. Otherwise ask the user rather than paying for another full review.
 
 After approval, set the task to `done`, reset its review counter, and choose the next `pending` task whose dependencies are all `done`. Start wrap-up only after every required task is `done` and required checks pass.
 
@@ -122,7 +122,7 @@ Validate the wrap-up handoff with `contract --schema factory.wrapup.v1 --check`,
 - `<ticket-id> · summary` reopens the completed wrap-up Pi session with `pi --session` and no prompt.
 - `<ticket-id> · diff` opens Fresh in the worktree and runs the working-tree `Review Diff` command.
 
-Use absolute executable, session, and script paths in the generic launcher. Capture each returned pane ID with `jq`, not inline Python. Reopening the transcript must not call `subagent_resume`, send a prompt, or start a model turn. If either surface cannot be opened, report the exact limitation in the handoff rather than hiding it.
+Use absolute executable, session, and script paths in the generic launcher. Capture each returned pane ID with `jq`, not inline Python. Reopening the transcript must not call `subagent_resume`, send a prompt, start a model turn, or pass `--thinking`. If either surface cannot be opened, report the exact limitation in the handoff rather than hiding it.
 
 After the handoff and usage table are complete, set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
 

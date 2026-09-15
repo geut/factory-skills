@@ -9,10 +9,10 @@
   "schemaVersion": 2,
   "ticketIdPattern": "PROJ-<number>",
   "models": {
-    "plan": "provider/model",
-    "work": "provider/model",
-    "review": "different-provider-or-model/model",
-    "wrapup": "provider/model",
+    "plan": { "model": "provider/model", "thinking": "medium" },
+    "work": { "model": "provider/model", "thinking": "medium" },
+    "review": { "model": "different-provider-or-model/model", "thinking": "medium" },
+    "wrapup": { "model": "provider/model", "thinking": "medium" },
     "arbiter": null
   },
   "limits": {
@@ -22,6 +22,8 @@
   }
 }
 ```
+
+Each `models` role is `{ "model": "provider/id", "thinking": "medium" }`. `thinking` is optional and defaults to `medium`. A legacy string value remains valid and means that object with `thinking` `medium`. Allowed `thinking` values are Pi's: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Do not append `:<thinking>` to the model id. When `arbiter` is set, it uses the same object shape. Keep review at `medium` unless the project raises it; `max` is an expensive failure mode for adversarial review.
 
 Derive the code root from Git and the factory root as `<code-root>/.factory`. Do not persist those absolute paths in configuration. An explicit `--factory-root` or `FACTORY_ROOT` override may select an external root; resolve a relative value from the code root.
 
@@ -187,7 +189,7 @@ Omit or clear `task` and `round` when they do not apply. Do not use `report-agen
 
 Use `pi-herdr-subagents` for launch, completion, prompt delivery, and Pi session identity:
 
-1. Call `subagent` with explicit `name`, `model`, `skills`, `tools`, and `cwd` overrides. For review, pass `tools=read,grep,find,ls`; never `bash`, `edit`, or `write`.
+1. Call `subagent` with explicit `name`, `model`, `thinking`, `skills`, `tools`, and `cwd` overrides. Resolve `model` and `thinking` from `FACTORY.json` as above; always pass `thinking` (default `medium`). Omitting `thinking` inherits the parent session's level. For review, pass `tools=read,grep,find,ls`; never `bash`, `edit`, or `write`. Do not pass `thinking` on `subagent_resume`.
 2. Retain the returned `sessionFile`, Pi session ID, pane ID, pane name, and role in state.
 3. Wait for the automatic steer message; never poll terminals or session files for completion.
 4. Run `scripts/pi-session-reader.py contract --schema <factory.plan.v3|factory.work.v3|factory.review.v4|factory.wrapup.v1> --check` once against `sessionFile`. Do not treat steered prose as the contract. Do not write inline Python to parse Pi JSONL. Exit 3/4: `subagent_resume` once with the stderr line; request only the Output template, never a JSON object. Exit 0: print compact JSON (omit `--check`) when `fstate` needs fields such as verdict and finding counts.
