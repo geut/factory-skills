@@ -29,8 +29,23 @@ Write accepted candidates under `.factory/learnings/` only when they are reusabl
 
 ## Evaluate before proposing application
 
-Read [references/evaluation.md](references/evaluation.md). Compare the current skill baseline with the candidate using the smallest scenario set capable of exposing the intended improvement and likely regression. Include quality, schema validity, test outcome, scope, review rounds, token usage, and cost.
+Read [references/evaluation.md](references/evaluation.md). Compare the current skill baseline with the candidate using the smallest scenario set capable of exposing the intended improvement and likely regression. Include quality, Output-template validity, test outcome, scope, review rounds, token usage, and cost.
 
-Present each candidate as `accept`, `revise`, or `reject`, with evidence and evaluation results. Ask the user which accepted candidates to apply. Only after explicit approval may the relevant skill-authoring workflow edit the skill repository. Validate changed skills and rerun affected evaluations.
+Ask the user which accepted candidates to apply. Only after explicit approval may the relevant skill-authoring workflow edit the skill repository. Validate changed skills and rerun affected evaluations.
 
 Do not commit, publish, or update installed skills automatically.
+
+## Output
+
+Return only this template. No recap after it.
+
+```markdown
+## Candidates
+
+### 1. [accept | revise | reject] Short title
+**Evidence:** tickets and observations
+**Mechanism:** general rule, not the incident
+**Route:** skill, CONTEXT.md, FACTORY.json, or tooling
+**Evaluation:** quality, Output-template validity, tests, scope, rounds, tokens, cost
+**Counterexample:** when this must not apply
+```

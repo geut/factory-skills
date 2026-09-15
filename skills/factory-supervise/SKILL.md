@@ -19,9 +19,9 @@ Verify that:
 - Herdr is at least 0.8.2.
 - `subagent`, `subagent_resume`, `subagent_interrupt`, and `subagents_list` are provided by `pi-herdr-subagents`.
 - The extension's bundled Herdr plugin is linked and enabled.
-- `factory-state` is available before relying on supervised state changes.
+- Node.js 24+ can run [scripts/fstate/cli.mjs](scripts/fstate/cli.mjs). Use it for every `FACTORY-STATE.json` mutation; never edit that file by hand.
 
-If the subagent tools are absent, report the setup problem. Do not fall back to typing commands into panes, scraping terminal output, or polling session files for completion.
+If the subagent tools are absent, report the setup problem. Do not fall back to typing commands into panes, scraping terminal output, polling session files for completion, or driving roles with `herdr agent start` / `herdr agent prompt`.
 
 Use one Herdr workspace and one isolated worktree per active ticket. The extension places child panes beside their supervisor, so each ticket has its own supervisor workspace. Never run two tickets in the same checkout. Respect `maxTickets` and `maxAgents`; queue excess work.
 
@@ -34,7 +34,7 @@ Rename the supervisor pane to `<ticket-id> · supervisor`. Pass a compact, uniqu
 - `<ticket-id> · review T<task> R<round>`
 - `<ticket-id> · wrapup`
 
-After spawn returns a pane ID, report display-only Herdr metadata from source `factory-supervise`: `ticket`, `stage`, and, when applicable, `task` and `round`. Clear tokens that no longer apply. These are presentation hints, not lifecycle or factory state. A sidebar configured with `pane`, `$ticket`, `$stage`, `$task`, and `$round` then remains readable when tickets run in parallel. Store the pane label as `paneName` beside `paneId` in state.
+After spawn returns a pane ID, report display-only Herdr metadata from source `factory-supervise`: `ticket`, `stage`, and, when applicable, `task` and `round`. Clear tokens that no longer apply. These are presentation hints, not lifecycle or factory state. A sidebar configured with `pane`, `$ticket`, `$stage`, `$task`, and `$round` then remains readable when tickets run in parallel. Store the pane label as `paneName` beside `paneId` in state. Call `herdr` directly for rename and `report-metadata`. Do not write `python3 -c` or a heredoc to parse Herdr JSON; for a single field, use `jq`.
 
 ## Start specialist subagents
 
@@ -42,12 +42,31 @@ Use the extension's asynchronous `subagent` tool. Set its overrides from `FACTOR
 
 - Plan: `model=models.plan`, `skills=factory-plan`, ticket worktree as `cwd`, and only research-capable tools.
 - Work: `model=models.work`, `skills=factory-work`, ticket worktree as `cwd`, and the tools needed to edit and verify code.
-- Review: `model=models.review`, `skills=factory-review`, ticket worktree as `cwd`, and read-only tools. Supply the diff and test evidence in the task when the reviewer cannot obtain them with its allowlist.
+- Review: `model=models.review`, `skills=factory-review`, ticket worktree as `cwd`, and `tools=read,grep,find,ls`. Never `bash`, `edit`, or `write`. After work `--check` passes, run [scripts/review-packet.py](scripts/review-packet.py) once and pass only the two output paths as the reviewer task.
 - Wrap-up: `model=models.wrapup`, `skills=factory-wrapup`, ticket worktree as `cwd`, and the tools needed for documentation, evidence, and the Pi summary plus Fresh diff surfaces.
 
-The reviewer model must differ from the work model. Create a subagent only when its stage is active. The spawn call returns immediately; continue independent work or end the turn and wait for the extension's steer message. Never fabricate a result or poll for one.
+The reviewer model must differ from the work model. Create a subagent only when its stage is active. The spawn call returns immediately; continue independent work or end the turn and wait for the extension's steer message. Never fabricate a result or poll for one. Tell each child to end with the skill Output template and not to add a recap after it.
 
 Use `subagent_resume` to continue the same planner after `caller_ping`, the same worker after findings, and the same reviewer during later rounds. Use `subagent_interrupt` only to stop work that is no longer valid or explicitly exceeds a limit.
+
+After the steer, run [scripts/pi-session-reader.py](scripts/pi-session-reader.py) **once** against the child's `sessionFile`. Do not treat steered prose as the contract. Do not poll the file, and do not write inline Python to parse Pi JSONL.
+
+```text
+python3 <skill-dir>/scripts/pi-session-reader.py contract --schema factory.plan.v3 --check <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py contract --schema factory.work.v3 --check <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py contract --schema factory.review.v4 --check [--round <n>] <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py contract --schema factory.wrapup.v1 --check <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py contract --schema factory.review.v4 --round <n> <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py usage <session-file>
+python3 <skill-dir>/scripts/pi-session-reader.py last-message <session-file>
+python3 <skill-dir>/scripts/review-packet.py --ticket <ticket-id> --task <task-id> --worktree <worktree> --out /tmp [--round <n>] [--factory-root <factory-root>] [--base HEAD]
+node <skill-dir>/scripts/fstate/cli.mjs status [--ticket <ticket-id>]
+node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs usage record --ticket <ticket-id> --stage <stage> --session <session-file> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>
+```
+
+`--check` is the stage gate (one-line `ok` / `invalid`, exit 0/3/4). Omit `--check` to print compact JSON for `fstate`. `usage` is billed tokens and cost, not steer `contextUsage`. `last-message` is diagnosis only. `review-packet.py` writes intent-and-scope files and prints `packet:` and `diff:` paths; do not compose that packet in prose. Copy `--expected-revision` from the previous `fstate` JSON `revision`. The full command list is in [references/runtime-protocol.md](references/runtime-protocol.md).
 
 ## Coordinate ticket stages
 
@@ -59,9 +78,9 @@ plan → work → review → wrapup → done
 
 At each stage boundary:
 
-1. Validate `factory.plan.v2`, `factory.work.v2`, `factory.review.v3`, or the wrap-up handoff requirements.
-2. Record numeric Pi token and cost usage for the completed or paused session through `factory-state usage record`.
-3. Apply one atomic ticket transition through `factory-state`.
+1. Run `pi-session-reader.py contract --schema … --check` once on `sessionFile`. Validate `factory.plan.v3`, `factory.work.v3`, `factory.review.v4`, or `factory.wrapup.v1`. Do not treat steered prose as the contract. Exit 0 → continue. Exit 3/4 → `subagent_resume` once with the stderr line and request only the Output template.
+2. Record billed usage with `node <skill-dir>/scripts/fstate/cli.mjs usage record` (it calls `pi-session-reader.py usage`).
+3. Apply one atomic ticket transition through `node <skill-dir>/scripts/fstate/cli.mjs`. For review, `review record` takes verdict / finding-count / blocking-count from `contract` without `--check`.
 4. Record only meaningful progress or blockers.
 5. Start or resume the next role with only the context it needs.
 
@@ -71,32 +90,39 @@ When a planner calls `caller_ping`, set the ticket to `waiting_for_user`, presen
 
 ## Review loop
 
-Before review, send the reviewer a complete, task-scoped packet: ticket outcome, task user story and acceptance criteria, non-goals, base reference, changed-file inventory, full diff including new untracked files, exact test results, and prior-round evidence when applicable. Do not send only a worker summary.
+After work `--check` passes, run `review-packet.py` once against the ticket worktree. The diff is the cumulative uncommitted ticket change, including earlier approved tasks. Pass only the two output paths as the reviewer task. Do not restate outcome, acceptance criteria, file lists, or test results in the spawn prompt:
 
-On review completion, validate the final assistant message from the extension's steer as `factory.review.v3`. Require one evidence check per acceptance criterion. If parsing fails, resume the reviewer once and request only the corrected JSON object. A temporary file is an allowed fallback only when the steer cannot carry the result; remove it after relay and do not create a review archive.
+```text
+Review ticket PROJ-14 task 01 round 1. Follow factory-review.
+Packet: /tmp/PROJ-14-T01-R1-packet.md
+Diff: /tmp/PROJ-14-T01-R1.diff
+End with the factory.review.v4 Output template only.
+```
 
-Relay blocking findings to the existing work session. Validate its `factory.work.v2` response, including a disposition and evidence for each finding, then resume the same reviewer with the response, current diff, and updated test evidence. Stop when:
+On review completion, run `pi-session-reader.py contract --schema factory.review.v4 --check --round <n>` once. If that fails, resume the reviewer once with the stderr line and request only the Output template. Do not create a review archive. Do not ask for a JSON object.
 
-- The reviewer approves with no blocking findings and all required checks passing.
+Relay blocking findings to the existing work session as the parsed Findings list (`R{round}-{n}`, location, finding, suggestion), not the whole review. Validate the worker with `contract --schema factory.work.v3 --check`, including a disposition and evidence for each finding, then rerun `review-packet.py` and resume the same reviewer with the new packet and diff paths. Stop when:
+
+- The reviewer approves with no blocking findings (`critical` or `major`).
 - Three review rounds have completed.
 - A role reports a genuine blocker requiring the user.
 
 After round three, unresolved blocking findings set the ticket to `waiting_for_user`. Never begin a fourth round without explicit authorization.
 
-The supervisor is the default arbiter: it enforces schemas, identity, ordering, limits, and evidence relay without overruling technical judgment. If work and review explicitly disagree, it may make one bounded call using `models.arbiter` with only the disputed findings and evidence. Otherwise ask the user rather than paying for another full review.
+The supervisor is the default arbiter: it enforces Output templates, identity, ordering, limits, and evidence relay without overruling technical judgment. If work and review explicitly disagree, it may make one bounded call using `models.arbiter` with only the disputed findings and evidence. Otherwise ask the user rather than paying for another full review.
 
 After approval, set the task to `done`, reset its review counter, and choose the next `pending` task whose dependencies are all `done`. Start wrap-up only after every required task is `done` and required checks pass.
 
 ## Finish
 
-Validate the wrap-up handoff, record its usage, and render the final all-stage table described in [../factory-wrapup/references/usage-table.md](../factory-wrapup/references/usage-table.md). Include the table in the supervisor's user-facing completion message. Do not create a handoff artifact solely to carry it.
+Validate the wrap-up handoff with `contract --schema factory.wrapup.v1 --check`, record its usage with `pi-session-reader.py usage`, and render the final all-stage table described in [../factory-wrapup/references/usage-table.md](../factory-wrapup/references/usage-table.md). Include the table in the supervisor's user-facing completion message. Do not create a handoff artifact solely to carry it.
 
 `pi-herdr-subagents` closes a child pane after clean completion. Once the wrap-up result has been steered back, follow [../factory-wrapup/references/panes-handoff.md](../factory-wrapup/references/panes-handoff.md) to open two human-facing panes with its generic argv launcher and leave them open:
 
 - `<ticket-id> · summary` reopens the completed wrap-up Pi session with `pi --session` and no prompt.
 - `<ticket-id> · diff` opens Fresh in the worktree and runs the working-tree `Review Diff` command.
 
-Use absolute executable, session, and script paths in the generic launcher. Reopening the transcript must not call `subagent_resume`, send a prompt, or start a model turn. If either surface cannot be opened, report the exact limitation in the handoff rather than hiding it.
+Use absolute executable, session, and script paths in the generic launcher. Capture each returned pane ID with `jq`, not inline Python. Reopening the transcript must not call `subagent_resume`, send a prompt, or start a model turn. If either surface cannot be opened, report the exact limitation in the handoff rather than hiding it.
 
 After the handoff and usage table are complete, set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
 

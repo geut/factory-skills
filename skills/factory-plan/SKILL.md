@@ -48,31 +48,32 @@ Before finishing, verify that:
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.
 
-In a supervised run, return the planning result and let the supervisor create or transition state. In a direct invocation, use `factory-state` when available; otherwise report the missing integration without inventing state edits.
+In a supervised run, return the planning result and let the supervisor create or transition state. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`; otherwise report the missing integration without inventing state edits.
 
-Do not commit or publish anything. End with exactly one JSON object so the supervisor can validate the stage boundary:
+Do not commit or publish anything.
 
-```json
-{
-  "schema": "factory.plan.v2",
-  "ticket": "PROJ-123",
-  "status": "planned",
-  "plan": ".factory/tickets/PROJ-123/plan.md",
-  "adr": null,
-  "tasks": [
-    {
-      "id": "01",
-      "path": ".factory/tickets/PROJ-123/01-task-foundation.md",
-      "status": "pending",
-      "blockedBy": []
-    }
-  ],
-  "readyTasks": ["01"],
-  "contextChanged": false,
-  "prdChanged": false,
-  "assumptions": [],
-  "blocker": null
-}
+## Output
+
+Return only this template (`factory.plan.v3`). No JSON object, no recap after it. Durable content stays in the ticket files from [references/artifacts.md](references/artifacts.md).
+
+```markdown
+## Status
+planned | blocked
+
+## Artifacts
+- plan: .factory/tickets/PROJ-123/plan.md
+- adr: none
+- tasks:
+  - 01: .factory/tickets/PROJ-123/01-task-foundation.md (pending, blockedBy none)
+
+## Ready
+01
+
+## Assumptions
+- none
+
+## Blocker
+none
 ```
 
-`status` is either `planned` or `blocked`. A blocked result must identify the unresolved decision or missing evidence in `blocker`; it may contain partial artifact paths but must not advertise a ready task frontier.
+`Status` is `planned` or `blocked`. A blocked result must name the unresolved decision or missing evidence under `Blocker`; it may list partial artifact paths but must not advertise a ready task frontier. Use `none` for empty optional fields.

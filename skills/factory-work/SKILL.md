@@ -45,26 +45,39 @@ Run focused checks while working, then the relevant broader suite once. Do not s
 
 Mark satisfied acceptance criteria and set the task status to `ready_for_review`, not `done`; review owns approval. Update durable context only for facts useful beyond this ticket.
 
-In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `factory-state` when available. Never edit `FACTORY-STATE.json` directly.
+In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`. Never edit `FACTORY-STATE.json` directly.
 
 Do not start the reviewer, commit, push, publish, or create a pull request. The supervisor owns the next stage.
 
-End with exactly one JSON object so the supervisor can relay it:
+## Output
 
-```json
-{
-  "schema": "factory.work.v2",
-  "ticket": "<ticket-id>",
-  "task": "<task-number>",
-  "status": "ready_for_review",
-  "summary": "<observable result>",
-  "changed": ["<path>"],
-  "tests": [{"command": "<command>", "result": "passed|failed|not_run", "note": "<why>"}],
-  "e2e": {"result": "passed|failed|not_feasible", "note": "<evidence or human path>"},
-  "reviewResponses": [{"finding": "R1-01", "disposition": "fixed|not_fixed|disputed", "evidence": "<path, test, or explanation>"}],
-  "planChanged": false,
-  "blocker": null
-}
+Return only this template (`factory.work.v3`). No JSON object, no recap after it. Do not list changed paths; the supervisor already has git.
+
+```markdown
+## Status
+ready_for_review | blocked
+
+## Summary
+One sentence for the observable result.
+
+## Tests
+- `npm test`: passed — 22 files / 109 tests
+- `npm run lint`: not_run — unchanged config
+
+## E2E
+passed | failed | not_feasible
+Note: evidence or human path.
+
+## Review responses
+none
+
+- R1-01: fixed — tests/filter.test.ts:88
+
+## Plan changed
+false
+
+## Blocker
+none
 ```
 
-`status` is either `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification.
+`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Each test line is `command: passed|failed|not_run` plus an optional note.

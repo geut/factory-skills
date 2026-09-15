@@ -19,15 +19,7 @@ Do not create `wrapup.md` or a `visuals/` directory in the factory root by defau
 
 ## Build the handoff
 
-Present:
-
-1. The user-visible outcome.
-2. A plain pull-request summary with explicit non-goals.
-3. Files or artifacts added, modified, and removed.
-4. Tests and E2E evidence, including anything not run.
-5. Operational or migration notes.
-6. Known limitations and follow-up work that is genuinely out of scope.
-7. Exact commands the user may run later to commit and merge the ticket worktree.
+The session handoff is the Output template. Do not wrap it in a recap.
 
 Open the diff, relevant code, runtime, or debugger when that lands the explanation faster than prose. Read [references/visual-explanations.md](references/visual-explanations.md) whenever the change has three or more moving parts or a spatial UI behavior.
 
@@ -61,4 +53,31 @@ git -C "<code-root>" branch -d "<ticket-branch>"
 
 Do not show cleanup unless the ticket is committed and the user can first verify the merge.
 
-In a supervised run, let the supervisor record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to stage `done` with status `complete`. In a direct invocation, use `factory-state` when available; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, push, open a pull request, publish, or clean up the worktree. The human owns submission.
+In a supervised run, let the supervisor record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to stage `done` with status `complete`. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, push, open a pull request, publish, or clean up the worktree. The human owns submission.
+
+## Output
+
+Return only this template (`factory.wrapup.v1`). No JSON object, no recap after it. Include every heading.
+
+```markdown
+## Outcome
+What changed for the user or system.
+
+## PR summary
+Plain pull-request summary. Explicit non-goals.
+
+## Files
+Added, modified, and removed paths.
+
+## Tests
+Commands, results, and anything not run. Include E2E or the human path.
+
+## Operations
+Operational or migration notes, or none.
+
+## Limitations
+Known limitations and follow-up that is genuinely out of scope, or none.
+
+## Merge commands
+Exact commit and merge commands with real paths; do not execute them.
+```

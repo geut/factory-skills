@@ -19,7 +19,7 @@ Run only scenarios touched by a candidate, plus one nearby regression case. Use 
 
 Capture machine-checkable results first:
 
-- Required artifacts and JSON contracts are valid.
+- Required artifacts and Output templates parse.
 - Project tests and scenario assertions pass.
 - Forbidden writes, publishing, or extra review rounds did not occur.
 - State transitions and concurrent updates remain valid.

@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"sess-wrap-1","timestamp":"2026-09-12T00:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"a1","parentId":null,"timestamp":"2026-09-12T00:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"## Outcome\nFilter restores on visit.\n\n## PR summary\nRestore saved catalog filter. Non-goals: new storage backend.\n\n## Files\n- src/filter.ts modified\n\n## Tests\n`npm test` passed.\n\n## Operations\nnone\n\n## Limitations\nnone\n\n## Merge commands\ngit -C /tmp/work commit -m \"feat: restore filter\"\n"}]}}

@@ -114,23 +114,27 @@ Configuration may add budgets and project-specific verification commands. `revie
 }
 ```
 
-Specialist agents never edit state directly. The supervisor is the semantic writer and uses `factory-state` for every mutation.
-
-Expected operations include the ticket identifier and expected revision on every mutation:
+Specialist agents never edit state directly. The supervisor is the semantic writer and uses the bundled v0 CLI for every mutation:
 
 ```text
-factory-state create --ticket <ticket-id> [--title <title>] [--type <type>] [--source-kind <kind>] [--source-ref <ref>] --expected-revision <revision>
-factory-state status [--ticket <ticket-id>]
-factory-state transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>
-factory-state task transition --ticket <ticket-id> --task <task-id> --status <status> --expected-revision <revision>
-factory-state review record --ticket <ticket-id> --task <task-id> --round <n> --verdict <verdict> --finding-count <n> --blocking-count <n> --expected-revision <revision>
-factory-state session record --ticket <ticket-id> --session-id <id> --session <session-file> --stage <stage> --status <status> [--task <task-id>] [--round <n>] [--pane <pane-id>] [--pane-name <label>] --expected-revision <revision>
-factory-state message --ticket <ticket-id> --text <message> --expected-revision <revision>
-factory-state block --ticket <ticket-id> --reason <reason> --expected-revision <revision>
-factory-state unblock --ticket <ticket-id> --expected-revision <revision>
-factory-state usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>] --expected-revision <revision>
-factory-state usage show [--ticket <ticket-id>] [--stage <stage>]
-factory-state validate
+node <skill-dir>/scripts/fstate/cli.mjs <command> …
+```
+
+Expected operations include the ticket identifier and expected revision on every mutation. Copy `--expected-revision` from the JSON `revision` printed by the previous successful mutation. Pass `--factory-root` or set `FACTORY_ROOT` only when the factory root is not `<code-root>/.factory`.
+
+```text
+node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> [--title <title>] [--type <type>] [--source-kind <kind>] [--source-ref <ref>] [--worktree-path <path>] [--branch <branch>] [--base-branch <branch>] [--workspace-id <id>] --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs status [--ticket <ticket-id>]
+node <skill-dir>/scripts/fstate/cli.mjs transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs task transition --ticket <ticket-id> --task <task-id> --status <status> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs review record --ticket <ticket-id> --task <task-id> --round <n> --verdict <verdict> --finding-count <n> --blocking-count <n> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs session record --ticket <ticket-id> --session-id <id> --session <session-file> --stage <stage> --status <status> [--task <task-id>] [--round <n>] [--pane <pane-id>] [--pane-name <label>] --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs message --ticket <ticket-id> --text <message> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs block --ticket <ticket-id> --reason <reason> [--owner user|agent|external] [--task <task-id>] --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs unblock --ticket <ticket-id> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>] --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs usage show [--ticket <ticket-id>] [--stage <stage>]
+node <skill-dir>/scripts/fstate/cli.mjs validate
 ```
 
 Every mutation must acquire an exclusive lock, validate the schema and expected revision, write a temporary file in the same directory, and atomically rename it. Atomic rename without locking is insufficient because concurrent writers can lose updates.
@@ -147,7 +151,7 @@ The ticket map is sufficient for a v0 dashboard and for several tickets advancin
 - Use session `paneName` for display and `paneId` plus `workspaceId` only for live navigation; pane IDs may become stale after a process closes.
 - Treat missing optional metadata as unknown rather than as a zero or empty value.
 
-State version 3 adds dashboard timestamps and ticket metadata, the nested task review summary, pane labels, and session context occupancy. A future `factory-state` implementation should migrate a version 2 file under the same lock and atomic-write protocol; unknown historical values remain `null` rather than being invented.
+State version 3 adds dashboard timestamps and ticket metadata, the nested task review summary, pane labels, and session context occupancy. `scripts/fstate/cli.mjs` migrates a version 2 file under the same lock and atomic-write protocol; unknown historical values remain `null` rather than being invented.
 
 This file is a current-state snapshot, not an event log. The single lock will become a constraint only when writes are frequent, history/querying is required, or the file grows materially with completed tickets and sessions. Those are the signals to move operational state to SQLite; they are not blockers for parallel-ticket v0.
 
@@ -157,10 +161,10 @@ This file is a current-state snapshot, not an event log. The single lock will be
 - Ticket status: `active`, `waiting_for_user`, `blocked`, `failed`, or `complete`.
 - Task status: `pending`, `in_progress`, `ready_for_review`, `done`, or `blocked`.
 - Session status: `starting`, `running`, `waiting_for_user`, `completed`, `failed`, or `closed`.
-- Plan returns `factory.plan.v2` with status `planned` or `blocked`.
-- Work returns `factory.work.v2` with status `ready_for_review` or `blocked`.
-- Review returns `factory.review.v3` with verdict `approve`, `changes_requested`, or `blocked`.
-- Wrap-up satisfies its human handoff requirements; v0 has no machine JSON envelope.
+- Plan returns a `factory.plan.v3` markdown Output template with status `planned` or `blocked`.
+- Work returns a `factory.work.v3` markdown Output template with status `ready_for_review` or `blocked`.
+- Review returns a `factory.review.v4` markdown findings list with verdict `approve`, `changes_requested`, or `blocked`.
+- Wrap-up returns a `factory.wrapup.v1` markdown Output template with the required handoff headings.
 
 `ready_for_review` is the only successful work-stage task status. Do not introduce `implemented` as an alias. Dependencies determine the executable task frontier independently of status.
 
@@ -183,11 +187,12 @@ Omit or clear `task` and `round` when they do not apply. Do not use `report-agen
 
 Use `pi-herdr-subagents` for launch, completion, prompt delivery, and Pi session identity:
 
-1. Call `subagent` with explicit `name`, `model`, `skills`, `tools`, and `cwd` overrides.
+1. Call `subagent` with explicit `name`, `model`, `skills`, `tools`, and `cwd` overrides. For review, pass `tools=read,grep,find,ls`; never `bash`, `edit`, or `write`.
 2. Retain the returned `sessionFile`, Pi session ID, pane ID, pane name, and role in state.
 3. Wait for the automatic steer message; never poll terminals or session files for completion.
-4. Validate the returned structured assistant message.
-5. Continue a role with `subagent_resume` rather than starting a replacement session.
+4. Run `scripts/pi-session-reader.py contract --schema <factory.plan.v3|factory.work.v3|factory.review.v4|factory.wrapup.v1> --check` once against `sessionFile`. Do not treat steered prose as the contract. Do not write inline Python to parse Pi JSONL. Exit 3/4: `subagent_resume` once with the stderr line; request only the Output template, never a JSON object. Exit 0: print compact JSON (omit `--check`) when `fstate` needs fields such as verdict and finding counts.
+5. Before spawning or resuming review, run `scripts/review-packet.py` once and pass only the printed `packet:` and `diff:` paths. The diff is the cumulative uncommitted ticket worktree change.
+6. Continue a role with `subagent_resume` rather than starting a replacement session.
 
 `caller_ping` means the child needs user or supervisor input. It is not a failure. Set `waiting_for_user`, surface the exact question, and resume the same session after an answer.
 
@@ -199,13 +204,21 @@ Store numbers, not display strings such as `in 28 / out 6.9k`. Do not persist `c
 
 The completion steer from current `pi-herdr-subagents` may include `details.contextUsage` with `tokens`, `contextWindow`, and `percent`. This is current context occupancy, not cumulative model usage or billed tokens. Store it under the matching session's optional `context` object for diagnostics, mapping `contextWindow` to `window`; never copy it into `usage.tokens.total`.
 
-At every stage boundary and before a session is abandoned, run:
+At every stage boundary and before a session is abandoned, collect billed usage with a single read:
 
 ```text
-factory-state usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>]
+python3 <skill-dir>/scripts/pi-session-reader.py usage <session-file>
 ```
 
-The command should use Pi's cumulative session statistics API when available. Otherwise it must read the active branch of the append-only Pi JSONL and aggregate Pi's numeric usage records, including assistant messages and any compaction or branch-summary entries Pi counts in its own session totals. Preserve Pi's reported `totalTokens` when available and sum `cost.total` as `costUsd`; do not estimate prices locally. If a later subagent extension version adds cumulative numeric usage to the structured steer, prefer that payload after validating its version and session identity.
+Then persist that JSON through:
+
+```text
+node <skill-dir>/scripts/fstate/cli.mjs usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>] --expected-revision <revision>
+```
+
+`usage record` calls this reader rather than inventing a second parser. A later `factory-state` may call Pi's session statistics API instead.
+
+The reader walks the active `parentId` branch of the append-only Pi JSONL and sums Pi's numeric usage records, including assistant messages and any compaction or branch-summary entries Pi counts in its own session totals. Preserve Pi's reported `totalTokens` when available and sum `cost.total` as `costUsd`; do not estimate prices locally. If a later subagent extension version adds cumulative numeric usage to the structured steer, prefer that payload after validating its version and session identity.
 
 Usage is keyed by Pi session ID. Recording is an idempotent replacement of that session's cumulative values through `throughEntryId`, not an increment. A resumed session therefore updates one record instead of double-counting earlier turns. `factory-state usage show` derives per-stage, per-task, per-model, per-ticket, and total summaries from these records.
 
@@ -216,6 +229,6 @@ On resume:
 1. Validate state and its revision.
 2. Reconcile the ticket's Herdr workspace, worktree, and Pi session references with live state.
 3. Resume current sessions where possible.
-4. If a recorded transition lacks a valid structured stage result, return to the prior safe stage and report the recovery action.
+4. If a recorded transition lacks a valid structured stage result (Output template), return to the prior safe stage and report the recovery action.
 
 Never interpret an idle or closed session as proof that plan, work, review, or wrap-up succeeded.

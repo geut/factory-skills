@@ -6,16 +6,16 @@ The factory takes one ticket through research, a small dependency-ordered task p
 
 ## Status
 
-This repository contains the v0 skills and their contracts. The supervised flow expects:
+This repository contains the v0 skills and their Output templates. The supervised flow expects:
 
 - [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents) for asynchronous Pi role sessions inside Herdr.
-- A `factory-state` executable for atomic `FACTORY-STATE.json` updates and usage collection. Its contract is specified by `factory-supervise`, but the executable is not implemented here yet.
+- Node.js 24+ to run `skills/factory-supervise/scripts/fstate/cli.mjs` for atomic `FACTORY-STATE.json` updates and usage collection.
 
-Until `factory-state` exists, use the manual workflow below or invoke individual skills directly. Detailed reviews remain in Pi sessions in v0; state keeps only verdicts, round counts, token and cost usage, and unresolved blockers.
+You can still invoke individual skills directly with the manual workflow below. Detailed reviews remain in Pi sessions in v0; state keeps only verdicts, round counts, token and cost usage, and unresolved blockers.
 
 ## Vocabulary
 
-Use these terms consistently in prompts, files, schemas, and user-facing messages:
+Use these terms consistently in prompts, files, Output templates, and user-facing messages:
 
 | Term | Meaning |
 | --- | --- |
@@ -47,11 +47,11 @@ Ticket `SHOP-42` asks the product to remember a user's catalog filter.
 | Skill | Responsibility | Main output |
 | --- | --- | --- |
 | `factory-supervise` | Coordinates tickets, Herdr subagents, worktrees, atomic state, budgets, and the review loop. | A ticket advanced safely through its stages. |
-| `factory-plan` | Researches one ticket, requests clarification when necessary, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered task files, and `factory.plan.v2` JSON. |
-| `factory-work` | Implements one ready task using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and `factory.work.v2` JSON. |
-| `factory-review` | Reviews one task adversarially from a different, read-only model session. | `factory.review.v3` acceptance evidence, findings, and verdict JSON. |
-| `factory-wrapup` | Updates durable knowledge and prepares the change for human submission. | PR summary, artifact and test evidence, progressive explanations, usage table, Pi summary view, Fresh diff, and merge commands. |
-| `factory-reflect` | Finds reusable lessons and evaluates proposed skill or tooling improvements. | Human-approved learning and improvement proposals. |
+| `factory-plan` | Researches one ticket, requests clarification when necessary, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered task files, and a `factory.plan.v3` markdown Output. |
+| `factory-work` | Implements one ready task using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and a `factory.work.v3` markdown Output. |
+| `factory-review` | Reviews one task adversarially from a different, read-only model session. | A `factory.review.v4` markdown findings list and verdict. |
+| `factory-wrapup` | Updates durable knowledge and prepares the change for human submission. | A `factory.wrapup.v1` markdown handoff, usage table, Pi summary view, and Fresh diff. |
+| `factory-reflect` | Finds reusable lessons and evaluates proposed skill or tooling improvements. | A markdown candidate list for human approval. |
 
 The work playbooks cover bugs, features, performance changes, refactors, and investigations. Reflection is not required for every ticket; use it after meaningful corrections, expensive failures, or repeated patterns.
 
@@ -62,7 +62,7 @@ The work playbooks cover bugs, features, performance changes, refactors, and inv
 - A Git repository for the product code. Concurrent tickets use separate Herdr workspaces and worktrees.
 - A work model and a different review model.
 - [Fresh](https://getfresh.dev/) for the final handoff and Review Diff panes.
-- The `factory-state` CLI for the fully supervised workflow.
+- Node.js 24+ for `skills/factory-supervise/scripts/fstate/cli.mjs` in the fully supervised workflow.
 
 Matt Pocock's [`grill-with-docs`, `to-spec`, and `to-tickets`](https://github.com/mattpocock/skills) are optional but recommended. `factory-plan` reuses their interview, synthesis, and slicing mechanics while overriding their destinations: artifacts stay local and nothing is published to an issue tracker.
 
@@ -217,7 +217,7 @@ For a small, well-understood ticket, the initial prompt may authorize the comple
 
 ## Manual v0 workflow
 
-Until `factory-state` is available, run the roles explicitly in separate Herdr tabs:
+To run roles without a supervisor, invoke them explicitly in separate Herdr tabs:
 
 1. Plan:
 
@@ -231,15 +231,17 @@ Until `factory-state` is available, run the roles explicitly in separate Herdr t
    /skill:factory-work Implement task 01 for ticket PROJ-123.
    ```
 
-3. Start a fresh Pi reviewer tab with a different model and read-only tools:
+3. After work finishes, build the packet from the ticket worktree, then start a fresh Pi reviewer tab with a different model and `read`, `grep`, `find`, and `ls` (no `bash`, `edit`, or `write`):
 
    ```text
-   /skill:factory-review Review task 01 for ticket PROJ-123.
-   Use the ticket outcome, task acceptance criteria and non-goals, base reference,
-   complete diff including untracked files, surrounding code, and exact test evidence.
+   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --worktree <worktree> --out /tmp
+   /skill:factory-review Review ticket PROJ-123 task 01 round 1. Follow factory-review.
+   Packet: /tmp/PROJ-123-T01-R1-packet.md
+   Diff: /tmp/PROJ-123-T01-R1.diff
+   End with the factory.review.v4 Output template only.
    ```
 
-4. Relay blocking findings to the work tab. Return the work response and updated diff to the same reviewer tab. Stop after approval or three rounds.
+4. Relay blocking findings to the work tab. Rerun `review-packet.py` and return the new packet and diff paths to the same reviewer tab. Stop after approval or three rounds.
 5. Repeat for the next ready task.
 6. After every task is approved, run:
 
@@ -249,16 +251,16 @@ Until `factory-state` is available, run the roles explicitly in separate Herdr t
 
 7. Run `/skill:factory-reflect` only when the ticket produced a reusable lesson worth evaluating.
 
-The reviewer returns JSON only and never edits code. In supervised mode, wrap-up reopens its completed Pi session in a named summary pane and opens a second named Fresh pane for Review Diff. In the direct workflow, the current Pi pane already holds the summary. The human remains responsible for committing, merging, pushing, and opening the pull request.
+The reviewer returns only the Output template and never edits code. In supervised mode, wrap-up reopens its completed Pi session in a named summary pane and opens a second named Fresh pane for Review Diff. In the direct workflow, the current Pi pane already holds the summary. The human remains responsible for committing, merging, pushing, and opening the pull request.
 
 ## Review outcomes
 
-- `approve`: every required evidence check passes and no blocking findings remain; non-blocking minor observations may still be present.
-- `changes_requested`: blocking findings return to the existing work session.
-- `blocked`: review lacks required evidence, model independence, or read-only isolation.
+- `approve`: no blocking findings remain; non-blocking minor observations may still be present.
+- `changes_requested`: blocking findings (`critical` or `major`) return to the existing work session.
+- `blocked`: review lacks the packet or diff, model independence, or read-only isolation.
 - `waiting_for_user`: blocking findings remain after three rounds or require a product decision.
 
-The supervisor enforces schemas and loop limits but does not overrule technical judgment. An optional arbiter model may receive one bounded dispute-only prompt; it does not perform another full review.
+The supervisor enforces Output templates and loop limits but does not overrule technical judgment. An optional arbiter model may receive one bounded dispute-only prompt; it does not perform another full review.
 
 ## Parallel ticket state
 
