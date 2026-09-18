@@ -1,6 +1,6 @@
 ---
 name: factory-supervise
-description: Run or resume one or more tickets inside a Herdr-managed Pi sandbox, coordinating specialist subagents, isolated worktrees, atomic factory state, usage accounting, and at most three work-review rounds. Use for factory orchestration rather than planning, implementation, or review itself.
+description: Coordinate one or more tickets inside a Herdr-managed Pi sandbox using specialist subagents, isolated worktrees, atomic factory state, usage accounting, and at most three work-review rounds. Use when starting factory orchestration in this session, not for planning, implementation, or review itself. Do not apply when the user is continuing an already-supervised ticket; those prompts resume this session by ticket id.
 ---
 
 # Factory Supervise
