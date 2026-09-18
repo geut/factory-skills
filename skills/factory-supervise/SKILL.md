@@ -5,7 +5,7 @@ description: Coordinate one or more tickets inside a Herdr-managed Pi sandbox us
 
 # Factory Supervise
 
-Coordinate ticket stages without doing specialist work. Herdr owns live sessions, `.factory/` holds durable guidance, and `.factory/FACTORY-STATE.json` holds operational state.
+Coordinate ticket stages without doing specialist work. Herdr owns live sessions, `.factory/` holds durable guidance, and `.factory/db/state.sqlite` holds operational state.
 
 Read [references/runtime-protocol.md](references/runtime-protocol.md) before starting or resuming supervision.
 
@@ -19,7 +19,7 @@ Verify that:
 - Herdr is at least 0.8.2.
 - `subagent`, `subagent_resume`, `subagent_interrupt`, and `subagents_list` are provided by `pi-herdr-subagents`.
 - The extension's bundled Herdr plugin is linked and enabled.
-- Node.js 24+ can run [scripts/fstate/cli.mjs](scripts/fstate/cli.mjs). Use it for every `FACTORY-STATE.json` mutation; never edit that file by hand.
+- Node.js 24+ can run [scripts/fstate/cli.mjs](scripts/fstate/cli.mjs). Use it for every factory-state mutation; never open `.factory/db/` by hand.
 
 If the subagent tools are absent, report the setup problem. Do not fall back to typing commands into panes, scraping terminal output, polling session files for completion, or driving roles with `herdr agent start` / `herdr agent prompt`.
 

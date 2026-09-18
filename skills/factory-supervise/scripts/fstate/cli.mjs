@@ -1,20 +1,18 @@
 #!/usr/bin/env node
 /**
- * Adhoc factory-state CLI. Mutate .factory/FACTORY-STATE.json with a lock,
- * expected-revision check, and atomic rename. Do not edit the file by hand.
+ * Factory-state CLI. Mutate .factory/db/state.sqlite with a revision check
+ * and a single SQLite transaction. Do not edit the database by hand.
  */
 import { spawnSync } from "node:child_process";
-import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { CliError, EXIT_ARGS, EXIT_INVALID, EXIT_IO, EXIT_NOT_FOUND, EXIT_OK } from "./errors.mjs";
+import { startServer } from "./server.mjs";
+import { loadState, mutate } from "./store.mjs";
 
-export const EXIT_OK = 0;
-export const EXIT_IO = 1;
-export const EXIT_ARGS = 2;
-export const EXIT_NOT_FOUND = 3;
-export const EXIT_INVALID = 4;
+export { EXIT_ARGS, EXIT_INVALID, EXIT_IO, EXIT_NOT_FOUND, EXIT_OK, CliError };
 
 const STAGES = new Set(["plan", "work", "review", "wrapup", "done"]);
 const TICKET_STATUSES = new Set(["active", "waiting_for_user", "blocked", "failed", "complete"]);
@@ -56,6 +54,8 @@ const OPTION_SPEC = {
   branch: { type: "string" },
   "base-branch": { type: "string" },
   "workspace-id": { type: "string" },
+  host: { type: "string" },
+  port: { type: "string" },
 };
 
 const USAGE = `Usage: node cli.mjs <command> [options]
@@ -73,21 +73,27 @@ Commands:
   usage record
   usage show
   validate
+  server
 
 Global:
   --factory-root <path>   Else FACTORY_ROOT, else <git-toplevel>/.factory
+
+Server:
+  --host <addr>           Default 127.0.0.1
+  --port <n>              Default 8787
 `;
 
-class CliError extends Error {
-  constructor(message, code) {
-    super(message);
-    this.code = code;
-  }
-}
-
-function nowUtc() {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-}
+const OP_NAMES = {
+  create: "create",
+  transition: "transition",
+  "task transition": "task_transition",
+  "review record": "review_record",
+  "session record": "session_record",
+  message: "message",
+  block: "block",
+  unblock: "unblock",
+  "usage record": "usage_record",
+};
 
 function writeLine(stream, text) {
   stream.write(text.endsWith("\n") ? text : `${text}\n`);
@@ -148,10 +154,6 @@ export function resolveFactoryRoot(flag, env = process.env) {
   return path.isAbsolute(override) ? override : path.resolve(codeRoot(), override);
 }
 
-function emptyState() {
-  return { schemaVersion: 3, revision: 0, updatedAt: null, tickets: {} };
-}
-
 function emptyReview(round = null) {
   return {
     round,
@@ -206,201 +208,12 @@ function emptyTask(ts) {
   };
 }
 
-function migrateTicket(ticket) {
-  if (!ticket || typeof ticket !== "object" || Array.isArray(ticket)) {
-    throw new CliError("ticket must be an object", EXIT_INVALID);
-  }
-  for (const key of [
-    "title",
-    "type",
-    "source",
-    "currentTask",
-    "message",
-    "messageAt",
-    "blocker",
-    "createdAt",
-    "updatedAt",
-    "worktree",
-  ]) {
-    if (!(key in ticket)) {
-      ticket[key] = null;
-    }
-  }
-  if (!ticket.tasks || typeof ticket.tasks !== "object" || Array.isArray(ticket.tasks)) {
-    ticket.tasks = {};
-  }
-  if (!ticket.sessions || typeof ticket.sessions !== "object" || Array.isArray(ticket.sessions)) {
-    ticket.sessions = {};
-  }
-  if (!ticket.usage || typeof ticket.usage !== "object" || Array.isArray(ticket.usage)) {
-    ticket.usage = {};
-  }
-  for (const task of Object.values(ticket.tasks)) {
-    if (!task || typeof task !== "object") {
-      continue;
-    }
-    const oldRound = task.reviewRound;
-    if ("reviewRound" in task) {
-      delete task.reviewRound;
-    }
-    if (!task.review || typeof task.review !== "object") {
-      task.review = emptyReview(typeof oldRound === "number" ? oldRound : null);
-    }
-    if (!("blockedBy" in task)) {
-      task.blockedBy = [];
-    }
-    if (!("updatedAt" in task)) {
-      task.updatedAt = null;
-    }
-    if (!("status" in task)) {
-      task.status = null;
-    }
-  }
-  for (const session of Object.values(ticket.sessions)) {
-    if (!session || typeof session !== "object") {
-      continue;
-    }
-    for (const key of ["round", "paneName", "context", "startedAt", "updatedAt", "task", "paneId", "model"]) {
-      if (!(key in session)) {
-        session[key] = null;
-      }
-    }
-  }
-  for (const usage of Object.values(ticket.usage)) {
-    if (!usage || typeof usage !== "object") {
-      continue;
-    }
-    for (const key of ["round", "recordedAt", "task"]) {
-      if (!(key in usage)) {
-        usage[key] = null;
-      }
-    }
-  }
-}
-
-function migrate(state) {
-  if (!state || typeof state !== "object" || Array.isArray(state)) {
-    throw new CliError("state must be an object", EXIT_INVALID);
-  }
-  const version = state.schemaVersion;
-  if (version !== 2 && version !== 3) {
-    throw new CliError(`unsupported schemaVersion ${version}`, EXIT_INVALID);
-  }
-  if (typeof state.revision !== "number" || !Number.isInteger(state.revision)) {
-    throw new CliError("revision must be an integer", EXIT_INVALID);
-  }
-  if (!state.tickets || typeof state.tickets !== "object" || Array.isArray(state.tickets)) {
-    throw new CliError("tickets must be an object", EXIT_INVALID);
-  }
-  if (version === 2) {
-    state.schemaVersion = 3;
-    if (!("updatedAt" in state)) {
-      state.updatedAt = null;
-    }
-    for (const ticket of Object.values(state.tickets)) {
-      migrateTicket(ticket);
-    }
-  }
-  return state;
-}
-
 function ticketOf(state, id) {
   const ticket = state.tickets[id];
   if (!ticket) {
     throw new CliError(`ticket not found: ${id}`, EXIT_NOT_FOUND);
   }
   return ticket;
-}
-
-function statePath(factoryRoot) {
-  return path.join(factoryRoot, "FACTORY-STATE.json");
-}
-
-function lockPath(factoryRoot) {
-  return path.join(factoryRoot, "FACTORY-STATE.json.lock");
-}
-
-function tmpPath(factoryRoot) {
-  return path.join(factoryRoot, "FACTORY-STATE.json.tmp");
-}
-
-async function readStateFile(factoryRoot) {
-  const dest = statePath(factoryRoot);
-  let raw;
-  try {
-    raw = await readFile(dest, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return null;
-    }
-    throw new CliError(`cannot read ${dest}: ${err.message}`, EXIT_IO);
-  }
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new CliError(`invalid JSON in ${dest}: ${err.message}`, EXIT_INVALID);
-  }
-}
-
-async function writeStateFile(factoryRoot, state) {
-  const tmp = tmpPath(factoryRoot);
-  const dest = statePath(factoryRoot);
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await rename(tmp, dest);
-}
-
-async function withLock(factoryRoot, fn) {
-  await mkdir(factoryRoot, { recursive: true });
-  const dest = lockPath(factoryRoot);
-  let handle;
-  try {
-    handle = await open(dest, "wx");
-  } catch (err) {
-    if (err.code === "EEXIST") {
-      throw new CliError(`lock busy: ${dest}`, EXIT_IO);
-    }
-    throw new CliError(`cannot lock ${dest}: ${err.message}`, EXIT_IO);
-  }
-  try {
-    await handle.write(String(process.pid));
-    return await fn();
-  } finally {
-    await handle.close().catch(() => {});
-    await unlink(dest).catch(() => {});
-  }
-}
-
-async function mutate(factoryRoot, expectedRevision, fn) {
-  return withLock(factoryRoot, async () => {
-    let state = await readStateFile(factoryRoot);
-    if (state === null) {
-      state = emptyState();
-    } else {
-      migrate(state);
-    }
-    if (state.revision !== expectedRevision) {
-      throw new CliError(
-        `revision mismatch: expected ${expectedRevision}, current ${state.revision}`,
-        EXIT_INVALID,
-      );
-    }
-    const ts = nowUtc();
-    const extra = fn(state, ts) || {};
-    state.revision += 1;
-    state.updatedAt = ts;
-    await writeStateFile(factoryRoot, state);
-    return { ok: true, revision: state.revision, ...extra };
-  });
-}
-
-function loadForRead(state, { missingOk = false } = {}) {
-  if (state === null) {
-    if (missingOk) {
-      return emptyState();
-    }
-    throw new CliError("FACTORY-STATE.json not found", EXIT_NOT_FOUND);
-  }
-  return migrate(structuredClone(state));
 }
 
 function collectEnumError(label, value, allowed, errors) {
@@ -414,7 +227,7 @@ function collectEnumError(label, value, allowed, errors) {
 
 function validateState(state) {
   const errors = [];
-  if (state.schemaVersion !== 2 && state.schemaVersion !== 3) {
+  if (state.schemaVersion !== 3) {
     errors.push(`unsupported schemaVersion ${state.schemaVersion}`);
   }
   if (typeof state.revision !== "number" || !Number.isInteger(state.revision)) {
@@ -704,7 +517,6 @@ function cmdUsageRecord(state, values, ts) {
 
 async function dispatch(command, values, io) {
   const factoryRoot = resolveFactoryRoot(values["factory-root"]);
-  const reads = new Set(["status", "usage show", "validate"]);
   const mutations = new Set([
     "create",
     "transition",
@@ -718,7 +530,7 @@ async function dispatch(command, values, io) {
   ]);
 
   if (command === "status") {
-    const state = loadForRead(await readStateFile(factoryRoot));
+    const state = loadState(factoryRoot);
     if (values.ticket) {
       const ticket = ticketOf(state, values.ticket);
       printJson(io.stdout, {
@@ -742,26 +554,23 @@ async function dispatch(command, values, io) {
   }
 
   if (command === "validate") {
-    const raw = await readStateFile(factoryRoot);
-    if (raw === null) {
-      throw new CliError("FACTORY-STATE.json not found", EXIT_NOT_FOUND);
-    }
-    const errors = validateState(raw);
+    const state = loadState(factoryRoot);
+    const errors = validateState(state);
     if (errors.length > 0) {
       throw new CliError(errors.join("; "), EXIT_INVALID);
     }
-    const ids = raw.tickets && typeof raw.tickets === "object" ? Object.keys(raw.tickets) : [];
+    const ids = Object.keys(state.tickets);
     printJson(io.stdout, {
       ok: true,
-      revision: raw.revision,
-      schemaVersion: raw.schemaVersion,
+      revision: state.revision,
+      schemaVersion: state.schemaVersion,
       tickets: ids,
     });
     return;
   }
 
   if (command === "usage show") {
-    const state = loadForRead(await readStateFile(factoryRoot));
+    const state = loadState(factoryRoot);
     if (values.stage) {
       requireEnum("stage", values.stage, STAGES);
     }
@@ -779,7 +588,31 @@ async function dispatch(command, values, io) {
     return;
   }
 
-  if (reads.has(command) || !mutations.has(command)) {
+  if (command === "server") {
+    const host = values.host || "127.0.0.1";
+    const portRaw = values.port;
+    const port = portRaw === undefined || portRaw === "" ? 8787 : Number(portRaw);
+    if (!Number.isInteger(port) || port < 0) {
+      throw new CliError("--port must be a non-negative integer", EXIT_ARGS);
+    }
+    const started = await startServer({ factoryRoot, host, port });
+    printJson(io.stdout, {
+      ok: true,
+      host: started.host,
+      port: started.port,
+      url: started.url,
+    });
+    await new Promise((resolve, reject) => {
+      const shutdown = () => {
+        started.close().then(resolve, reject);
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
+    return;
+  }
+
+  if (!mutations.has(command)) {
     throw new CliError(`unknown command: ${command || "(none)"}\n${USAGE}`, EXIT_ARGS);
   }
 
@@ -795,7 +628,7 @@ async function dispatch(command, values, io) {
     unblock: cmdUnblock,
     "usage record": cmdUsageRecord,
   };
-  const result = await mutate(factoryRoot, expectedRevision, (state, ts) =>
+  const result = mutate(factoryRoot, expectedRevision, OP_NAMES[command], (state, ts) =>
     handlers[command](state, values, ts),
   );
   printJson(io.stdout, result);

@@ -9,7 +9,7 @@ The factory takes one ticket through research, a small dependency-ordered task p
 This repository contains the v0 skills and their Output templates. The supervised flow expects:
 
 - [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents) for asynchronous Pi role sessions inside Herdr.
-- Node.js 24+ to run `skills/factory-supervise/scripts/fstate/cli.mjs` for atomic `FACTORY-STATE.json` updates and usage collection.
+- Node.js 24+ to run `skills/factory-supervise/scripts/fstate/cli.mjs` for atomic SQLite state updates and usage collection.
 
 You can still invoke individual skills directly with the manual workflow below. Detailed reviews remain in Pi sessions in v0; state keeps only verdicts, round counts, token and cost usage, and unresolved blockers.
 
@@ -102,7 +102,8 @@ The default factory root is `.factory/` inside the code repository. Keep it untr
 ├── .factory/
 │   ├── CONTEXT.md
 │   ├── FACTORY.json
-│   ├── FACTORY-STATE.json
+│   ├── db/                            # created by the first fstate mutation
+│   │   └── state.sqlite
 │   ├── PRD.md                         # optional
 │   ├── tickets/
 │   │   └── PROJ-123/
@@ -146,17 +147,9 @@ Create `.factory/FACTORY.json`:
 }
 ```
 
-Create `.factory/FACTORY-STATE.json`:
+Do not create a state file by hand. The first `fstate create` writes `.factory/db/state.sqlite`. A leftover `FACTORY-STATE.json` is imported once if the database is missing, then ignored.
 
-```json
-{
-  "schemaVersion": 3,
-  "revision": 0,
-  "tickets": {}
-}
-```
-
-`FACTORY.json` and `FACTORY-STATE.json` have independent schema versions. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
+`FACTORY.json` (config) and the SQLite store (operational state) have independent schema versions. The domain state shape is version 3. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
 
 Set `ticketIdPattern` to the project's existing convention. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review.model` must differ from `models.work.model`. Each role may set `thinking` to a Pi level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Omit `thinking` to use `medium`. A legacy string such as `"review": "provider/model"` is equivalent to `{ "model": "…", "thinking": "medium" }`. Do not append `:<thinking>` to the model id. Keep review at `medium` unless you raise it deliberately; `max` is expensive for adversarial review. When `arbiter` is set, it uses the same object shape. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
 
@@ -166,7 +159,7 @@ Before supervision, run Pi inside Herdr and confirm that `subagents_list` is ava
 
 Supervisor and child panes use compact labels such as `PROJ-123 · supervisor`, `PROJ-123 · work T01`, and `PROJ-123 · review T01 R2`. The supervisor also reports Herdr display tokens named `ticket`, `stage`, `task`, and `round`. Keep `pane` in `[ui.sidebar.agents]` and optionally add `$ticket`, `$stage`, `$task`, and `$round` to the row. The pane label answers “what is this?”, while tokens let a dense sidebar expose only the dimensions useful to you.
 
-These values are display metadata only. Herdr remains the source of live agent state, while `FACTORY-STATE.json` remains the source of ticket progress.
+These values are display metadata only. Herdr remains the source of live agent state, while `.factory/db/state.sqlite` remains the source of ticket progress.
 
 ## Kick off a ticket
 
@@ -268,9 +261,15 @@ The supervisor enforces Output templates and loop limits but does not overrule t
 
 ## Parallel ticket state
 
-`FACTORY-STATE.json` is a versioned current-state snapshot with a map keyed by ticket ID. Each ticket owns its stage, status, tasks, sessions, usage, worktree, blocker, latest meaningful message, and timestamps. A whole-file lock plus expected-revision check and atomic rename prevents concurrent supervisors from losing one another's updates. Dashboard readers do not take the lock; they read completed renames and use `revision` as their change cursor.
+`.factory/db/state.sqlite` is authoritative. Each ticket owns its stage, status, tasks, sessions, usage, worktree, blocker, latest meaningful message, and timestamps. Every mutation is one SQLite transaction with an expected-revision check. WAL lets dashboards query the same file while supervisors write.
 
-This is enough for v0 dashboards and several parallel tickets. It deliberately does not store history. Move to SQLite when write frequency, state size, retention, querying, or event history becomes a real requirement—not merely because more than one ticket exists.
+`fstate status` still prints a nested JSON view of that snapshot for agents. A dashboard should read the database directly and treat `meta.revision` as its change cursor. For live updates, run:
+
+```sh
+node skills/factory-supervise/scripts/fstate/cli.mjs server --host 127.0.0.1 --port 8787
+```
+
+Then subscribe to `http://127.0.0.1:8787/events`. Each event is a compact `{ revision, op, ticket, payload }`; re-query SQLite after the cursor moves. The `events` table is the history JSON never had. Do not open the database by hand from an agent session.
 
 ## What the factory does not do
 

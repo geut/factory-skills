@@ -45,7 +45,7 @@ Run focused checks while working, then the relevant broader suite once. Do not s
 
 Mark satisfied acceptance criteria and set the task status to `ready_for_review`, not `done`; review owns approval. Update durable context only for facts useful beyond this ticket.
 
-In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`. Never edit `FACTORY-STATE.json` directly.
+In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`. Never open `.factory/db/` by hand.
 
 Do not start the reviewer, commit, push, publish, or create a pull request. The supervisor owns the next stage.
 

@@ -31,7 +31,7 @@ Configuration may add budgets and project-specific verification commands. `revie
 
 ## State ownership
 
-`.factory/FACTORY-STATE.json` is authoritative for all active and completed tickets. It uses a map keyed by ticket ID so concurrent tickets do not overwrite one another:
+`.factory/db/state.sqlite` is authoritative for all active and completed tickets. Tickets are rows keyed by ID so concurrent tickets do not overwrite one another. `fstate status` reconstructs this nested JSON view for agents; dashboards should query the database instead of parsing JSON files.
 
 ```json
 {
@@ -116,13 +116,13 @@ Configuration may add budgets and project-specific verification commands. `revie
 }
 ```
 
-Specialist agents never edit state directly. The supervisor is the semantic writer and uses the bundled v0 CLI for every mutation:
+Specialist agents never edit state directly. The supervisor is the semantic writer and uses the bundled CLI for every mutation:
 
 ```text
 node <skill-dir>/scripts/fstate/cli.mjs <command> …
 ```
 
-Expected operations include the ticket identifier and expected revision on every mutation. Copy `--expected-revision` from the JSON `revision` printed by the previous successful mutation. Pass `--factory-root` or set `FACTORY_ROOT` only when the factory root is not `<code-root>/.factory`.
+Expected operations include the ticket identifier and expected revision on every mutation. Copy `--expected-revision` from the JSON `revision` printed by the previous successful mutation. Pass `--factory-root` or set `FACTORY_ROOT` only when the factory root is not `<code-root>/.factory`. Never open `.factory/db/` by hand.
 
 ```text
 node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> [--title <title>] [--type <type>] [--source-kind <kind>] [--source-ref <ref>] [--worktree-path <path>] [--branch <branch>] [--base-branch <branch>] [--workspace-id <id>] --expected-revision <revision>
@@ -137,25 +137,25 @@ node <skill-dir>/scripts/fstate/cli.mjs unblock --ticket <ticket-id> --expected-
 node <skill-dir>/scripts/fstate/cli.mjs usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>] --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs usage show [--ticket <ticket-id>] [--stage <stage>]
 node <skill-dir>/scripts/fstate/cli.mjs validate
+node <skill-dir>/scripts/fstate/cli.mjs server [--host 127.0.0.1] [--port 8787]
 ```
 
-Every mutation must acquire an exclusive lock, validate the schema and expected revision, write a temporary file in the same directory, and atomically rename it. Atomic rename without locking is insufficient because concurrent writers can lose updates.
+Every mutation opens a `BEGIN IMMEDIATE` transaction, checks the expected revision, writes the snapshot tables, appends an `events` row, and commits. WAL mode lets readers query while a writer holds the transaction. A leftover `FACTORY-STATE.json` is imported once when the database is missing (including a version 2 file, migrated to domain schema 3) and is never written again.
 
 Every successful mutation increments `revision`, updates the top-level and affected ticket `updatedAt` values, and updates the narrower task, session, message, or usage timestamp when applicable. Use UTC RFC 3339 timestamps. `message` is only the latest meaningful update, not a transcript. When blocked, store `blocker` as an object containing `reason`, `since`, `owner` (`user`, `agent`, or `external`), and optional `task`; clear it on unblock.
 
 ## Dashboard consumers and parallel tickets
 
-The ticket map is sufficient for a v0 dashboard and for several tickets advancing independently. `FACTORY.json` and `FACTORY-STATE.json` have independent schema versions; this state shape is version 3. A consumer should:
+The ticket tables are sufficient for a dashboard and for several tickets advancing independently. `FACTORY.json` and the SQLite store have independent schema versions; the domain state shape is version 3 and `storageVersion` is 1. A consumer should:
 
-- Read only the atomically renamed `FACTORY-STATE.json`, never lock files or temporary siblings.
-- Treat `revision` as the change cursor and `schemaVersion` as the compatibility boundary.
-- Render each ticket independently from `stage`, `status`, `currentTask`, task review summary, `message`, `blocker`, and its timestamps.
-- Use session `paneName` for display and `paneId` plus `workspaceId` only for live navigation; pane IDs may become stale after a process closes.
+- Open `.factory/db/state.sqlite` read-only. Do not write. WAL sidecars stay in `.factory/db/`.
+- Treat `meta.revision` as the change cursor and `meta.schemaVersion` as the compatibility boundary.
+- Render each ticket independently from `stage`, `status`, `current_task`, task review summary, `message`, `blockers`, and timestamps.
+- Use session `pane_name` for display and `pane_id` plus `worktree_workspace_id` only for live navigation; pane IDs may become stale after a process closes.
 - Treat missing optional metadata as unknown rather than as a zero or empty value.
+- For live updates, run `fstate server` (default `127.0.0.1:8787`) and subscribe to `GET /events`. Cold connect without a cursor receives `event: hello` with the current revision. `Last-Event-ID` or `?after=` replays later `events` rows. After each event, re-query SQLite; the SSE payload is a compact `{ revision, op, ticket, task, payload }`, not a full snapshot.
 
-State version 3 adds dashboard timestamps and ticket metadata, the nested task review summary, pane labels, and session context occupancy. `scripts/fstate/cli.mjs` migrates a version 2 file under the same lock and atomic-write protocol; unknown historical values remain `null` rather than being invented.
-
-This file is a current-state snapshot, not an event log. The single lock will become a constraint only when writes are frequent, history/querying is required, or the file grows materially with completed tickets and sessions. Those are the signals to move operational state to SQLite; they are not blockers for parallel-ticket v0.
+`scripts/fstate/cli.mjs` imports a leftover version 2 JSON file under the same transaction protocol; unknown historical values remain `null` rather than being invented. The `events` table is the append-only history. SQLite wins if both the database and `FACTORY-STATE.json` exist.
 
 ## Vocabulary and contracts
 
