@@ -147,7 +147,7 @@ Create `.factory/FACTORY.json`:
 }
 ```
 
-Do not create a state file by hand. The first `fstate create` writes `.factory/db/state.sqlite`. A leftover `FACTORY-STATE.json` is imported once if the database is missing, then ignored.
+Do not create a state file by hand. The first `fstate create` writes `.factory/db/state.sqlite`.
 
 `FACTORY.json` (config) and the SQLite store (operational state) have independent schema versions. The domain state shape is version 3. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
 

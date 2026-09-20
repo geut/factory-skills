@@ -29,6 +29,7 @@ const VERDICTS = new Set(["approve", "changes_requested", "blocked"]);
 const OWNERS = new Set(["user", "agent", "external"]);
 
 const OPTION_SPEC = {
+  help: { type: "boolean", short: "h" },
   ticket: { type: "string" },
   title: { type: "string" },
   type: { type: "string" },
@@ -58,25 +59,148 @@ const OPTION_SPEC = {
   port: { type: "string" },
 };
 
-const USAGE = `Usage: node cli.mjs <command> [options]
+const USAGE_LINE = "node cli.mjs <command> [options]";
+const FACTORY_ROOT_NOTE = "Else FACTORY_ROOT, else <git-toplevel>/.factory";
+
+const COMMANDS = [
+  {
+    name: "help",
+    mutation: false,
+    summary: "Print this command catalog as JSON. Pass a command name to filter.",
+    required: [],
+    optional: [],
+  },
+  {
+    name: "create",
+    mutation: true,
+    summary: "Create a ticket at stage plan, status active.",
+    required: ["--ticket", "--expected-revision"],
+    optional: [
+      "--title",
+      "--type",
+      "--source-kind",
+      "--source-ref",
+      "--worktree-path",
+      "--branch",
+      "--base-branch",
+      "--workspace-id",
+    ],
+  },
+  {
+    name: "status",
+    mutation: false,
+    summary: "Print ticket state as JSON.",
+    required: [],
+    optional: ["--ticket"],
+  },
+  {
+    name: "transition",
+    mutation: true,
+    summary: "Set ticket stage and status.",
+    required: ["--ticket", "--stage", "--status", "--expected-revision"],
+    optional: [],
+    flagEnums: { "--stage": "stage", "--status": "ticketStatus" },
+  },
+  {
+    name: "task transition",
+    mutation: true,
+    summary: "Set a task status and currentTask.",
+    required: ["--ticket", "--task", "--status", "--expected-revision"],
+    optional: [],
+    flagEnums: { "--status": "taskStatus" },
+  },
+  {
+    name: "review record",
+    mutation: true,
+    summary: "Record a review verdict for a task.",
+    required: [
+      "--ticket",
+      "--task",
+      "--round",
+      "--verdict",
+      "--finding-count",
+      "--blocking-count",
+      "--expected-revision",
+    ],
+    optional: [],
+    flagEnums: { "--verdict": "verdict" },
+  },
+  {
+    name: "session record",
+    mutation: true,
+    summary: "Upsert a session row.",
+    required: [
+      "--ticket",
+      "--session-id",
+      "--session",
+      "--stage",
+      "--status",
+      "--expected-revision",
+    ],
+    optional: ["--task", "--round", "--pane", "--pane-name"],
+    flagEnums: { "--stage": "stage", "--status": "sessionStatus" },
+  },
+  {
+    name: "message",
+    mutation: true,
+    summary: "Set the latest meaningful ticket message.",
+    required: ["--ticket", "--text", "--expected-revision"],
+    optional: [],
+  },
+  {
+    name: "block",
+    mutation: true,
+    summary: "Mark the ticket blocked.",
+    required: ["--ticket", "--reason", "--expected-revision"],
+    optional: ["--owner", "--task"],
+    flagEnums: { "--owner": "owner" },
+  },
+  {
+    name: "unblock",
+    mutation: true,
+    summary: "Clear the blocker and restore active if blocked.",
+    required: ["--ticket", "--expected-revision"],
+    optional: [],
+  },
+  {
+    name: "usage record",
+    mutation: true,
+    summary: "Persist billed usage from a Pi session file.",
+    required: ["--ticket", "--stage", "--session", "--expected-revision"],
+    optional: ["--task", "--round"],
+    flagEnums: { "--stage": "stage" },
+  },
+  {
+    name: "usage show",
+    mutation: false,
+    summary: "Summarize recorded usage.",
+    required: [],
+    optional: ["--ticket", "--stage"],
+    flagEnums: { "--stage": "stage" },
+  },
+  {
+    name: "validate",
+    mutation: false,
+    summary: "Check schemaVersion and enum values.",
+    required: [],
+    optional: [],
+  },
+  {
+    name: "server",
+    mutation: false,
+    summary: "Serve SSE events for dashboards.",
+    required: [],
+    optional: ["--host", "--port"],
+  },
+];
+
+const USAGE = `Usage: ${USAGE_LINE}
 
 Commands:
-  create
-  status
-  transition
-  task transition
-  review record
-  session record
-  message
-  block
-  unblock
-  usage record
-  usage show
-  validate
-  server
+${COMMANDS.map((command) => `  ${command.name}`).join("\n")}
 
 Global:
-  --factory-root <path>   Else FACTORY_ROOT, else <git-toplevel>/.factory
+  --factory-root <path>   ${FACTORY_ROOT_NOTE}
 
 Server:
   --host <addr>           Default 127.0.0.1
@@ -101,6 +225,51 @@ function writeLine(stream, text) {
 
 function printJson(stdout, value) {
   writeLine(stdout, JSON.stringify(value, null, 2));
+}
+
+function catalogEntry(command) {
+  return {
+    name: command.name,
+    mutation: command.mutation,
+    summary: command.summary,
+    required: command.required,
+    optional: command.optional,
+    ...(command.flagEnums ? { flagEnums: command.flagEnums } : {}),
+  };
+}
+
+function helpTopic(command, helpFlag) {
+  if (command === "help") {
+    return null;
+  }
+  if (command.startsWith("help ")) {
+    return command.slice("help ".length);
+  }
+  if (helpFlag && command) {
+    return command;
+  }
+  return null;
+}
+
+function helpPayload(topic) {
+  const selected = topic ? COMMANDS.filter((command) => command.name === topic) : COMMANDS;
+  if (topic && selected.length === 0) {
+    throw new CliError(`unknown command: ${topic}`, EXIT_ARGS);
+  }
+  return {
+    ok: true,
+    usage: USAGE_LINE,
+    global: [{ flag: "--factory-root", required: false, note: FACTORY_ROOT_NOTE }],
+    enums: {
+      stage: [...STAGES],
+      ticketStatus: [...TICKET_STATUSES],
+      taskStatus: [...TASK_STATUSES],
+      sessionStatus: [...SESSION_STATUSES],
+      verdict: [...VERDICTS],
+      owner: [...OWNERS],
+    },
+    commands: selected.map(catalogEntry),
+  };
 }
 
 function requireOpt(values, name) {
@@ -649,11 +818,15 @@ export async function main(argv, io = { stdout: process.stdout, stderr: process.
     return EXIT_ARGS;
   }
   const command = positionals.join(" ").trim();
-  if (!command) {
-    writeLine(io.stderr, USAGE);
-    return EXIT_ARGS;
-  }
   try {
+    if (values.help || command === "help" || command.startsWith("help ")) {
+      printJson(io.stdout, helpPayload(helpTopic(command, values.help)));
+      return EXIT_OK;
+    }
+    if (!command) {
+      writeLine(io.stderr, USAGE);
+      return EXIT_ARGS;
+    }
     await dispatch(command, values, io);
     return EXIT_OK;
   } catch (err) {

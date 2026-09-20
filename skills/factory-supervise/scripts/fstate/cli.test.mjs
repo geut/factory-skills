@@ -385,6 +385,73 @@ test("status and validate of a missing store exit 3", async () => {
   assert.equal(validated.code, EXIT_NOT_FOUND);
 });
 
+test("help prints a JSON catalog without a factory root", async () => {
+  const result = await run(["help"]);
+  assert.equal(result.code, EXIT_OK, result.err);
+  assert.equal(result.json.ok, true);
+  assert.match(result.json.usage, /node cli\.mjs <command>/);
+  assert.equal(result.json.global[0].flag, "--factory-root");
+  assert.deepEqual(result.json.enums.stage, ["plan", "work", "review", "wrapup", "done"]);
+  const names = result.json.commands.map((command) => command.name);
+  assert.deepEqual(names, [
+    "help",
+    "create",
+    "status",
+    "transition",
+    "task transition",
+    "review record",
+    "session record",
+    "message",
+    "block",
+    "unblock",
+    "usage record",
+    "usage show",
+    "validate",
+    "server",
+  ]);
+  const create = result.json.commands.find((command) => command.name === "create");
+  assert.equal(create.mutation, true);
+  assert.ok(create.required.includes("--expected-revision"));
+  const status = result.json.commands.find((command) => command.name === "status");
+  assert.equal(status.mutation, false);
+});
+
+test("--help and -h match the help command", async () => {
+  const long = await run(["--help"]);
+  const short = await run(["-h"]);
+  const named = await run(["help"]);
+  assert.equal(long.code, EXIT_OK, long.err);
+  assert.equal(short.code, EXIT_OK, short.err);
+  assert.deepEqual(long.json, named.json);
+  assert.deepEqual(short.json, named.json);
+});
+
+test("help <command> and <command> --help filter the catalog", async () => {
+  const byTopic = await run(["help", "create"]);
+  assert.equal(byTopic.code, EXIT_OK, byTopic.err);
+  assert.deepEqual(
+    byTopic.json.commands.map((command) => command.name),
+    ["create"],
+  );
+  const twoWord = await run(["help", "task", "transition"]);
+  assert.equal(twoWord.code, EXIT_OK, twoWord.err);
+  assert.equal(twoWord.json.commands[0].name, "task transition");
+  assert.equal(twoWord.json.commands[0].flagEnums["--status"], "taskStatus");
+  const byFlag = await run(["create", "--help"]);
+  assert.equal(byFlag.code, EXIT_OK, byFlag.err);
+  assert.deepEqual(byFlag.json, byTopic.json);
+});
+
+test("unknown help topic and empty argv exit 2", async () => {
+  const unknown = await run(["help", "nope"]);
+  assert.equal(unknown.code, EXIT_ARGS);
+  assert.match(unknown.err, /unknown command: nope/);
+  const empty = await run([]);
+  assert.equal(empty.code, EXIT_ARGS);
+  assert.match(empty.err, /Usage: node cli\.mjs/);
+  assert.match(empty.err, / {2}help\n/);
+});
+
 test("unknown command and missing mutation flags exit 2", async () => {
   const root = await tempRoot();
   const unknown = await fstate(root, "nope");

@@ -122,9 +122,10 @@ Specialist agents never edit state directly. The supervisor is the semantic writ
 node <skill-dir>/scripts/fstate/cli.mjs <command> …
 ```
 
-Expected operations include the ticket identifier and expected revision on every mutation. Copy `--expected-revision` from the JSON `revision` printed by the previous successful mutation. Pass `--factory-root` or set `FACTORY_ROOT` only when the factory root is not `<code-root>/.factory`. Never open `.factory/db/` by hand.
+Expected operations include the ticket identifier and expected revision on every mutation. Copy `--expected-revision` from the JSON `revision` printed by the previous successful mutation. Pass `--factory-root` or set `FACTORY_ROOT` only when the factory root is not `<code-root>/.factory`. Never open `.factory/db/` by hand. `help` (or `--help`) prints a JSON catalog of commands, flags, and enum values and does not open the store.
 
 ```text
+node <skill-dir>/scripts/fstate/cli.mjs help [command]
 node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> [--title <title>] [--type <type>] [--source-kind <kind>] [--source-ref <ref>] [--worktree-path <path>] [--branch <branch>] [--base-branch <branch>] [--workspace-id <id>] --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs status [--ticket <ticket-id>]
 node <skill-dir>/scripts/fstate/cli.mjs transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>
@@ -140,7 +141,7 @@ node <skill-dir>/scripts/fstate/cli.mjs validate
 node <skill-dir>/scripts/fstate/cli.mjs server [--host 127.0.0.1] [--port 8787]
 ```
 
-Every mutation opens a `BEGIN IMMEDIATE` transaction, checks the expected revision, writes the snapshot tables, appends an `events` row, and commits. WAL mode lets readers query while a writer holds the transaction. A leftover `FACTORY-STATE.json` is imported once when the database is missing (including a version 2 file, migrated to domain schema 3) and is never written again.
+Every mutation opens a `BEGIN IMMEDIATE` transaction, checks the expected revision, writes the snapshot tables, appends an `events` row, and commits. WAL mode lets readers query while a writer holds the transaction.
 
 Every successful mutation increments `revision`, updates the top-level and affected ticket `updatedAt` values, and updates the narrower task, session, message, or usage timestamp when applicable. Use UTC RFC 3339 timestamps. `message` is only the latest meaningful update, not a transcript. When blocked, store `blocker` as an object containing `reason`, `since`, `owner` (`user`, `agent`, or `external`), and optional `task`; clear it on unblock.
 
@@ -155,7 +156,7 @@ The ticket tables are sufficient for a dashboard and for several tickets advanci
 - Treat missing optional metadata as unknown rather than as a zero or empty value.
 - For live updates, run `fstate server` (default `127.0.0.1:8787`) and subscribe to `GET /events`. Cold connect without a cursor receives `event: hello` with the current revision. `Last-Event-ID` or `?after=` replays later `events` rows. After each event, re-query SQLite; the SSE payload is a compact `{ revision, op, ticket, task, payload }`, not a full snapshot.
 
-`scripts/fstate/cli.mjs` imports a leftover version 2 JSON file under the same transaction protocol; unknown historical values remain `null` rather than being invented. The `events` table is the append-only history. SQLite wins if both the database and `FACTORY-STATE.json` exist.
+`scripts/fstate/cli.mjs` imports a leftover version 2 JSON file under the same transaction protocol; unknown historical values remain `null` rather than being invented. The `events` table is the append-only history.
 
 ## Vocabulary and contracts
 
@@ -218,7 +219,7 @@ Then persist that JSON through:
 node <skill-dir>/scripts/fstate/cli.mjs usage record --ticket <ticket-id> --stage <stage> --session <session-file> [--task <task-id>] [--round <n>] --expected-revision <revision>
 ```
 
-`usage record` calls this reader rather than inventing a second parser. A later `factory-state` may call Pi's session statistics API instead.
+`usage record` calls this reader rather than inventing a second parser. A later `fstate` may call Pi's session statistics API instead.
 
 The reader walks the active `parentId` branch of the append-only Pi JSONL and sums Pi's numeric usage records, including assistant messages and any compaction or branch-summary entries Pi counts in its own session totals. Preserve Pi's reported `totalTokens` when available and sum `cost.total` as `costUsd`; do not estimate prices locally. If a later subagent extension version adds cumulative numeric usage to the structured steer, prefer that payload after validating its version and session identity.
 
