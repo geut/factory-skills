@@ -6,7 +6,7 @@ Persist only durable guidance:
 <code-root>/.factory/
 ├── CONTEXT.md
 ├── FACTORY.json
-├── FACTORY-STATE.json
+├── db/                            # created by the first fstate mutation
 ├── PRD.md                         # optional
 └── tickets/<ticket-id>/
     ├── plan.md

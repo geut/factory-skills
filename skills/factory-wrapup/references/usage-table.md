@@ -10,7 +10,7 @@ Show one aggregate row for every factory stage and one total row:
 | Wrap-up | 1 | provider/wrapup-model | 20 | 1,400 | 12,000 | 500 | 13,920 | 0.090 |
 | **Total** | **6** | — | **228** | **20,500** | **287,000** | **29,500** | **337,228** | **1.874** |
 
-Derive rows from the ticket's session-keyed `usage` records in `.factory/FACTORY-STATE.json`. `Sessions` counts usage records. Sum each recorded token field independently; `Total tokens` sums Pi's recorded `tokens.total` values rather than recomputing them from the displayed columns. Format integer tokens with separators only for display. List distinct models used in a stage, comma-separated. Preserve recorded cost precision and do not infer prices.
+Derive rows from the ticket's session-keyed `usage` records via `fstate usage show` (stored in `.factory/db/state.sqlite`). `Sessions` counts usage records. Sum each recorded token field independently; `Total tokens` sums Pi's recorded `tokens.total` values rather than recomputing them from the displayed columns. Format integer tokens with separators only for display. List distinct models used in a stage, comma-separated. Preserve recorded cost precision and do not infer prices.
 
 Use `—`, not `0`, for an unavailable value. Add a short warning below the table when an expected session or field is unrecorded. A resumed Pi session remains one session row in state, so its cumulative replacement must be counted once. Review rounds and separate task sessions count separately.
 
