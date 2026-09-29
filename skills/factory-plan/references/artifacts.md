@@ -6,7 +6,9 @@ Persist only durable guidance:
 <code-root>/.factory/
 ├── CONTEXT.md
 ├── FACTORY.json
-├── db/                            # created by the first fstate mutation
+├── github.md                      # GitHub remotes only
+├── triage-labels.md               # GitHub remotes only
+├── db/                            # created by fstate init
 ├── PRD.md                         # optional
 └── tickets/<ticket-id>/
     ├── plan.md
