@@ -4,13 +4,14 @@
  * and a single SQLite transaction. Do not edit the database by hand.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { CliError, EXIT_ARGS, EXIT_INVALID, EXIT_IO, EXIT_NOT_FOUND, EXIT_OK } from "./errors.mjs";
 import { startServer } from "./server.mjs";
-import { loadState, mutate } from "./store.mjs";
+import { loadState, mutate, openStore } from "./store.mjs";
 
 export { EXIT_ARGS, EXIT_INVALID, EXIT_IO, EXIT_NOT_FOUND, EXIT_OK, CliError };
 
@@ -27,6 +28,12 @@ const SESSION_STATUSES = new Set([
 ]);
 const VERDICTS = new Set(["approve", "changes_requested", "blocked"]);
 const OWNERS = new Set(["user", "agent", "external"]);
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const MODEL_ROLES = ["plan", "work", "review", "wrapup"];
+const TRIAGE_ROLES = ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"];
+const FACTORY_JSON_KEYS = new Set(["schemaVersion", "ticketIdPattern", "models", "limits", "github"]);
+const DEFAULT_TICKET_PATTERN = "PROJ-<number>";
+const DEFAULT_LIMITS = { maxTickets: 2, maxAgents: 4, reviewRounds: 3 };
 
 const OPTION_SPEC = {
   help: { type: "boolean", short: "h" },
@@ -57,6 +64,20 @@ const OPTION_SPEC = {
   "workspace-id": { type: "string" },
   host: { type: "string" },
   port: { type: "string" },
+  "ticket-id-pattern": { type: "string" },
+  "plan-model": { type: "string" },
+  "plan-thinking": { type: "string" },
+  "work-model": { type: "string" },
+  "work-thinking": { type: "string" },
+  "review-model": { type: "string" },
+  "review-thinking": { type: "string" },
+  "wrapup-model": { type: "string" },
+  "wrapup-thinking": { type: "string" },
+  "arbiter-model": { type: "string" },
+  "arbiter-thinking": { type: "string" },
+  "github-repo": { type: "string" },
+  "pull-requests": { type: "string" },
+  label: { type: "string", multiple: true },
 };
 
 const USAGE_LINE = "node cli.mjs <command> [options]";
@@ -69,6 +90,28 @@ const COMMANDS = [
     summary: "Print this command catalog as JSON. Pass a command name to filter.",
     required: [],
     optional: [],
+  },
+  {
+    name: "init",
+    mutation: false,
+    summary: "Write FACTORY.json, github.md when a repo is set, the tickets directory, the Git exclude line, and the empty SQLite store. Does not insert a ticket.",
+    required: [],
+    optional: [
+      "--ticket-id-pattern",
+      "--plan-model",
+      "--plan-thinking",
+      "--work-model",
+      "--work-thinking",
+      "--review-model",
+      "--review-thinking",
+      "--wrapup-model",
+      "--wrapup-thinking",
+      "--arbiter-model",
+      "--arbiter-thinking",
+      "--github-repo",
+      "--pull-requests",
+      "--label",
+    ],
   },
   {
     name: "create",
@@ -267,6 +310,8 @@ function helpPayload(topic) {
       sessionStatus: [...SESSION_STATUSES],
       verdict: [...VERDICTS],
       owner: [...OWNERS],
+      thinking: [...THINKING_LEVELS],
+      triageRole: [...TRIAGE_ROLES],
     },
     commands: selected.map(catalogEntry),
   };
@@ -684,8 +729,264 @@ function cmdUsageRecord(state, values, ts) {
   return { ticket: ticketId, session: sessionId, stage, costUsd: ticket.usage[sessionId].costUsd };
 }
 
+function factoryJsonPath(factoryRoot) {
+  return path.join(factoryRoot, "FACTORY.json");
+}
+
+function readFactoryJson(factoryRoot) {
+  const file = factoryJsonPath(factoryRoot);
+  if (!existsSync(file)) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    throw new CliError(`cannot read FACTORY.json: ${err.message}`, EXIT_INVALID);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CliError("FACTORY.json must be an object", EXIT_INVALID);
+  }
+  return parsed;
+}
+
+function asRole(value) {
+  if (typeof value === "string" && value) {
+    return { model: value, thinking: "medium" };
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof value.model === "string" && value.model) {
+    return { model: value.model, thinking: value.thinking || "medium" };
+  }
+  return null;
+}
+
+function resolveRole(role, values, existingModels) {
+  const modelFlag = values[`${role}-model`];
+  const thinkingFlag = values[`${role}-thinking`];
+  const previous = asRole(existingModels?.[role]);
+  if ((modelFlag === undefined || modelFlag === "") && (thinkingFlag === undefined || thinkingFlag === "")) {
+    return previous;
+  }
+  const model = modelFlag || previous?.model;
+  if (!model) {
+    throw new CliError(`--${role}-model is required`, EXIT_ARGS);
+  }
+  const thinking =
+    thinkingFlag === undefined || thinkingFlag === ""
+      ? "medium"
+      : requireEnum(`${role}-thinking`, thinkingFlag, THINKING_LEVELS);
+  return { model, thinking };
+}
+
+function parseBoolFlag(values, name) {
+  const value = values[name];
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new CliError(`--${name} must be true or false`, EXIT_ARGS);
+}
+
+function parseLabelFlags(values) {
+  const raw = values.label;
+  if (raw === undefined) {
+    return new Map();
+  }
+  const list = Array.isArray(raw) ? raw : [raw];
+  const parsed = new Map();
+  for (const entry of list) {
+    const eq = entry.indexOf("=");
+    if (eq <= 0 || eq === entry.length - 1) {
+      throw new CliError("--label must be <role>=<string>", EXIT_ARGS);
+    }
+    const role = entry.slice(0, eq);
+    const label = entry.slice(eq + 1);
+    if (!TRIAGE_ROLES.includes(role)) {
+      throw new CliError(`--label role must be one of ${TRIAGE_ROLES.join(", ")}`, EXIT_ARGS);
+    }
+    parsed.set(role, label);
+  }
+  return parsed;
+}
+
+function storedLabels(existing) {
+  const labels = existing?.github?.labels;
+  if (!labels || typeof labels !== "object" || Array.isArray(labels)) {
+    return null;
+  }
+  const hasAny = TRIAGE_ROLES.some((role) => typeof labels[role] === "string" && labels[role]);
+  return hasAny ? labels : null;
+}
+
+function resolveLabels(existing, passed, githubRepoPassed) {
+  const stored = storedLabels(existing);
+  if (passed.size === 0 && !stored && !githubRepoPassed) {
+    return undefined;
+  }
+  const out = {};
+  for (const role of TRIAGE_ROLES) {
+    if (passed.has(role)) {
+      out[role] = passed.get(role);
+    } else if (stored && typeof stored[role] === "string" && stored[role]) {
+      out[role] = stored[role];
+    } else {
+      out[role] = role;
+    }
+  }
+  return out;
+}
+
+function buildFactoryJson(existing, values) {
+  const existingModels = existing?.models && typeof existing.models === "object" ? existing.models : {};
+  const models = {};
+  for (const role of MODEL_ROLES) {
+    const resolved = resolveRole(role, values, existingModels);
+    if (!resolved) {
+      throw new CliError(`--${role}-model is required`, EXIT_ARGS);
+    }
+    models[role] = resolved;
+  }
+  if (values["arbiter-model"] || values["arbiter-thinking"]) {
+    models.arbiter = resolveRole("arbiter", values, existingModels);
+  } else if (Object.prototype.hasOwnProperty.call(existingModels, "arbiter")) {
+    models.arbiter = existingModels.arbiter === null ? null : asRole(existingModels.arbiter);
+  } else {
+    models.arbiter = null;
+  }
+  if (models.review.model === models.work.model) {
+    throw new CliError("models.review.model must differ from models.work.model", EXIT_INVALID);
+  }
+
+  const patternFlag = values["ticket-id-pattern"];
+  const ticketIdPattern =
+    patternFlag === undefined || patternFlag === ""
+      ? (typeof existing?.ticketIdPattern === "string" && existing.ticketIdPattern) || DEFAULT_TICKET_PATTERN
+      : patternFlag;
+
+  const limits =
+    existing?.limits && typeof existing.limits === "object" && !Array.isArray(existing.limits)
+      ? existing.limits
+      : { ...DEFAULT_LIMITS };
+
+  const repoFlag = values["github-repo"];
+  const githubRepo = repoFlag || existing?.github?.repo || "";
+  const pullFlag = parseBoolFlag(values, "pull-requests");
+  const pullRequests =
+    pullFlag !== undefined
+      ? pullFlag
+      : typeof existing?.github?.pullRequests === "boolean"
+        ? existing.github.pullRequests
+        : false;
+  const labels = resolveLabels(existing, parseLabelFlags(values), Boolean(repoFlag));
+  const github = {};
+  if (githubRepo) {
+    github.repo = githubRepo;
+  }
+  github.pullRequests = pullRequests;
+  if (labels) {
+    github.labels = labels;
+  }
+
+  const preserved = {};
+  if (existing) {
+    for (const [key, value] of Object.entries(existing)) {
+      if (!FACTORY_JSON_KEYS.has(key)) {
+        preserved[key] = value;
+      }
+    }
+  }
+  return {
+    schemaVersion: 2,
+    ticketIdPattern,
+    models,
+    limits,
+    github,
+    ...preserved,
+  };
+}
+
+const GITHUB_MD = readFileSync(new URL("./github.md", import.meta.url), "utf8");
+const EXCLUDE_LINE = "/.factory/";
+
+function renderGithubMd(repo) {
+  return GITHUB_MD.replaceAll("<owner/name>", repo);
+}
+
+function ensureTicketsDir(factoryRoot) {
+  mkdirSync(path.join(factoryRoot, "tickets"), { recursive: true });
+}
+
+function ensureGitExclude(factoryRoot) {
+  const result = spawnSync("git", ["-C", factoryRoot, "rev-parse", "--git-path", "info/exclude"], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return;
+  }
+  const raw = result.stdout.trim();
+  if (!raw) {
+    return;
+  }
+  const excludeFile = path.isAbsolute(raw) ? raw : path.resolve(factoryRoot, raw);
+  mkdirSync(path.dirname(excludeFile), { recursive: true });
+  const current = existsSync(excludeFile) ? readFileSync(excludeFile, "utf8") : "";
+  const present = current.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return trimmed === EXCLUDE_LINE || trimmed === ".factory/" || trimmed === "/.factory" || trimmed === ".factory";
+  });
+  if (present) {
+    return;
+  }
+  const prefix = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+  writeFileSync(excludeFile, `${current}${prefix}${EXCLUDE_LINE}\n`);
+}
+
+function writeGithubMd(factoryRoot, repo) {
+  if (!repo) {
+    return;
+  }
+  writeFileSync(path.join(factoryRoot, "github.md"), renderGithubMd(repo));
+}
+
+function ensureStore(factoryRoot) {
+  const db = openStore(factoryRoot, { create: true });
+  if (!db) {
+    throw new CliError("factory state not found", EXIT_NOT_FOUND);
+  }
+  db.close();
+  return loadState(factoryRoot);
+}
+
+function cmdInit(factoryRoot, values) {
+  const existing = readFactoryJson(factoryRoot);
+  const factoryJson = buildFactoryJson(existing, values);
+  ensureTicketsDir(factoryRoot);
+  writeFileSync(factoryJsonPath(factoryRoot), `${JSON.stringify(factoryJson, null, 2)}\n`);
+  writeGithubMd(factoryRoot, factoryJson.github.repo);
+  ensureGitExclude(factoryRoot);
+  const state = ensureStore(factoryRoot);
+  return {
+    ok: true,
+    factoryJson,
+    revision: state.revision,
+    schemaVersion: state.schemaVersion,
+    ticketIdPattern: factoryJson.ticketIdPattern,
+    pullRequests: factoryJson.github.pullRequests,
+    tickets: Object.keys(state.tickets),
+  };
+}
+
 async function dispatch(command, values, io) {
   const factoryRoot = resolveFactoryRoot(values["factory-root"]);
+  if (command === "init") {
+    printJson(io.stdout, cmdInit(factoryRoot, values));
+    return;
+  }
   const mutations = new Set([
     "create",
     "transition",

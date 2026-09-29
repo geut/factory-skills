@@ -25,6 +25,22 @@
 
 Each `models` role is `{ "model": "provider/id", "thinking": "medium" }`. `thinking` is optional and defaults to `medium`. A legacy string value is that object with `thinking` `medium`. Allowed `thinking` values are Pi's: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The model id does not include a `:<thinking>` suffix. When `arbiter` is set, it uses the same object shape. Review `thinking` defaults to `medium`. `max` increases review cost.
 
+`github` is optional. `fstate init` writes it. `pullRequests` allows wrap-up to push a committed ticket branch and create or update a pull request. `repo` is `owner/name` when the remote is GitHub. `labels` maps the five triage roles to the strings `gh` applies. Omit `labels` when this factory does not use GitHub.
+
+```json
+"github": {
+  "repo": "owner/name",
+  "pullRequests": false,
+  "labels": {
+    "needs-triage": "needs-triage",
+    "needs-info": "needs-info",
+    "ready-for-agent": "ready-for-agent",
+    "ready-for-human": "ready-for-human",
+    "wontfix": "wontfix"
+  }
+}
+```
+
 The code root is the Git toplevel. The factory root is `<code-root>/.factory`. Those absolute paths are not stored in configuration. `--factory-root` or `FACTORY_ROOT` selects an external root. A relative override resolves from the code root.
 
 Configuration may include budgets and project-specific verification commands. `reviewRounds` may be lower than three. A higher value requires explicit authorization for that run and is not the unattended default.
@@ -122,10 +138,11 @@ Specialist agents do not edit state. The supervisor is the semantic writer. Ever
 node <skill-dir>/scripts/fstate/cli.mjs <command> …
 ```
 
-Mutations include the ticket identifier and `--expected-revision`. `--expected-revision` is the JSON `revision` printed by the previous successful mutation. `--factory-root` or `FACTORY_ROOT` applies when the factory root is not `<code-root>/.factory`. Agents do not open `.factory/db/` by hand. `help` (or `--help`) prints a JSON catalog of commands, flags, and enum values and does not open the store.
+Mutations include the ticket identifier and `--expected-revision`. `--expected-revision` is the JSON `revision` printed by the previous successful mutation. `init` writes `FACTORY.json`, creates `.factory/tickets` and the empty store when they are missing, appends `/.factory/` to the repo's `.git/info/exclude` when that line is absent, and writes `.factory/github.md` when `github.repo` is set. It does not take `--expected-revision` and does not insert a ticket. `--factory-root` or `FACTORY_ROOT` applies when the factory root is not `<code-root>/.factory`. Agents do not open `.factory/db/` by hand. `help` (or `--help`) prints a JSON catalog of commands, flags, and enum values and does not open the store.
 
 ```text
 node <skill-dir>/scripts/fstate/cli.mjs help [command]
+node <skill-dir>/scripts/fstate/cli.mjs init [--ticket-id-pattern <pattern>] [--plan-model <provider/id> --plan-thinking <level>] [--work-model <provider/id> --work-thinking <level>] [--review-model <provider/id> --review-thinking <level>] [--wrapup-model <provider/id> --wrapup-thinking <level>] [--arbiter-model <provider/id> --arbiter-thinking <level>] [--github-repo <owner/name>] [--pull-requests <true|false>] [--label <role>=<string>]
 node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> [--title <title>] [--type <type>] [--source-kind <kind>] [--source-ref <ref>] [--worktree-path <path>] [--branch <branch>] [--base-branch <branch>] [--workspace-id <id>] --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs status [--ticket <ticket-id>]
 node <skill-dir>/scripts/fstate/cli.mjs transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>

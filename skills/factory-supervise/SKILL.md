@@ -13,6 +13,8 @@ Derive the code root with `git rev-parse --show-toplevel`. Default the factory r
 
 Read `<factory-root>/FACTORY.json`. Obtain the ticket ID from the ticket source or `ticketIdPattern`. If neither determines the ID, ask the user.
 
+When the ticket argument is a GitHub issue URL, `#<number>`, or a bare issue number, and `gh auth status` succeeds, load it with `gh issue view <number> --comments` and pass that title and body to planning. Any other string is the ticket text. Do not create, edit, or comment on an issue. If `gh` is not authenticated, use the given string and say that the issue was not read.
+
 Verify that:
 
 - Pi runs in a persistent Herdr pane.
@@ -118,6 +120,6 @@ Validate the wrap-up handoff with `contract --schema factory.wrapup.v1 --check`.
 
 Use absolute executable, session, and script paths in the generic launcher. Capture each returned pane ID with `jq`, not inline Python. Do not call `subagent_resume`, send a prompt, start a model turn, or pass `--thinking` when reopening the transcript. If either surface cannot be opened, report the exact limitation in the handoff.
 
-After the handoff and usage table are complete, set stage `done` with status `complete`. Never commit, merge, push, open a pull request, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it.
+After the handoff and usage table are complete, set stage `done` with status `complete`. Never commit, merge, publish a ticket, remove a worktree, or delete a branch unless the user explicitly requests it. When `github.pullRequests` is true, the wrap-up stage may push the committed ticket branch and create or update the pull request. That permission is the setup answer, not a new ask on each ticket.
 
 Keep concurrent tickets' workspaces, worktrees, prompts, sessions, and state entries isolated. One ticket's blocker must not stop another ticket.

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -19,8 +20,8 @@ const FIXTURE = path.join(import.meta.dirname, "..", "fixtures", "recap-after-co
 const roots = [];
 const servers = [];
 
-async function tempRoot() {
-  const dir = await mkdtemp(path.join(tmpdir(), "fstate-"));
+async function tempRoot(parent = tmpdir()) {
+  const dir = await mkdtemp(path.join(parent, "fstate-"));
   roots.push(dir);
   return dir;
 }
@@ -72,6 +73,171 @@ function readEvents(root) {
     db.close();
   }
 }
+
+const INIT_MODELS = [
+  "--plan-model",
+  "provider/plan",
+  "--work-model",
+  "provider/work",
+  "--review-model",
+  "provider/review",
+  "--wrapup-model",
+  "provider/wrapup",
+];
+
+async function readFactoryJson(root) {
+  return JSON.parse(await readFile(path.join(root, "FACTORY.json"), "utf8"));
+}
+
+test("init writes FACTORY.json and an empty store", async () => {
+  const root = await tempRoot();
+  const result = await fstate(root, "init", ...INIT_MODELS, "--plan-thinking", "high");
+  assert.equal(result.code, EXIT_OK, result.err);
+  assert.equal(result.json.ok, true);
+  assert.equal(result.json.revision, 0);
+  assert.equal(result.json.schemaVersion, 3);
+  assert.equal(result.json.ticketIdPattern, "PROJ-<number>");
+  assert.equal(result.json.pullRequests, false);
+  assert.deepEqual(result.json.tickets, []);
+  assert.equal(result.json.factoryJson.schemaVersion, 2);
+  assert.equal(result.json.factoryJson.models.plan.thinking, "high");
+  assert.equal(result.json.factoryJson.models.work.thinking, "medium");
+  assert.equal(result.json.factoryJson.models.arbiter, null);
+  assert.equal(existsSync(stateDbPath(root)), true);
+  assert.equal(existsSync(path.join(root, "tickets")), true);
+  assert.equal(existsSync(path.join(root, "github.md")), false);
+  assert.deepEqual(readEvents(root), []);
+
+  const file = await readFactoryJson(root);
+  assert.equal(file.ticketIdPattern, "PROJ-<number>");
+  assert.equal(file.github.pullRequests, false);
+  assert.equal(file.github.repo, undefined);
+  assert.equal(file.github.labels, undefined);
+  assert.deepEqual(file.limits, { maxTickets: 2, maxAgents: 4, reviewRounds: 3 });
+
+  const status = await fstate(root, "status");
+  assert.equal(status.code, EXIT_OK, status.err);
+  assert.equal(status.json.revision, 0);
+  assert.deepEqual(status.json.tickets, {});
+});
+
+test("init defaults, overrides, and a second run keep stored config", async () => {
+  const root = await tempRoot();
+  const first = await fstate(
+    root,
+    "init",
+    ...INIT_MODELS,
+    "--ticket-id-pattern",
+    "SHOP-<number>",
+    "--pull-requests",
+    "true",
+    "--github-repo",
+    "acme/shop",
+    "--label",
+    "needs-triage=bug:triage",
+  );
+  assert.equal(first.code, EXIT_OK, first.err);
+  assert.equal(first.json.ticketIdPattern, "SHOP-<number>");
+  assert.equal(first.json.pullRequests, true);
+  assert.equal(first.json.factoryJson.github.repo, "acme/shop");
+  assert.equal(first.json.factoryJson.github.labels["needs-triage"], "bug:triage");
+  assert.equal(first.json.factoryJson.github.labels["needs-info"], "needs-info");
+  assert.equal(first.json.factoryJson.github.labels["ready-for-agent"], "ready-for-agent");
+  assert.equal(first.json.factoryJson.github.labels["wontfix"], "wontfix");
+
+  const filePath = path.join(root, "FACTORY.json");
+  const withExtra = await readFactoryJson(root);
+  withExtra.budgets = { plan: 1 };
+  await writeFile(filePath, `${JSON.stringify(withExtra, null, 2)}\n`);
+
+  const second = await fstate(root, "init");
+  assert.equal(second.code, EXIT_OK, second.err);
+  assert.equal(second.json.revision, 0);
+  assert.equal(second.json.ticketIdPattern, "SHOP-<number>");
+  assert.equal(second.json.pullRequests, true);
+  assert.equal(second.json.factoryJson.models.work.model, "provider/work");
+  assert.equal(second.json.factoryJson.github.labels["needs-triage"], "bug:triage");
+  assert.deepEqual(second.json.factoryJson.budgets, { plan: 1 });
+  assert.deepEqual(second.json.tickets, []);
+});
+
+test("init with a github repo and no labels stores the five defaults", async () => {
+  const root = await tempRoot();
+  const result = await fstate(root, "init", ...INIT_MODELS, "--github-repo", "acme/shop");
+  assert.equal(result.code, EXIT_OK, result.err);
+  assert.deepEqual(result.json.factoryJson.github.labels, {
+    "needs-triage": "needs-triage",
+    "needs-info": "needs-info",
+    "ready-for-agent": "ready-for-agent",
+    "ready-for-human": "ready-for-human",
+    wontfix: "wontfix",
+  });
+  const github = await readFile(path.join(root, "github.md"), "utf8");
+  assert.match(github, /acme\/shop/);
+  assert.doesNotMatch(github, /<owner\/name>/);
+});
+
+test("init excludes .factory once when the factory root is inside a Git repo", async () => {
+  const repo = await tempRoot(import.meta.dirname);
+  const template = path.join(repo, "git-template");
+  await mkdir(template);
+  execFileSync("git", ["init", "--template", template], { cwd: repo });
+  const factory = path.join(repo, ".factory");
+  const first = await fstate(factory, "init", ...INIT_MODELS);
+  assert.equal(first.code, EXIT_OK, first.err);
+  const excludePath = path.join(repo, ".git", "info", "exclude");
+  const exclude = await readFile(excludePath, "utf8");
+  assert.match(exclude, /^\/\.factory\/$/m);
+  const second = await fstate(factory, "init");
+  assert.equal(second.code, EXIT_OK, second.err);
+  const again = await readFile(excludePath, "utf8");
+  assert.deepEqual(again.match(/^\/\.factory\/$/gm), ["/.factory/"]);
+});
+
+test("init rejects a bad label role and a review model equal to work", async () => {
+  const root = await tempRoot();
+  const badLabel = await fstate(root, "init", ...INIT_MODELS, "--label", "bug=bug");
+  assert.equal(badLabel.code, EXIT_ARGS);
+  assert.match(badLabel.err, /--label role must be one of/);
+  assert.equal(existsSync(path.join(root, "FACTORY.json")), false);
+
+  const sameModel = await fstate(
+    root,
+    "init",
+    "--plan-model",
+    "provider/plan",
+    "--work-model",
+    "provider/same",
+    "--review-model",
+    "provider/same",
+    "--wrapup-model",
+    "provider/wrapup",
+  );
+  assert.equal(sameModel.code, EXIT_INVALID);
+  assert.match(sameModel.err, /models\.review\.model must differ/);
+  assert.equal(existsSync(stateDbPath(root)), false);
+});
+
+test("init requires role models until FACTORY.json exists", async () => {
+  const root = await tempRoot();
+  const missing = await fstate(root, "init", "--plan-model", "provider/plan");
+  assert.equal(missing.code, EXIT_ARGS);
+  assert.match(missing.err, /--work-model is required/);
+});
+
+test("create still starts at revision 0 after init", async () => {
+  const root = await tempRoot();
+  const init = await fstate(root, "init", ...INIT_MODELS);
+  assert.equal(init.code, EXIT_OK, init.err);
+  const created = await fstate(root, "create", "--ticket", "PROJ-123", "--expected-revision", "0");
+  assert.equal(created.code, EXIT_OK, created.err);
+  assert.equal(created.json.revision, 1);
+  assert.equal(created.json.ticket, "PROJ-123");
+  const again = await fstate(root, "init");
+  assert.equal(again.code, EXIT_OK, again.err);
+  assert.equal(again.json.revision, 1);
+  assert.deepEqual(again.json.tickets, ["PROJ-123"]);
+});
 
 test("create then status --ticket", async () => {
   const root = await tempRoot();
@@ -395,6 +561,7 @@ test("help prints a JSON catalog without a factory root", async () => {
   const names = result.json.commands.map((command) => command.name);
   assert.deepEqual(names, [
     "help",
+    "init",
     "create",
     "status",
     "transition",
