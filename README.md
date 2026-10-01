@@ -47,7 +47,7 @@ Ticket `SHOP-42` asks the product to remember a user's catalog filter.
 | Skill | Responsibility | Main output |
 | --- | --- | --- |
 | `setup-factory` | Asks for role models, a ticket pattern, pull-request permission, and triage labels, then scaffolds the factory root before the first ticket. | `.factory/FACTORY.json`, the empty SQLite store, and, on GitHub, issue and pull-request notes. |
-| `factory-supervise` | Coordinates tickets, Herdr subagents, worktrees, atomic state, budgets, and the review loop. Reads a GitHub issue when the ticket argument is one. | A ticket advanced safely through its stages. |
+| `factory-supervise` | Coordinates tickets, Herdr subagents, worktrees, atomic state, budgets, and the review loop. Uses GitHub as the ticket source when setup recorded `github.cli`; otherwise uses `.factory/tickets`. | A ticket advanced safely through its stages. |
 | `factory-plan` | Researches one ticket, requests clarification when necessary, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered task files, and a `factory.plan.v3` markdown Output. |
 | `factory-work` | Implements one ready task using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and a `factory.work.v3` markdown Output. |
 | `factory-review` | Reviews one task adversarially from a different, read-only model session. | A `factory.review.v4` markdown findings list and verdict. |
@@ -128,11 +128,11 @@ From the code repository, in a Pi session:
 /skill:setup-factory
 ```
 
-The skill asks for a model and thinking level for each role, a ticket id pattern, whether wrap-up may open a pull request, and whether to keep the default triage labels. It then runs `fstate init`, which writes `.factory/FACTORY.json`, creates `.factory/tickets` and the empty `.factory/db/state.sqlite`, and appends `/.factory/` to `.git/info/exclude` when that line is missing. When a GitHub repo is recorded, `init` also writes `.factory/github.md`.
+The skill asks for a model and thinking level for each role, a ticket id pattern, whether wrap-up may open a pull request, and whether to keep the default triage labels. It records `github.cli` when `gh auth status` succeeds and the remote is GitHub. It then runs `fstate init`, which writes `.factory/FACTORY.json`, creates `.factory/tickets` and the empty `.factory/db/state.sqlite`, and appends `/.factory/` to `.git/info/exclude` when that line is missing. When a GitHub repo is recorded, `init` also writes `.factory/github.md`. Setup copies missing `agents/factory-*.md` files into `~/.pi/agent/agents/` and does not overwrite files that are already there. It also generates `.factory/skills/verify-<repo>/` when the project needs a scripted proof path.
 
-If you leave the ticket pattern blank, init stores `PROJ-<number>`. Change `ticketIdPattern` in `FACTORY.json` later if the project uses another convention. When `origin` is GitHub, setup writes `.factory/triage-labels.md` and creates any missing labels. A ticket that is not an issue number or URL stays plain text.
+If you leave the ticket pattern blank, init stores `PROJ-<number>`. Change `ticketIdPattern` in `FACTORY.json` later if the project uses another convention. When `origin` is GitHub, setup writes `.factory/triage-labels.md` and creates any missing labels. A ticket that is not an issue number or URL stays plain text. `github.cli: true` makes a passed GitHub issue the ticket source. Otherwise `.factory/tickets` is the ticket source.
 
-`FACTORY.json` has this shape. `github` is omitted in part when the remote is not GitHub: no `repo` unless one was recorded, and no `labels` unless setup stored them. `pullRequests` defaults to false.
+`FACTORY.json` has this shape. `github` is omitted in part when the remote is not GitHub: no `repo` unless one was recorded, and no `labels` unless setup stored them. `pullRequests` defaults to false. `github.cli` defaults to false.
 
 ```json
 {
@@ -151,6 +151,7 @@ If you leave the ticket pattern blank, init stores `PROJ-<number>`. Change `tick
     "reviewRounds": 3
   },
   "github": {
+    "cli": true,
     "repo": "owner/name",
     "pullRequests": false,
     "labels": {
@@ -160,13 +161,23 @@ If you leave the ticket pattern blank, init stores `PROJ-<number>`. Change `tick
       "ready-for-human": "ready-for-human",
       "wontfix": "wontfix"
     }
+  },
+  "hooks": {
+    "before": [
+      { "on": "task:ready_for_review", "command": "node <fstate>/hooks/require-evidence.mjs" },
+      { "on": "ticket:wrapup", "command": "node <fstate>/hooks/require-evidence.mjs" }
+    ],
+    "after": []
+  },
+  "verification": {
+    "command": null
   }
 }
 ```
 
 Do not create the state file by hand. `fstate init` writes it. The first `fstate create` still works when the store is missing, and it creates a ticket.
 
-`FACTORY.json` (config) and the SQLite store (operational state) have independent schema versions. The domain state shape is version 3. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. Runtime paths such as worktree locations belong in state.
+`FACTORY.json` (config) and the SQLite store (operational state) have independent schema versions. The domain state shape is version 4. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. New worktrees are `$HOME/<repo-name>/worktrees/<ticket-id>`. Pass the main factory root to every child and to `review-packet.py --factory-root`. A worktree does not contain `.factory`.
 
 Setup asks for `ticketIdPattern` and stores `PROJ-<number>` when the answer is blank. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review.model` must differ from `models.work.model`. Each role may set `thinking` to a Pi level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Omit `thinking` to use `medium`. A legacy string such as `"review": "provider/model"` is equivalent to `{ "model": "…", "thinking": "medium" }`. Do not append `:<thinking>` to the model id. Keep review at `medium` unless you raise it deliberately; `max` is expensive for adversarial review. When `arbiter` is set, it uses the same object shape. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
 
@@ -221,7 +232,7 @@ Pause for unresolved product decisions, genuine blockers, or review findings
 that remain blocking after the third round.
 ```
 
-The supervisor works the ready task frontier. A task moves through `pending` → `in_progress` → `ready_for_review` → `done`; `blocked` is available when progress cannot continue. Wrap-up starts only after every required task is approved.
+The supervisor works the ready task frontier. A task moves through `pending` → `in_progress` → `ready_for_review` → `in_review` → `done`. `ready_for_review` means the evidence gate passed and review has not started. `in_review` means a reviewer is running. `blocked` returns to `pending` or `in_progress`. Wrap-up starts only after every required task is approved and its evidence manifest exists. When the ticket is a GitHub issue and `github.cli` is true, related concrete issues are separate tickets; the parent is coordination only. Otherwise plans and task files live in `.factory/tickets`.
 
 For a small, well-understood ticket, the initial prompt may authorize the complete flow. The planning gate is recommended while the skills are being evaluated.
 
@@ -245,7 +256,7 @@ To run roles without a supervisor, invoke them explicitly in separate Herdr tabs
 
    ```sh
    pi --model <review-model> --thinking medium --tools read,grep,find,ls
-   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --worktree <worktree> --out /tmp
+   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --round 1 --worktree <worktree> --factory-root <factory-root> --out /tmp
    ```
 
    ```text
@@ -290,7 +301,7 @@ Then subscribe to `http://127.0.0.1:8787/events`. Each event is a compact `{ rev
 
 ## What the factory does not do
 
-- It does not commit, merge, or publish tickets as GitHub issues. It creates or updates a pull request only when `github.pullRequests` is true, and only for a branch that is already committed.
+- It does not commit or merge. When `github.cli` is true, it reads, comments, and labels the GitHub issue it was given, and it does not copy that issue into `.factory/tickets`. When `github.cli` is false, `.factory/tickets` is the ticket source and it does not create or edit GitHub issues. It creates or updates a pull request only when `github.pullRequests` is true, and only for a branch that is already committed. It does not close an issue until that pull request is merged or the user asks.
 - It does not create an ADR for every ticket.
 - It does not persist detailed review transcripts in `.factory/`.
 - It does not run more than three unattended review rounds.

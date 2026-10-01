@@ -5,6 +5,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -17,7 +18,7 @@ export { EXIT_ARGS, EXIT_INVALID, EXIT_IO, EXIT_NOT_FOUND, EXIT_OK, CliError };
 
 const STAGES = new Set(["plan", "work", "review", "wrapup", "done"]);
 const TICKET_STATUSES = new Set(["active", "waiting_for_user", "blocked", "failed", "complete"]);
-const TASK_STATUSES = new Set(["pending", "in_progress", "ready_for_review", "done", "blocked"]);
+const TASK_STATUSES = new Set(["pending", "in_progress", "ready_for_review", "in_review", "done", "blocked"]);
 const SESSION_STATUSES = new Set([
   "starting",
   "running",
@@ -31,9 +32,26 @@ const OWNERS = new Set(["user", "agent", "external"]);
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const MODEL_ROLES = ["plan", "work", "review", "wrapup"];
 const TRIAGE_ROLES = ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"];
-const FACTORY_JSON_KEYS = new Set(["schemaVersion", "ticketIdPattern", "models", "limits", "github"]);
+const FACTORY_JSON_KEYS = new Set([
+  "schemaVersion",
+  "ticketIdPattern",
+  "models",
+  "limits",
+  "github",
+  "hooks",
+  "verification",
+]);
 const DEFAULT_TICKET_PATTERN = "PROJ-<number>";
 const DEFAULT_LIMITS = { maxTickets: 2, maxAgents: 4, reviewRounds: 3 };
+const TASK_EDGES = {
+  pending: new Set(["in_progress", "blocked"]),
+  in_progress: new Set(["ready_for_review", "blocked"]),
+  ready_for_review: new Set(["in_review", "blocked"]),
+  in_review: new Set(["in_progress", "done", "blocked"]),
+  blocked: new Set(["pending", "in_progress"]),
+  done: new Set(),
+};
+const ACTIVE_TASK_STATUSES = new Set(["in_progress", "ready_for_review", "in_review", "blocked"]);
 
 const OPTION_SPEC = {
   help: { type: "boolean", short: "h" },
@@ -77,7 +95,16 @@ const OPTION_SPEC = {
   "arbiter-thinking": { type: "string" },
   "github-repo": { type: "string" },
   "pull-requests": { type: "string" },
+  "github-cli": { type: "string" },
   label: { type: "string", multiple: true },
+  parent: { type: "string" },
+  kind: { type: "string" },
+  "depends-on": { type: "string", multiple: true },
+  artifact: { type: "string" },
+  "verification-profile": { type: "string" },
+  evidence: { type: "string" },
+  "subagent-id": { type: "string" },
+  repo: { type: "string" },
 };
 
 const USAGE_LINE = "node cli.mjs <command> [options]";
@@ -110,6 +137,7 @@ const COMMANDS = [
       "--arbiter-thinking",
       "--github-repo",
       "--pull-requests",
+      "--github-cli",
       "--label",
     ],
   },
@@ -127,6 +155,8 @@ const COMMANDS = [
       "--branch",
       "--base-branch",
       "--workspace-id",
+      "--parent",
+      "--kind",
     ],
   },
   {
@@ -147,10 +177,24 @@ const COMMANDS = [
   {
     name: "task transition",
     mutation: true,
-    summary: "Set a task status and currentTask.",
+    summary: "Move an existing task along the legal status graph. Does not create tasks.",
     required: ["--ticket", "--task", "--status", "--expected-revision"],
     optional: [],
     flagEnums: { "--status": "taskStatus" },
+  },
+  {
+    name: "task register",
+    mutation: true,
+    summary: "Declare a pending task and its dependencies without changing currentTask.",
+    required: ["--ticket", "--task", "--expected-revision"],
+    optional: ["--depends-on", "--artifact", "--source-ref", "--verification-profile", "--evidence"],
+  },
+  {
+    name: "ticket depend",
+    mutation: true,
+    summary: "Record that a ticket depends on another ticket.",
+    required: ["--ticket", "--depends-on", "--expected-revision"],
+    optional: [],
   },
   {
     name: "review record",
@@ -180,7 +224,7 @@ const COMMANDS = [
       "--status",
       "--expected-revision",
     ],
-    optional: ["--task", "--round", "--pane", "--pane-name"],
+    optional: ["--task", "--round", "--pane", "--pane-name", "--subagent-id"],
     flagEnums: { "--stage": "stage", "--status": "sessionStatus" },
   },
   {
@@ -235,6 +279,20 @@ const COMMANDS = [
     required: [],
     optional: ["--host", "--port"],
   },
+  {
+    name: "worktree path",
+    mutation: false,
+    summary: "Print the external worktree path for a ticket.",
+    required: ["--repo", "--ticket"],
+    optional: [],
+  },
+  {
+    name: "github reconcile",
+    mutation: false,
+    summary: "Print GitHub comment and label commands derived from ticket state.",
+    required: ["--ticket"],
+    optional: [],
+  },
 ];
 
 const USAGE = `Usage: ${USAGE_LINE}
@@ -254,6 +312,8 @@ const OP_NAMES = {
   create: "create",
   transition: "transition",
   "task transition": "task_transition",
+  "task register": "task_register",
+  "ticket depend": "ticket_depend",
   "review record": "review_record",
   "session record": "session_record",
   message: "message",
@@ -407,19 +467,35 @@ function emptyTicket(values, ts) {
     createdAt: ts,
     updatedAt: ts,
     worktree,
+    parent: values.parent ?? null,
+    kind: values.kind ?? null,
+    dependsOn: [],
+    hooks: [],
     tasks: {},
     sessions: {},
     usage: {},
   };
 }
 
-function emptyTask(ts) {
+function emptyTask(ts, values = {}) {
   return {
     status: "pending",
-    blockedBy: [],
+    blockedBy: listOpt(values, "depends-on"),
     review: emptyReview(),
     updatedAt: ts,
+    artifact: values.artifact ?? null,
+    sourceRef: values["source-ref"] ?? null,
+    verificationProfile: values["verification-profile"] ?? null,
+    evidencePath: values.evidence ?? null,
   };
+}
+
+function listOpt(values, name) {
+  const raw = values[name];
+  if (raw === undefined) {
+    return [];
+  }
+  return (Array.isArray(raw) ? raw : [raw]).filter((item) => typeof item === "string" && item);
 }
 
 function ticketOf(state, id) {
@@ -441,7 +517,7 @@ function collectEnumError(label, value, allowed, errors) {
 
 function validateState(state) {
   const errors = [];
-  if (state.schemaVersion !== 3) {
+  if (state.schemaVersion !== 4) {
     errors.push(`unsupported schemaVersion ${state.schemaVersion}`);
   }
   if (typeof state.revision !== "number" || !Number.isInteger(state.revision)) {
@@ -590,9 +666,15 @@ function cmdCreate(state, values, ts) {
   if (state.tickets[ticketId]) {
     throw new CliError(`ticket already exists: ${ticketId}`, EXIT_INVALID);
   }
+  if (values.kind) {
+    requireEnum("kind", values.kind, new Set(["umbrella", "concrete"]));
+  }
+  if (values.parent && !state.tickets[values.parent]) {
+    throw new CliError(`parent ticket not found: ${values.parent}`, EXIT_NOT_FOUND);
+  }
   const ticket = emptyTicket(values, ts);
   state.tickets[ticketId] = ticket;
-  return { ticket: ticketId, stage: ticket.stage, status: ticket.status };
+  return { ticket: ticketId, stage: ticket.stage, status: ticket.status, kind: ticket.kind };
 }
 
 function cmdTransition(state, values, ts) {
@@ -604,18 +686,81 @@ function cmdTransition(state, values, ts) {
   return { ticket: ticketId, stage: ticket.stage, status: ticket.status };
 }
 
+function applyCurrentTask(ticket, taskId, status) {
+  if (ACTIVE_TASK_STATUSES.has(status)) {
+    ticket.currentTask = taskId;
+    return;
+  }
+  if (ticket.currentTask === taskId) {
+    ticket.currentTask = null;
+  }
+}
+
+function cmdTaskRegister(state, values, ts) {
+  const ticketId = requireOpt(values, "ticket");
+  const taskId = requireOpt(values, "task");
+  const ticket = ticketOf(state, ticketId);
+  const blockedBy = listOpt(values, "depends-on");
+  const existing = ticket.tasks[taskId];
+  if (existing) {
+    const sameDeps =
+      JSON.stringify([...(existing.blockedBy || [])].sort()) === JSON.stringify([...blockedBy].sort());
+    const sameMeta =
+      (existing.artifact ?? null) === (values.artifact ?? existing.artifact ?? null) &&
+      (existing.sourceRef ?? null) === (values["source-ref"] ?? existing.sourceRef ?? null) &&
+      (existing.verificationProfile ?? null) ===
+        (values["verification-profile"] ?? existing.verificationProfile ?? null);
+    if (existing.status !== "pending" || !sameDeps || !sameMeta) {
+      throw new CliError(`task already registered with different state: ${ticketId} ${taskId}`, EXIT_INVALID);
+    }
+    return { ticket: ticketId, task: taskId, status: existing.status, currentTask: ticket.currentTask };
+  }
+  ticket.tasks[taskId] = emptyTask(ts, values);
+  ticket.updatedAt = ts;
+  return { ticket: ticketId, task: taskId, status: "pending", currentTask: ticket.currentTask };
+}
+
 function cmdTaskTransition(state, values, ts) {
   const ticketId = requireOpt(values, "ticket");
   const taskId = requireOpt(values, "task");
   const ticket = ticketOf(state, ticketId);
   const status = requireEnum("status", requireOpt(values, "status"), TASK_STATUSES);
-  const task = ticket.tasks[taskId] ?? emptyTask(ts);
+  const task = ticket.tasks[taskId];
+  if (!task) {
+    throw new CliError(`task not found: ${ticketId} ${taskId}; register it first`, EXIT_NOT_FOUND);
+  }
+  const from = task.status;
+  const allowed = TASK_EDGES[from] || new Set();
+  if (!allowed.has(status)) {
+    throw new CliError(`illegal task transition: ${from} -> ${status}`, EXIT_INVALID);
+  }
   task.status = status;
   task.updatedAt = ts;
-  ticket.tasks[taskId] = task;
-  ticket.currentTask = taskId;
+  applyCurrentTask(ticket, taskId, status);
   ticket.updatedAt = ts;
-  return { ticket: ticketId, task: taskId, status };
+  return { ticket: ticketId, task: taskId, status, from, currentTask: ticket.currentTask };
+}
+
+function cmdTicketDepend(state, values, ts) {
+  const ticketId = requireOpt(values, "ticket");
+  const ticket = ticketOf(state, ticketId);
+  const deps = listOpt(values, "depends-on");
+  if (deps.length === 0) {
+    throw new CliError("--depends-on is required", EXIT_ARGS);
+  }
+  for (const dep of deps) {
+    if (dep === ticketId) {
+      throw new CliError("a ticket cannot depend on itself", EXIT_INVALID);
+    }
+    if (!state.tickets[dep]) {
+      throw new CliError(`dependency ticket not found: ${dep}`, EXIT_NOT_FOUND);
+    }
+    if (!ticket.dependsOn.includes(dep)) {
+      ticket.dependsOn.push(dep);
+    }
+  }
+  ticket.updatedAt = ts;
+  return { ticket: ticketId, dependsOn: ticket.dependsOn };
 }
 
 function cmdReviewRecord(state, values, ts) {
@@ -650,6 +795,31 @@ function cmdSessionRecord(state, values, ts) {
   const existing = ticket.sessions[sessionId] && typeof ticket.sessions[sessionId] === "object"
     ? ticket.sessions[sessionId]
     : {};
+  const status = requireEnum("status", requireOpt(values, "status"), SESSION_STATUSES);
+  const subagentId = values["subagent-id"] ?? null;
+  if (status === "starting" || status === "running") {
+    for (const [id, session] of Object.entries(ticket.sessions)) {
+      if (id === sessionId || !session || typeof session !== "object") {
+        continue;
+      }
+      if (session.status !== "starting" && session.status !== "running") {
+        continue;
+      }
+      const sameFile = values.session && session.sessionFile === values.session;
+      if (sameFile && session.subagentId && subagentId && session.subagentId !== subagentId) {
+        throw new CliError(`active runtime already exists for ${values.session}`, EXIT_INVALID);
+      }
+    }
+    const same = existing;
+    if (
+      same.subagentId &&
+      subagentId &&
+      same.subagentId !== subagentId &&
+      (same.status === "starting" || same.status === "running")
+    ) {
+      throw new CliError(`active runtime already exists for session ${sessionId}`, EXIT_INVALID);
+    }
+  }
   const round = optionalInt(values, "round");
   ticket.sessions[sessionId] = {
     stage: requireEnum("stage", requireOpt(values, "stage"), STAGES),
@@ -659,10 +829,11 @@ function cmdSessionRecord(state, values, ts) {
     paneId: values.pane ?? existing.paneId ?? null,
     paneName: values["pane-name"] ?? existing.paneName ?? null,
     sessionFile: requireOpt(values, "session"),
-    status: requireEnum("status", requireOpt(values, "status"), SESSION_STATUSES),
+    status,
     context: existing.context ?? null,
     startedAt: existing.startedAt ?? ts,
     updatedAt: ts,
+    subagentId: subagentId ?? existing.subagentId ?? null,
   };
   ticket.updatedAt = ts;
   return { ticket: ticketId, session: sessionId, status: ticket.sessions[sessionId].status };
@@ -891,6 +1062,26 @@ function buildFactoryJson(existing, values) {
   if (labels) {
     github.labels = labels;
   }
+  const cliFlag = parseBoolFlag(values, "github-cli");
+  github.cli =
+    cliFlag !== undefined ? cliFlag : typeof existing?.github?.cli === "boolean" ? existing.github.cli : false;
+
+  const hookScript = path.join(import.meta.dirname, "hooks", "require-evidence.mjs");
+  const defaultHooks = {
+    before: [
+      { on: "task:ready_for_review", command: `node ${JSON.stringify(hookScript)}` },
+      { on: "ticket:wrapup", command: `node ${JSON.stringify(hookScript)}` },
+    ],
+    after: [],
+  };
+  const hooks =
+    existing?.hooks && typeof existing.hooks === "object" && !Array.isArray(existing.hooks)
+      ? existing.hooks
+      : defaultHooks;
+  const verification =
+    existing?.verification && typeof existing.verification === "object" && !Array.isArray(existing.verification)
+      ? existing.verification
+      : { command: null };
 
   const preserved = {};
   if (existing) {
@@ -906,6 +1097,8 @@ function buildFactoryJson(existing, values) {
     models,
     limits,
     github,
+    hooks,
+    verification,
     ...preserved,
   };
 }
@@ -981,6 +1174,147 @@ function cmdInit(factoryRoot, values) {
   };
 }
 
+function codeRootSafe() {
+  try {
+    return codeRoot();
+  } catch {
+    return null;
+  }
+}
+
+function readFactoryConfig(factoryRoot) {
+  const file = factoryJsonPath(factoryRoot);
+  if (!existsSync(file)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function hookList(config, phase, event) {
+  const list = config?.hooks?.[phase];
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  return list.filter((hook) => hook && hook.on === event && typeof hook.command === "string" && hook.command);
+}
+
+function runHookList(hooks, envelope, { phase, block }) {
+  const runs = [];
+  for (const hook of hooks) {
+    const started = Date.now();
+    const result = spawnSync(hook.command, {
+      input: `${JSON.stringify(envelope)}\n`,
+      encoding: "utf8",
+      timeout: Number(hook.timeoutMs) || 120000,
+      shell: true,
+      maxBuffer: 1024 * 1024,
+    });
+    const output = `${result.stdout || ""}${result.stderr || ""}`.slice(0, 8000);
+    const exitCode = typeof result.status === "number" ? result.status : 1;
+    runs.push({
+      phase,
+      event: envelope.event,
+      command: hook.command,
+      exitCode,
+      durationMs: Date.now() - started,
+      output,
+      at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    });
+    if (block && exitCode !== 0) {
+      throw new CliError(`lifecycle hook failed (${envelope.event}): ${hook.command}\n${output}`, EXIT_INVALID);
+    }
+  }
+  return runs;
+}
+
+function taskSummaries(ticket) {
+  return Object.entries(ticket.tasks || {}).map(([id, task]) => ({
+    id,
+    status: task?.status ?? null,
+    evidencePath: task?.evidencePath ?? null,
+  }));
+}
+
+function lifecycleEnvelope(state, factoryRoot, command, values) {
+  const ticketId = requireOpt(values, "ticket");
+  const ticket = ticketOf(state, ticketId);
+  if (command === "task transition") {
+    const taskId = requireOpt(values, "task");
+    const to = requireOpt(values, "status");
+    return {
+      entity: "task",
+      event: `task:${to}`,
+      from: ticket.tasks[taskId]?.status ?? null,
+      to,
+      ticket: ticketId,
+      task: taskId,
+      codeRoot: codeRootSafe(),
+      factoryRoot,
+      worktree: ticket.worktree?.path ?? null,
+      source: ticket.source ?? null,
+      kind: ticket.kind ?? null,
+      tasks: taskSummaries(ticket),
+      timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      revision: state.revision,
+    };
+  }
+  const stage = requireOpt(values, "stage");
+  return {
+    entity: "ticket",
+    event: `ticket:${stage}`,
+    from: ticket.stage,
+    to: stage,
+    ticket: ticketId,
+    task: ticket.currentTask ?? null,
+    codeRoot: codeRootSafe(),
+    factoryRoot,
+    worktree: ticket.worktree?.path ?? null,
+    source: ticket.source ?? null,
+    kind: ticket.kind ?? null,
+    tasks: taskSummaries(ticket),
+    timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+    revision: state.revision,
+  };
+}
+
+function worktreePathFor(repo, ticket) {
+  if (!/^[\w.-]+$/.test(repo)) {
+    throw new CliError("--repo must be a single path segment", EXIT_INVALID);
+  }
+  if (!/^[\w.-]+$/.test(ticket)) {
+    throw new CliError("--ticket must be a single path segment", EXIT_INVALID);
+  }
+  return path.join(process.env.HOME || homedir(), repo, "worktrees", ticket);
+}
+
+function issueNumber(ticket) {
+  const ref = ticket.source?.ref || "";
+  const match = String(ref).match(/\/issues\/(\d+)(?:$|[^\d])/) || String(ref).match(/^#?(\d+)$/);
+  return match ? match[1] : null;
+}
+
+function reconcileCommands(ticket) {
+  const number = issueNumber(ticket);
+  if (!number) {
+    throw new CliError("ticket has no GitHub issue source", EXIT_INVALID);
+  }
+  if (ticket.kind === "umbrella") {
+    const related = (ticket.dependsOn || []).join(", ") || "none";
+    return [`gh issue comment ${number} --body ${JSON.stringify(`Coordinating related tickets: ${related}.`)}`];
+  }
+  const inReview = Object.values(ticket.tasks || {}).some((task) => task?.status === "in_review");
+  const label = ticket.stage === "done" ? "ready-for-human" : inReview || ticket.stage === "review" ? "in-review" : "in-progress";
+  const body = `Stage ${ticket.stage}, status ${ticket.status}, current task ${ticket.currentTask || "none"}.`;
+  return [
+    `gh issue comment ${number} --body ${JSON.stringify(body)}`,
+    `gh issue edit ${number} --add-label ${JSON.stringify(label)}`,
+  ];
+}
+
 async function dispatch(command, values, io) {
   const factoryRoot = resolveFactoryRoot(values["factory-root"]);
   if (command === "init") {
@@ -991,6 +1325,8 @@ async function dispatch(command, values, io) {
     "create",
     "transition",
     "task transition",
+    "task register",
+    "ticket depend",
     "review record",
     "session record",
     "message",
@@ -1082,6 +1418,27 @@ async function dispatch(command, values, io) {
     return;
   }
 
+  if (command === "worktree path") {
+    const target = worktreePathFor(requireOpt(values, "repo"), requireOpt(values, "ticket"));
+    printJson(io.stdout, { ok: true, path: target, repo: values.repo, ticket: values.ticket });
+    return;
+  }
+
+  if (command === "github reconcile") {
+    const config = readFactoryConfig(factoryRoot);
+    if (!config?.github?.cli) {
+      throw new CliError("GitHub CLI is not the ticket source; use .factory/tickets", EXIT_INVALID);
+    }
+    const state = loadState(factoryRoot);
+    const ticket = ticketOf(state, requireOpt(values, "ticket"));
+    printJson(io.stdout, {
+      ok: true,
+      ticket: values.ticket,
+      commands: reconcileCommands(ticket),
+    });
+    return;
+  }
+
   if (!mutations.has(command)) {
     throw new CliError(`unknown command: ${command || "(none)"}\n${USAGE}`, EXIT_ARGS);
   }
@@ -1091,6 +1448,8 @@ async function dispatch(command, values, io) {
     create: cmdCreate,
     transition: cmdTransition,
     "task transition": cmdTaskTransition,
+    "task register": cmdTaskRegister,
+    "ticket depend": cmdTicketDepend,
     "review record": cmdReviewRecord,
     "session record": cmdSessionRecord,
     message: cmdMessage,
@@ -1098,9 +1457,39 @@ async function dispatch(command, values, io) {
     unblock: cmdUnblock,
     "usage record": cmdUsageRecord,
   };
-  const result = mutate(factoryRoot, expectedRevision, OP_NAMES[command], (state, ts) =>
-    handlers[command](state, values, ts),
-  );
+  let beforeRuns = [];
+  if (command === "transition" || command === "task transition") {
+    const current = loadState(factoryRoot);
+    const envelope = lifecycleEnvelope(current, factoryRoot, command, values);
+    const config = readFactoryConfig(factoryRoot);
+    beforeRuns = runHookList(hookList(config, "before", envelope.event), envelope, {
+      phase: "before",
+      block: true,
+    });
+  }
+  const result = mutate(factoryRoot, expectedRevision, OP_NAMES[command], (state, ts) => {
+    const extra = handlers[command](state, values, ts) || {};
+    if (beforeRuns.length > 0) {
+      extra.hookRuns = beforeRuns;
+    }
+    return extra;
+  });
+  if (command === "transition" || command === "task transition") {
+    const config = readFactoryConfig(factoryRoot);
+    const afterEnvelope = lifecycleEnvelope(loadState(factoryRoot), factoryRoot, command, values);
+    afterEnvelope.revision = result.revision;
+    const afterRuns = runHookList(hookList(config, "after", afterEnvelope.event), afterEnvelope, {
+      phase: "after",
+      block: false,
+    });
+    if (afterRuns.length > 0) {
+      mutate(factoryRoot, result.revision, "hook_record", () => ({
+        ticket: result.ticket,
+        task: result.task ?? null,
+        hookRuns: afterRuns,
+      }));
+    }
+  }
   printJson(io.stdout, result);
 }
 

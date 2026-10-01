@@ -77,12 +77,26 @@ function migrateTicket(ticket) {
     if (!("status" in task)) {
       task.status = null;
     }
+    for (const key of ["artifact", "sourceRef", "verificationProfile", "evidencePath"]) {
+      if (!(key in task)) {
+        task[key] = null;
+      }
+    }
+  }
+  if (!Array.isArray(ticket.dependsOn)) {
+    ticket.dependsOn = [];
+  }
+  if (!("parent" in ticket)) {
+    ticket.parent = null;
+  }
+  if (!("kind" in ticket)) {
+    ticket.kind = null;
   }
   for (const session of Object.values(ticket.sessions)) {
     if (!session || typeof session !== "object") {
       continue;
     }
-    for (const key of ["round", "paneName", "context", "startedAt", "updatedAt", "task", "paneId", "model"]) {
+    for (const key of ["round", "paneName", "context", "startedAt", "updatedAt", "task", "paneId", "model", "subagentId"]) {
       if (!(key in session)) {
         session[key] = null;
       }
@@ -105,7 +119,7 @@ export function migrateJsonState(state) {
     throw new CliError("state must be an object", EXIT_INVALID);
   }
   const version = state.schemaVersion;
-  if (version !== 2 && version !== 3) {
+  if (version !== 2 && version !== 3 && version !== 4) {
     throw new CliError(`unsupported schemaVersion ${version}`, EXIT_INVALID);
   }
   if (typeof state.revision !== "number" || !Number.isInteger(state.revision)) {
@@ -114,8 +128,8 @@ export function migrateJsonState(state) {
   if (!state.tickets || typeof state.tickets !== "object" || Array.isArray(state.tickets)) {
     throw new CliError("tickets must be an object", EXIT_INVALID);
   }
-  if (version === 2) {
-    state.schemaVersion = 3;
+  if (version === 2 || version === 3) {
+    state.schemaVersion = 4;
     if (!("updatedAt" in state)) {
       state.updatedAt = null;
     }
@@ -140,6 +154,106 @@ function hasMetaTable(db) {
   );
 }
 
+function tableColumns(db, table) {
+  return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name));
+}
+
+function addColumn(db, table, column, ddl) {
+  if (!tableColumns(db, table).has(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
+
+function migrateSqlite(db) {
+  if (!hasMetaTable(db)) {
+    return;
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ticket_depends (
+      ticket_id            TEXT NOT NULL,
+      depends_on_ticket_id TEXT NOT NULL,
+      PRIMARY KEY (ticket_id, depends_on_ticket_id)
+    );
+    CREATE TABLE IF NOT EXISTS hook_runs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      revision    INTEGER,
+      ticket_id   TEXT,
+      task_id     TEXT,
+      phase       TEXT NOT NULL CHECK (phase IN ('before','after')),
+      event       TEXT NOT NULL,
+      command     TEXT NOT NULL,
+      exit_code   INTEGER,
+      duration_ms INTEGER,
+      artifact    TEXT,
+      output      TEXT,
+      at          TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS hook_runs_ticket ON hook_runs(ticket_id, id);
+  `);
+  if (tableColumns(db, "tickets").size > 0) {
+    addColumn(db, "tickets", "parent_id", "parent_id TEXT");
+    addColumn(db, "tickets", "kind", "kind TEXT");
+  }
+  if (tableColumns(db, "sessions").size > 0) {
+    addColumn(db, "sessions", "subagent_id", "subagent_id TEXT");
+  }
+  const taskSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'").get();
+  if (taskSql && !String(taskSql.sql).includes("in_review")) {
+    const blocked = db.prepare("SELECT ticket_id, task_id, blocked_by_task_id FROM task_blocked_by").all();
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.exec(`
+      CREATE TABLE tasks_v4 (
+        ticket_id             TEXT NOT NULL,
+        task_id               TEXT NOT NULL,
+        status                TEXT CHECK (status IS NULL OR status IN ('pending','in_progress','ready_for_review','in_review','done','blocked')),
+        review_round          INTEGER,
+        review_verdict        TEXT CHECK (review_verdict IS NULL OR review_verdict IN ('approve','changes_requested','blocked')),
+        review_finding_count  INTEGER,
+        review_blocking_count INTEGER,
+        review_updated_at     TEXT,
+        updated_at            TEXT,
+        artifact              TEXT,
+        source_ref            TEXT,
+        verification_profile  TEXT,
+        evidence_path         TEXT,
+        PRIMARY KEY (ticket_id, task_id),
+        FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+      );
+      INSERT INTO tasks_v4 (
+        ticket_id, task_id, status, review_round, review_verdict,
+        review_finding_count, review_blocking_count, review_updated_at, updated_at
+      )
+      SELECT
+        ticket_id, task_id, status, review_round, review_verdict,
+        review_finding_count, review_blocking_count, review_updated_at, updated_at
+      FROM tasks;
+      DROP TABLE task_blocked_by;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_v4 RENAME TO tasks;
+      CREATE TABLE task_blocked_by (
+        ticket_id          TEXT NOT NULL,
+        task_id            TEXT NOT NULL,
+        blocked_by_task_id TEXT NOT NULL,
+        PRIMARY KEY (ticket_id, task_id, blocked_by_task_id),
+        FOREIGN KEY (ticket_id, task_id) REFERENCES tasks(ticket_id, task_id) ON DELETE CASCADE
+      );
+    `);
+    const insertBlocked = db.prepare(
+      "INSERT INTO task_blocked_by (ticket_id, task_id, blocked_by_task_id) VALUES (?, ?, ?)",
+    );
+    for (const row of blocked) {
+      insertBlocked.run(row.ticket_id, row.task_id, row.blocked_by_task_id);
+    }
+    db.exec("PRAGMA foreign_keys = ON");
+  } else if (tableColumns(db, "tasks").size > 0) {
+    addColumn(db, "tasks", "artifact", "artifact TEXT");
+    addColumn(db, "tasks", "source_ref", "source_ref TEXT");
+    addColumn(db, "tasks", "verification_profile", "verification_profile TEXT");
+    addColumn(db, "tasks", "evidence_path", "evidence_path TEXT");
+  }
+  setMeta(db, "schemaVersion", "4");
+}
+
 function openDatabase(dbFile, { readOnly = false, create = false } = {}) {
   if (create) {
     mkdirSync(path.dirname(dbFile), { recursive: true });
@@ -154,6 +268,9 @@ function openDatabase(dbFile, { readOnly = false, create = false } = {}) {
     configure(db, { readOnly });
     if (!readOnly && !hasMetaTable(db)) {
       db.exec(SCHEMA_SQL);
+    }
+    if (!readOnly) {
+      migrateSqlite(db);
     }
   } catch (err) {
     db.close();
@@ -211,6 +328,10 @@ function ticketFromRow(row) {
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
     worktree,
+    parent: row.parent_id ?? null,
+    kind: row.kind ?? null,
+    dependsOn: [],
+    hooks: [],
     tasks: {},
     sessions: {},
     usage: {},
@@ -237,6 +358,7 @@ function sessionFromRow(row) {
     context,
     startedAt: row.started_at ?? null,
     updatedAt: row.updated_at ?? null,
+    subagentId: row.subagent_id ?? null,
   };
 }
 
@@ -260,7 +382,7 @@ function usageFromRow(row) {
 }
 
 export function loadSnapshot(db) {
-  const schemaVersion = Number(getMeta(db, "schemaVersion") || 3);
+  const schemaVersion = Number(getMeta(db, "schemaVersion") || 4);
   const revision = Number(getMeta(db, "revision") || 0);
   const updatedRaw = getMeta(db, "updatedAt");
   const updatedAt = updatedRaw ? updatedRaw : null;
@@ -296,6 +418,10 @@ export function loadSnapshot(db) {
         updatedAt: row.review_updated_at ?? null,
       },
       updatedAt: row.updated_at ?? null,
+      artifact: row.artifact ?? null,
+      sourceRef: row.source_ref ?? null,
+      verificationProfile: row.verification_profile ?? null,
+      evidencePath: row.evidence_path ?? null,
     };
   }
   for (const row of db.prepare("SELECT * FROM task_blocked_by").all()) {
@@ -318,24 +444,58 @@ export function loadSnapshot(db) {
     }
     ticket.usage[row.session_id] = usageFromRow(row);
   }
+  if (tableColumns(db, "ticket_depends").size > 0) {
+    for (const row of db.prepare("SELECT * FROM ticket_depends").all()) {
+      const ticket = tickets[row.ticket_id];
+      if (ticket) {
+        ticket.dependsOn.push(row.depends_on_ticket_id);
+      }
+    }
+  }
+  if (tableColumns(db, "hook_runs").size > 0) {
+    for (const row of db.prepare("SELECT * FROM hook_runs ORDER BY id").all()) {
+      const ticket = tickets[row.ticket_id];
+      if (!ticket) {
+        continue;
+      }
+      ticket.hooks.push({
+        phase: row.phase,
+        event: row.event,
+        command: row.command,
+        exitCode: row.exit_code ?? null,
+        durationMs: row.duration_ms ?? null,
+        artifact: row.artifact ?? null,
+        output: row.output ?? null,
+        at: row.at,
+        task: row.task_id ?? null,
+        revision: row.revision ?? null,
+      });
+    }
+  }
   return { schemaVersion, revision, updatedAt, tickets };
 }
 
 function persistSnapshot(db, state) {
   db.exec("DELETE FROM tickets");
+  db.exec("DELETE FROM ticket_depends");
   const insertTicket = db.prepare(`
     INSERT INTO tickets (
       id, title, type, source_kind, source_ref, stage, status, current_task,
       message, message_at, created_at, updated_at,
-      worktree_path, worktree_branch, worktree_base_branch, worktree_workspace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      worktree_path, worktree_branch, worktree_base_branch, worktree_workspace_id,
+      parent_id, kind
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertTask = db.prepare(`
     INSERT INTO tasks (
       ticket_id, task_id, status, review_round, review_verdict,
-      review_finding_count, review_blocking_count, review_updated_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      review_finding_count, review_blocking_count, review_updated_at, updated_at,
+      artifact, source_ref, verification_profile, evidence_path
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  const insertDepends = db.prepare(
+    "INSERT INTO ticket_depends (ticket_id, depends_on_ticket_id) VALUES (?, ?)",
+  );
   const insertBlockedBy = db.prepare(
     "INSERT INTO task_blocked_by (ticket_id, task_id, blocked_by_task_id) VALUES (?, ?, ?)",
   );
@@ -346,8 +506,8 @@ function persistSnapshot(db, state) {
     INSERT INTO sessions (
       ticket_id, session_id, stage, task, round, model, pane_id, pane_name,
       session_file, status, context_tokens, context_window, context_percent,
-      started_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      started_at, updated_at, subagent_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertUsage = db.prepare(`
     INSERT INTO usage (
@@ -377,7 +537,12 @@ function persistSnapshot(db, state) {
       ticket.worktree ? (worktree.branch ?? null) : null,
       ticket.worktree ? (worktree.baseBranch ?? null) : null,
       ticket.worktree ? (worktree.workspaceId ?? null) : null,
+      ticket.parent ?? null,
+      ticket.kind ?? null,
     );
+    for (const dep of Array.isArray(ticket.dependsOn) ? ticket.dependsOn : []) {
+      insertDepends.run(id, dep);
+    }
     if (ticket.blocker && typeof ticket.blocker === "object") {
       insertBlocker.run(
         id,
@@ -403,6 +568,10 @@ function persistSnapshot(db, state) {
         review.blockingCount ?? null,
         review.updatedAt ?? null,
         task.updatedAt ?? null,
+        task.artifact ?? null,
+        task.sourceRef ?? null,
+        task.verificationProfile ?? null,
+        task.evidencePath ?? null,
       );
       for (const dep of Array.isArray(task.blockedBy) ? task.blockedBy : []) {
         insertBlockedBy.run(id, taskId, dep);
@@ -430,6 +599,7 @@ function persistSnapshot(db, state) {
         session.context ? (context.percent ?? null) : null,
         session.startedAt ?? null,
         session.updatedAt ?? null,
+        session.subagentId ?? null,
       );
     }
     const usage = ticket.usage && typeof ticket.usage === "object" ? ticket.usage : {};
@@ -456,7 +626,7 @@ function persistSnapshot(db, state) {
       );
     }
   }
-  setMeta(db, "schemaVersion", String(state.schemaVersion ?? 3));
+  setMeta(db, "schemaVersion", "4");
   setMeta(db, "storageVersion", "1");
   setMeta(db, "revision", String(state.revision));
   setMeta(db, "updatedAt", state.updatedAt ?? "");
@@ -473,6 +643,7 @@ function payloadFrom(extra) {
   delete payload.ticket;
   delete payload.task;
   delete payload.ok;
+  delete payload.hookRuns;
   return payload;
 }
 
@@ -591,6 +762,29 @@ export function mutate(factoryRoot, expectedRevision, op, fn) {
       taskId: extra.task ?? null,
       payload: payloadFrom(extra),
     });
+    if (Array.isArray(extra.hookRuns)) {
+      const insertHook = db.prepare(`
+        INSERT INTO hook_runs (
+          revision, ticket_id, task_id, phase, event, command, exit_code,
+          duration_ms, artifact, output, at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const run of extra.hookRuns) {
+        insertHook.run(
+          state.revision,
+          extra.ticket ?? null,
+          extra.task ?? run.task ?? null,
+          run.phase,
+          run.event,
+          run.command,
+          run.exitCode ?? null,
+          run.durationMs ?? null,
+          run.artifact ?? null,
+          run.output ?? null,
+          run.at ?? ts,
+        );
+      }
+    }
     db.exec("COMMIT");
     began = false;
     return { ok: true, revision: state.revision, ...extra };
@@ -616,7 +810,7 @@ export function listEvents(db, afterRevision) {
 
 export function readMeta(db) {
   return {
-    schemaVersion: Number(getMeta(db, "schemaVersion") || 3),
+    schemaVersion: Number(getMeta(db, "schemaVersion") || 4),
     revision: Number(getMeta(db, "revision") || 0),
     updatedAt: getMeta(db, "updatedAt") || null,
     storageVersion: Number(getMeta(db, "storageVersion") || 1),

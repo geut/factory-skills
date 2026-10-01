@@ -25,4 +25,4 @@ After behavior and acceptance criteria, apply [references/code-quality.md](refer
 
 ## Return the verdict
 
-Return only `factory.review.v4` from the prompt. Do not emit a JSON object. Do not wrap the result in a Markdown fence. Do not add a recap after it. Never write a review artifact to the ticket directory.
+Return only `factory.review.v4` from the prompt. Do not emit a JSON object. Do not wrap the result in a Markdown fence. Do not add a recap after it. Never write a review artifact to the ticket directory. After the template, call `subagent_done` and emit nothing else.

@@ -95,7 +95,7 @@ test("init writes FACTORY.json and an empty store", async () => {
   assert.equal(result.code, EXIT_OK, result.err);
   assert.equal(result.json.ok, true);
   assert.equal(result.json.revision, 0);
-  assert.equal(result.json.schemaVersion, 3);
+  assert.equal(result.json.schemaVersion, 4);
   assert.equal(result.json.ticketIdPattern, "PROJ-<number>");
   assert.equal(result.json.pullRequests, false);
   assert.deepEqual(result.json.tickets, []);
@@ -310,6 +310,21 @@ test("task, review, session, message, block, and unblock", async () => {
   const root = await tempRoot();
   await fstate(root, "create", "--ticket", "PROJ-123", "--expected-revision", "0");
 
+  const registered = await fstate(
+    root,
+    "task",
+    "register",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--expected-revision",
+    "1",
+  );
+  assert.equal(registered.code, EXIT_OK, registered.err);
+  assert.equal(registered.json.status, "pending");
+  assert.equal(registered.json.currentTask, null);
+
   const task = await fstate(
     root,
     "task",
@@ -321,10 +336,10 @@ test("task, review, session, message, block, and unblock", async () => {
     "--status",
     "in_progress",
     "--expected-revision",
-    "1",
+    "2",
   );
   assert.equal(task.code, EXIT_OK, task.err);
-  assert.equal(task.json.revision, 2);
+  assert.equal(task.json.revision, 3);
   assert.equal(task.json.task, "01");
   assert.equal(task.json.status, "in_progress");
 
@@ -345,7 +360,7 @@ test("task, review, session, message, block, and unblock", async () => {
     "--blocking-count",
     "0",
     "--expected-revision",
-    "2",
+    "3",
   );
   assert.equal(review.code, EXIT_OK, review.err);
   assert.equal(review.json.verdict, "approve");
@@ -373,7 +388,7 @@ test("task, review, session, message, block, and unblock", async () => {
     "--pane-name",
     "PROJ-123 · review T01 R1",
     "--expected-revision",
-    "3",
+    "4",
   );
   assert.equal(session.code, EXIT_OK, session.err);
 
@@ -385,7 +400,7 @@ test("task, review, session, message, block, and unblock", async () => {
     "--text",
     "Review task 01 completed",
     "--expected-revision",
-    "4",
+    "5",
   );
   assert.equal(message.code, EXIT_OK, message.err);
 
@@ -401,7 +416,7 @@ test("task, review, session, message, block, and unblock", async () => {
     "--task",
     "01",
     "--expected-revision",
-    "5",
+    "6",
   );
   assert.equal(blocked.code, EXIT_OK, blocked.err);
   assert.equal(blocked.json.status, "blocked");
@@ -414,14 +429,14 @@ test("task, review, session, message, block, and unblock", async () => {
     "--ticket",
     "PROJ-123",
     "--expected-revision",
-    "6",
+    "7",
   );
   assert.equal(unblocked.code, EXIT_OK, unblocked.err);
   assert.equal(unblocked.json.status, "active");
   assert.equal(unblocked.json.blocker, null);
 
   const state = await readState(root);
-  assert.equal(state.revision, 7);
+  assert.equal(state.revision, 8);
   assert.equal(state.tickets["PROJ-123"].currentTask, "01");
   assert.equal(state.tickets["PROJ-123"].tasks["01"].review.round, 1);
   assert.equal(state.tickets["PROJ-123"].sessions["sess-1"].paneName, "PROJ-123 · review T01 R1");
@@ -429,9 +444,10 @@ test("task, review, session, message, block, and unblock", async () => {
   assert.equal(state.tickets["PROJ-123"].blocker, null);
 
   const events = readEvents(root);
-  assert.equal(events.length, 7);
+  assert.equal(events.length, 8);
   assert.deepEqual(events.map((row) => row.op), [
     "create",
+    "task_register",
     "task_transition",
     "review_record",
     "session_record",
@@ -526,7 +542,7 @@ test("v2 JSON migrates into sqlite on the next mutation; unknown fields stay nul
   assert.equal(existsSync(stateDbPath(root)), true);
 
   const state = await readState(root);
-  assert.equal(state.schemaVersion, 3);
+  assert.equal(state.schemaVersion, 4);
   assert.equal(state.updatedAt != null, true);
   const ticket = state.tickets["PROJ-12"];
   assert.equal(ticket.title, null);
@@ -566,6 +582,8 @@ test("help prints a JSON catalog without a factory root", async () => {
     "status",
     "transition",
     "task transition",
+    "task register",
+    "ticket depend",
     "review record",
     "session record",
     "message",
@@ -575,6 +593,8 @@ test("help prints a JSON catalog without a factory root", async () => {
     "usage show",
     "validate",
     "server",
+    "worktree path",
+    "github reconcile",
   ]);
   const create = result.json.commands.find((command) => command.name === "create");
   assert.equal(create.mutation, true);
@@ -634,7 +654,7 @@ test("validate accepts a well-formed store", async () => {
   const result = await fstate(root, "validate");
   assert.equal(result.code, EXIT_OK, result.err);
   assert.deepEqual(result.json.tickets, ["PROJ-123"]);
-  assert.equal(result.json.schemaVersion, 3);
+  assert.equal(result.json.schemaVersion, 4);
 });
 
 test("server streams a transition over SSE", async () => {
@@ -648,7 +668,7 @@ test("server streams a transition over SSE", async () => {
   const healthJson = await health.json();
   assert.equal(healthJson.ok, true);
   assert.equal(healthJson.revision, 1);
-  assert.equal(healthJson.schemaVersion, 3);
+  assert.equal(healthJson.schemaVersion, 4);
 
   const ac = new AbortController();
   const res = await fetch(`http://127.0.0.1:${started.port}/events?after=1`, { signal: ac.signal });
@@ -690,4 +710,471 @@ test("server streams a transition over SSE", async () => {
   assert.match(body, /event: transition/);
   assert.match(body, /"ticket":"PROJ-123"/);
   assert.match(body, /"revision":2/);
+});
+
+test("task register is idempotent, rejects conflicts, and transitions follow the graph", async () => {
+  const root = await tempRoot();
+  await fstate(root, "create", "--ticket", "PROJ-123", "--expected-revision", "0");
+  const first = await fstate(
+    root,
+    "task",
+    "register",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--expected-revision",
+    "1",
+  );
+  assert.equal(first.code, EXIT_OK, first.err);
+  const again = await fstate(
+    root,
+    "task",
+    "register",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--expected-revision",
+    "2",
+  );
+  assert.equal(again.code, EXIT_OK, again.err);
+  assert.equal(again.json.currentTask, null);
+
+  const conflict = await fstate(
+    root,
+    "task",
+    "register",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--depends-on",
+    "00",
+    "--expected-revision",
+    "3",
+  );
+  assert.equal(conflict.code, EXIT_INVALID);
+  assert.match(conflict.err, /different state/);
+
+  const missing = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "99",
+    "--status",
+    "in_progress",
+    "--expected-revision",
+    "3",
+  );
+  assert.equal(missing.code, EXIT_NOT_FOUND);
+  assert.match(missing.err, /register it first/);
+
+  await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--status",
+    "in_progress",
+    "--expected-revision",
+    "3",
+  );
+  const illegal = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--status",
+    "done",
+    "--expected-revision",
+    "4",
+  );
+  assert.equal(illegal.code, EXIT_INVALID);
+  assert.match(illegal.err, /illegal task transition/);
+
+  await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--status",
+    "ready_for_review",
+    "--expected-revision",
+    "4",
+  );
+  await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--status",
+    "in_review",
+    "--expected-revision",
+    "5",
+  );
+  const done = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-123",
+    "--task",
+    "01",
+    "--status",
+    "done",
+    "--expected-revision",
+    "6",
+  );
+  assert.equal(done.code, EXIT_OK, done.err);
+  assert.equal(done.json.currentTask, null);
+  const state = await readState(root);
+  assert.equal(state.tickets["PROJ-123"].tasks["01"].status, "done");
+  assert.equal(state.tickets["PROJ-123"].currentTask, null);
+});
+
+test("evidence hook blocks ready_for_review and concrete wrapup until manifests exist", async () => {
+  const root = await tempRoot();
+  await fstate(root, "init", ...INIT_MODELS);
+  await fstate(root, "create", "--ticket", "PROJ-9", "--kind", "concrete", "--expected-revision", "0");
+  await fstate(root, "task", "register", "--ticket", "PROJ-9", "--task", "01", "--expected-revision", "1");
+  await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-9",
+    "--task",
+    "01",
+    "--status",
+    "in_progress",
+    "--expected-revision",
+    "2",
+  );
+  const blocked = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-9",
+    "--task",
+    "01",
+    "--status",
+    "ready_for_review",
+    "--expected-revision",
+    "3",
+  );
+  assert.equal(blocked.code, EXIT_INVALID, blocked.err);
+  assert.match(blocked.err, /missing evidence manifest/);
+  const unchanged = await readState(root);
+  assert.equal(unchanged.revision, 3);
+  assert.equal(unchanged.tickets["PROJ-9"].tasks["01"].status, "in_progress");
+
+  const manifestDir = path.join(root, "evidence", "PROJ-9", "01");
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(
+    path.join(manifestDir, "manifest.json"),
+    `${JSON.stringify({
+      ticket: "PROJ-9",
+      task: "01",
+      criteria: [{ id: "AC1", command: "node -e process.exit(0)", exitCode: 0, artifact: "out.txt" }],
+    })}\n`,
+  );
+  const ready = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-9",
+    "--task",
+    "01",
+    "--status",
+    "ready_for_review",
+    "--expected-revision",
+    "3",
+  );
+  assert.equal(ready.code, EXIT_OK, ready.err);
+  const withHook = await readState(root);
+  assert.equal(withHook.tickets["PROJ-9"].hooks.length, 1);
+  assert.equal(withHook.tickets["PROJ-9"].hooks[0].exitCode, 0);
+  assert.equal(withHook.tickets["PROJ-9"].hooks[0].phase, "before");
+
+  const wrap = await fstate(
+    root,
+    "transition",
+    "--ticket",
+    "PROJ-9",
+    "--stage",
+    "wrapup",
+    "--status",
+    "active",
+    "--expected-revision",
+    "4",
+  );
+  assert.equal(wrap.code, EXIT_INVALID);
+  assert.match(wrap.err, /not done/);
+
+  await fstate(root, "create", "--ticket", "UM-1", "--kind", "umbrella", "--expected-revision", "4");
+  const umbrella = await fstate(
+    root,
+    "transition",
+    "--ticket",
+    "UM-1",
+    "--stage",
+    "wrapup",
+    "--status",
+    "active",
+    "--expected-revision",
+    "5",
+  );
+  assert.equal(umbrella.code, EXIT_OK, umbrella.err);
+});
+
+test("session record keeps one active runtime per session file", async () => {
+  const root = await tempRoot();
+  await fstate(root, "create", "--ticket", "PROJ-123", "--expected-revision", "0");
+  const started = await fstate(
+    root,
+    "session",
+    "record",
+    "--ticket",
+    "PROJ-123",
+    "--session-id",
+    "pi-session-1",
+    "--session",
+    "/tmp/pi-session-1.jsonl",
+    "--stage",
+    "work",
+    "--status",
+    "running",
+    "--subagent-id",
+    "runtime-a",
+    "--pane-name",
+    "PROJ-123 · work T01",
+    "--expected-revision",
+    "1",
+  );
+  assert.equal(started.code, EXIT_OK, started.err);
+  const duplicate = await fstate(
+    root,
+    "session",
+    "record",
+    "--ticket",
+    "PROJ-123",
+    "--session-id",
+    "other",
+    "--session",
+    "/tmp/pi-session-1.jsonl",
+    "--stage",
+    "work",
+    "--status",
+    "running",
+    "--subagent-id",
+    "runtime-b",
+    "--expected-revision",
+    "2",
+  );
+  assert.equal(duplicate.code, EXIT_INVALID);
+  assert.match(duplicate.err, /active runtime already exists/);
+  const state = await readState(root);
+  assert.equal(state.tickets["PROJ-123"].sessions["pi-session-1"].subagentId, "runtime-a");
+  assert.equal(state.revision, 2);
+});
+
+test("worktree path and github reconcile follow the configured ticket source", async () => {
+  const root = await tempRoot();
+  const printed = await fstate(root, "worktree", "path", "--repo", "demo-repo", "--ticket", "PROJ-123");
+  assert.equal(printed.code, EXIT_OK, printed.err);
+  assert.equal(printed.json.path, path.join(process.env.HOME, "demo-repo", "worktrees", "PROJ-123"));
+
+  const bad = await fstate(root, "worktree", "path", "--repo", "demo/repo", "--ticket", "PROJ-123");
+  assert.equal(bad.code, EXIT_INVALID);
+
+  await fstate(root, "init", ...INIT_MODELS);
+  const local = await fstate(root, "github", "reconcile", "--ticket", "PROJ-123");
+  assert.equal(local.code, EXIT_INVALID);
+  assert.match(local.err, /not the ticket source/);
+
+  await fstate(root, "init", ...INIT_MODELS, "--github-cli", "true", "--github-repo", "acme/shop");
+  await fstate(
+    root,
+    "create",
+    "--ticket",
+    "PROJ-123",
+    "--source-kind",
+    "github",
+    "--source-ref",
+    "https://github.com/acme/shop/issues/12",
+    "--expected-revision",
+    "0",
+  );
+  const tracker = await fstate(root, "github", "reconcile", "--ticket", "PROJ-123");
+  assert.equal(tracker.code, EXIT_OK, tracker.err);
+  assert.match(tracker.json.commands[0], /gh issue comment 12/);
+  assert.match(tracker.json.commands[1], /in-progress/);
+
+  await fstate(
+    root,
+    "create",
+    "--ticket",
+    "PROJ-124",
+    "--kind",
+    "concrete",
+    "--parent",
+    "PROJ-123",
+    "--expected-revision",
+    "1",
+  );
+  const dep = await fstate(
+    root,
+    "ticket",
+    "depend",
+    "--ticket",
+    "PROJ-124",
+    "--depends-on",
+    "PROJ-123",
+    "--expected-revision",
+    "2",
+  );
+  assert.equal(dep.code, EXIT_OK, dep.err);
+  assert.deepEqual(dep.json.dependsOn, ["PROJ-123"]);
+});
+
+test("sqlite v3 task graph migrates to schema 4", async () => {
+  const root = await tempRoot();
+  await mkdir(path.join(root, "db"), { recursive: true });
+  const db = new DatabaseSync(stateDbPath(root));
+  db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO meta(key, value) VALUES
+      ('schemaVersion', '3'),
+      ('storageVersion', '1'),
+      ('revision', '1'),
+      ('updatedAt', '2026-01-01T00:00:00Z');
+    CREATE TABLE tickets (
+      id TEXT PRIMARY KEY,
+      title TEXT,
+      type TEXT,
+      source_kind TEXT,
+      source_ref TEXT,
+      stage TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_task TEXT,
+      message TEXT,
+      message_at TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      worktree_path TEXT,
+      worktree_branch TEXT,
+      worktree_base_branch TEXT,
+      worktree_workspace_id TEXT
+    );
+    INSERT INTO tickets (id, stage, status, current_task) VALUES ('PROJ-1', 'work', 'active', '01');
+    CREATE TABLE blockers (
+      ticket_id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      since TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      task TEXT
+    );
+    CREATE TABLE tasks (
+      ticket_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      status TEXT CHECK (status IS NULL OR status IN ('pending','in_progress','ready_for_review','done','blocked')),
+      review_round INTEGER,
+      review_verdict TEXT,
+      review_finding_count INTEGER,
+      review_blocking_count INTEGER,
+      review_updated_at TEXT,
+      updated_at TEXT,
+      PRIMARY KEY (ticket_id, task_id)
+    );
+    INSERT INTO tasks (ticket_id, task_id, status) VALUES ('PROJ-1', '01', 'ready_for_review');
+    CREATE TABLE task_blocked_by (
+      ticket_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      blocked_by_task_id TEXT NOT NULL,
+      PRIMARY KEY (ticket_id, task_id, blocked_by_task_id)
+    );
+    INSERT INTO task_blocked_by VALUES ('PROJ-1', '01', '00');
+    CREATE TABLE sessions (
+      ticket_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      task TEXT,
+      round INTEGER,
+      model TEXT,
+      pane_id TEXT,
+      pane_name TEXT,
+      session_file TEXT,
+      status TEXT NOT NULL,
+      context_tokens INTEGER,
+      context_window INTEGER,
+      context_percent REAL,
+      started_at TEXT,
+      updated_at TEXT,
+      PRIMARY KEY (ticket_id, session_id)
+    );
+    CREATE TABLE usage (
+      ticket_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      task TEXT,
+      round INTEGER,
+      model TEXT,
+      through_entry_id TEXT,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+      tokens_total INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      recorded_at TEXT,
+      PRIMARY KEY (ticket_id, session_id)
+    );
+    CREATE TABLE events (
+      revision INTEGER PRIMARY KEY,
+      at TEXT NOT NULL,
+      op TEXT NOT NULL,
+      ticket_id TEXT,
+      task_id TEXT,
+      payload TEXT NOT NULL DEFAULT '{}'
+    );
+  `);
+  db.close();
+
+  const moved = await fstate(
+    root,
+    "task",
+    "transition",
+    "--ticket",
+    "PROJ-1",
+    "--task",
+    "01",
+    "--status",
+    "in_review",
+    "--expected-revision",
+    "1",
+  );
+  assert.equal(moved.code, EXIT_OK, moved.err);
+  const state = await readState(root);
+  assert.equal(state.schemaVersion, 4);
+  assert.equal(state.tickets["PROJ-1"].tasks["01"].status, "in_review");
+  assert.deepEqual(state.tickets["PROJ-1"].tasks["01"].blockedBy, ["00"]);
+  assert.equal(state.tickets["PROJ-1"].currentTask, "01");
 });

@@ -43,6 +43,8 @@ Run focused checks while working, then the relevant broader suite once. Do not s
 
 ## Finish the work stage
 
+Prove the real artifact before claiming the task is ready. Follow [../prove-it-works/SKILL.md](../prove-it-works/SKILL.md). A compile, typecheck, file timestamp, or self-report is not proof. Write `.factory/evidence/<ticket>/<task>/manifest.json` in the factory root with one criterion per acceptance check: id, exact command, cwd, exit code, and artifact path. When the project has `.factory/skills/verify-<repo>/`, drive that skill and keep its screenshots or transcripts in the evidence directory.
+
 Mark satisfied acceptance criteria and set the task status to `ready_for_review`, not `done`; review owns approval. Update durable context only for facts useful beyond this ticket.
 
 In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`. Never open `.factory/db/` by hand.
@@ -78,6 +80,11 @@ false
 
 ## Blocker
 none
+
+## Evidence
+.factory/evidence/PROJ-123/01/manifest.json
 ```
 
-`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Each test line is `command: passed|failed|not_run` plus an optional note.
+`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Evidence` only when the task is blocked. Each test line is `command: passed|failed|not_run` plus an optional note. `Evidence` is the manifest path written under the factory root, not the worktree.
+
+After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision.

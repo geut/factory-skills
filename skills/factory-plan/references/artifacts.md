@@ -84,11 +84,11 @@ Only evidence and constraints the worker would otherwise have to rediscover.
 Task status uses one lifecycle vocabulary:
 
 ```text
-pending → in_progress → ready_for_review → done
+pending → in_progress → ready_for_review → in_review → done
              └─────────────────────→ blocked
 ```
 
-`ready_for_review` means implementation and its claimed verification are complete enough for independent review. Only review approval moves a task to `done`.
+`ready_for_review` means the evidence manifest passed the lifecycle gate and review has not started. `in_review` means a reviewer is running. Only review approval moves a task to `done`.
 
 Do not predesign implementation in the task unless a constraint or agreed contract makes it necessary.
 

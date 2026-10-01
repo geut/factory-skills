@@ -120,3 +120,5 @@ Known limitations and follow-up that is genuinely out of scope, or none.
 ## Merge commands
 When the pull request was opened or updated, its URL. Otherwise, exact commit and merge commands with real paths; do not execute them.
 ```
+
+After the template, call `subagent_done` and emit nothing else.

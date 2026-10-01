@@ -196,6 +196,41 @@ AC-1 is unmet.
         )
 
 
+class WorkEvidenceTests(unittest.TestCase):
+    BASE = """
+## Status
+ready_for_review
+
+## Summary
+The filter restores.
+
+## Tests
+- `npm test`: passed
+
+## E2E
+not_feasible
+Note: library only
+
+## Review responses
+none
+
+## Plan changed
+false
+
+## Blocker
+none
+"""
+
+    def test_evidence_is_optional(self) -> None:
+        obj = pi_session_reader.parse_work(self.BASE)
+        self.assertIsNone(obj["evidence"])
+
+    def test_evidence_path_is_kept(self) -> None:
+        text = self.BASE + "\n## Evidence\n.factory/evidence/PROJ-1/01/manifest.json\n"
+        obj = pi_session_reader.parse_work(text)
+        self.assertEqual(obj["evidence"], ".factory/evidence/PROJ-1/01/manifest.json")
+
+
 class WrapupTests(unittest.TestCase):
     path = FIXTURES / "wrapup.jsonl"
 

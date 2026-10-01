@@ -51,7 +51,7 @@ Configuration may include budgets and project-specific verification commands. `r
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "revision": 7,
   "updatedAt": "2026-09-11T15:20:10Z",
   "tickets": {
@@ -71,7 +71,7 @@ Configuration may include budgets and project-specific verification commands. `r
       "createdAt": "2026-09-11T13:10:00Z",
       "updatedAt": "2026-09-11T15:20:10Z",
       "worktree": {
-        "path": "/runtime/worktrees/PROJ-123",
+        "path": "/home/owner/repo/worktrees/PROJ-123",
         "branch": "PROJ-123",
         "baseBranch": "main",
         "workspaceId": "w2"
@@ -147,6 +147,10 @@ node <skill-dir>/scripts/fstate/cli.mjs create --ticket <ticket-id> [--title <ti
 node <skill-dir>/scripts/fstate/cli.mjs status [--ticket <ticket-id>]
 node <skill-dir>/scripts/fstate/cli.mjs transition --ticket <ticket-id> --stage <stage> --status <status> --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs task transition --ticket <ticket-id> --task <task-id> --status <status> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs task register --ticket <ticket-id> --task <task-id> [--depends-on <task-id>] [--artifact <path>] [--source-ref <ref>] [--verification-profile <name>] [--evidence <path>] --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs ticket depend --ticket <ticket-id> --depends-on <ticket-id> --expected-revision <revision>
+node <skill-dir>/scripts/fstate/cli.mjs worktree path --repo <repo-name> --ticket <ticket-id>
+node <skill-dir>/scripts/fstate/cli.mjs github reconcile --ticket <ticket-id>
 node <skill-dir>/scripts/fstate/cli.mjs review record --ticket <ticket-id> --task <task-id> --round <n> --verdict <verdict> --finding-count <n> --blocking-count <n> --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs session record --ticket <ticket-id> --session-id <id> --session <session-file> --stage <stage> --status <status> [--task <task-id>] [--round <n>] [--pane <pane-id>] [--pane-name <label>] --expected-revision <revision>
 node <skill-dir>/scripts/fstate/cli.mjs message --ticket <ticket-id> --text <message> --expected-revision <revision>
@@ -164,7 +168,7 @@ Every successful mutation increments `revision`, updates the top-level and affec
 
 ## Dashboard consumers and parallel tickets
 
-The ticket tables are sufficient for a dashboard and for several tickets advancing independently. `FACTORY.json` and the SQLite store have independent schema versions. The domain state shape is version 3. `storageVersion` is 1.
+The ticket tables are sufficient for a dashboard and for several tickets advancing independently. `FACTORY.json` and the SQLite store have independent schema versions. The domain state shape is version 4. `storageVersion` is 1. `ready_for_review` is queued and verified. `in_review` is an active reviewer. Dashboards should read `hook_runs` for evidence-gate results.
 
 A dashboard:
 
@@ -181,16 +185,38 @@ A dashboard:
 
 - Ticket stage: `plan`, `work`, `review`, `wrapup`, or `done`.
 - Ticket status: `active`, `waiting_for_user`, `blocked`, `failed`, or `complete`.
-- Task status: `pending`, `in_progress`, `ready_for_review`, `done`, or `blocked`.
+- Task status: `pending`, `in_progress`, `ready_for_review`, `in_review`, `done`, or `blocked`.
+- `ready_for_review` means queued and verified. `in_review` means a reviewer is running.
 - Session status: `starting`, `running`, `waiting_for_user`, `completed`, `failed`, or `closed`.
 - Plan returns a `factory.plan.v3` markdown Output template with status `planned` or `blocked`.
 - Work returns a `factory.work.v3` markdown Output template with status `ready_for_review` or `blocked`.
 - Review returns a `factory.review.v4` markdown findings list with verdict `approve`, `changes_requested`, or `blocked`.
 - Wrap-up returns a `factory.wrapup.v1` markdown Output template with the required handoff headings.
 
-`ready_for_review` is the only successful work-stage task status. `implemented` is not an alias. Dependencies determine the executable task frontier independently of status.
+`ready_for_review` is the successful work-stage task status before a reviewer starts. `in_review` is the active review status. `implemented` is not an alias. Dependencies determine the executable task frontier independently of status.
 
 Herdr's agent lifecycle describes a process. Ticket stage and status describe domain progress. They are separate.
+
+## Lifecycle hooks
+
+`transition` and `task transition` build an envelope (`entity`, `event`, `from`, `to`, ticket, task, code root, factory root, worktree, source, tasks, timestamp, revision) and run `FACTORY.json` `hooks.before` for that event before the write. A non-zero hook blocks the transition. `hooks.after` run after commit and cannot roll it back. Hook runs are stored for the dashboard.
+
+The default gates are:
+
+- `task:ready_for_review` — `.factory/evidence/<ticket>/<task>/manifest.json` must exist and every criterion must have exit code 0.
+- `ticket:wrapup` — every concrete task must be `done` and have that manifest. An `umbrella` ticket skips task manifests.
+
+## Worktrees
+
+New worktrees live at `$HOME/<repo-name>/worktrees/<ticket-id>`. `worktree path` prints that path. The factory root remains the main checkout's `.factory` and is passed explicitly. A worktree does not contain the factory root.
+
+## Ticket source
+
+`github.cli: true` means a passed GitHub issue is read, commented, labeled, and reconciled on GitHub. Related concrete issues are separate tickets. `github.cli: false` means `.factory/tickets` is the source of truth.
+
+## Session identity
+
+Record a child as soon as `subagent` returns. Store `id` as `subagentId`. Store the Pi session id from the session file header as `sessionId` and as the usage key. Do not join usage on the Herdr runtime id. One `starting` or `running` runtime may exist per session file. Name every `subagent_resume` pane. A completed `subagent_done` lets Herdr close the old pane.
 
 ## Herdr display metadata
 

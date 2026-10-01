@@ -12,7 +12,9 @@ Turn one ticket into the smallest plan that another agent can execute without re
 1. Derive the code root with `git rev-parse --show-toplevel`. Use `<code-root>/.factory` unless the request supplies a `--factory-root` or `FACTORY_ROOT` override.
 2. Read `.factory/FACTORY.json`. Obtain the ticket ID from the source or `ticketIdPattern`; if neither determines it, ask the user before creating artifacts.
 3. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions.
-4. Create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
+4. When `github.cli` is true and the ticket is a GitHub issue, do not create `.factory/tickets/<ticket-id>/` as a copy of the issue. Keep acceptance criteria on the issue. A local execution note may point at the issue URL. When GitHub is not the source, create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
+
+A parent issue is coordination only. If it has related concrete issues, stop and tell the supervisor to register those issues as separate tickets. Do not turn them into numbered tasks under the parent. A concrete ticket gets local task files only when its own implementation needs more than one slice, and only in filesystem mode. In tracker mode, split further by commenting on that issue or by asking the user before creating local tasks.
 
 Do not create `reviews/`, `handoffs/`, `visuals/`, `decisions.md`, `wrapup.md`, or per-ticket state files.
 
@@ -26,7 +28,7 @@ When Matt Pocock's skills are installed, use their useful mechanics rather than 
 
 - `grill-with-docs`: use the focused interview and domain-modeling behavior for unresolved decisions.
 - `to-spec`: use its synthesis and test-seam thinking, but write `plan.md`; do not publish to a tracker.
-- `to-tickets`: use tracer-bullet slicing and explicit blocking edges, but write numbered task files in the ticket directory; do not publish externally or use `.scratch/`.
+- `to-tickets`: use tracer-bullet slicing and explicit blocking edges. In filesystem mode, write numbered task files in the ticket directory. In tracker mode, the concrete GitHub issue is the task source; do not publish a second copy. Do not use `.scratch/`.
 
 Factory paths and the user's no-publish requirement override upstream defaults. If `grill-with-docs` is unavailable, use the same focused one-question behavior and report the missing optional skill; do not guess.
 
@@ -77,3 +79,5 @@ none
 ```
 
 `Status` is `planned` or `blocked`. A blocked result must name the unresolved decision or missing evidence under `Blocker`; it may list partial artifact paths but must not advertise a ready task frontier. Use `none` for empty optional fields.
+
+After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source.

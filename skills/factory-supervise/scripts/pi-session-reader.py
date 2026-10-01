@@ -446,6 +446,15 @@ def parse_work(text: str) -> dict[str, Any]:
     blocker = None if is_none(blocker_body) else section_text(blocker_body) or None
     if status == "blocked" and blocker is None:
         errors.append("blocked requires a blocker")
+    evidence = None
+    if "evidence" in sections:
+        evidence_body = sections["evidence"]
+        if is_none(evidence_body):
+            evidence = None
+        else:
+            evidence = section_text(evidence_body) or None
+            if evidence is None:
+                errors.append("evidence must be a manifest path or none")
     if errors:
         raise ContractError(errors)
     return {
@@ -457,6 +466,7 @@ def parse_work(text: str) -> dict[str, Any]:
         "reviewResponses": responses,
         "planChanged": bool(plan_changed),
         "blocker": blocker,
+        "evidence": evidence,
     }
 
 

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 INSERT OR IGNORE INTO meta(key, value) VALUES
-  ('schemaVersion', '3'),
+  ('schemaVersion', '4'),
   ('storageVersion', '1'),
   ('revision', '0'),
   ('updatedAt', '');
@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS tickets (
   worktree_path          TEXT,
   worktree_branch        TEXT,
   worktree_base_branch   TEXT,
-  worktree_workspace_id  TEXT
+  worktree_workspace_id  TEXT,
+  parent_id              TEXT,
+  kind                   TEXT CHECK (kind IS NULL OR kind IN ('umbrella','concrete'))
 );
 
 CREATE TABLE IF NOT EXISTS blockers (
@@ -39,13 +41,17 @@ CREATE TABLE IF NOT EXISTS blockers (
 CREATE TABLE IF NOT EXISTS tasks (
   ticket_id             TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
   task_id               TEXT NOT NULL,
-  status                TEXT CHECK (status IS NULL OR status IN ('pending','in_progress','ready_for_review','done','blocked')),
+  status                TEXT CHECK (status IS NULL OR status IN ('pending','in_progress','ready_for_review','in_review','done','blocked')),
   review_round          INTEGER,
   review_verdict        TEXT CHECK (review_verdict IS NULL OR review_verdict IN ('approve','changes_requested','blocked')),
   review_finding_count  INTEGER,
   review_blocking_count INTEGER,
   review_updated_at     TEXT,
   updated_at            TEXT,
+  artifact              TEXT,
+  source_ref            TEXT,
+  verification_profile  TEXT,
+  evidence_path         TEXT,
   PRIMARY KEY (ticket_id, task_id)
 );
 
@@ -55,6 +61,12 @@ CREATE TABLE IF NOT EXISTS task_blocked_by (
   blocked_by_task_id TEXT NOT NULL,
   PRIMARY KEY (ticket_id, task_id, blocked_by_task_id),
   FOREIGN KEY (ticket_id, task_id) REFERENCES tasks(ticket_id, task_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ticket_depends (
+  ticket_id            TEXT NOT NULL,
+  depends_on_ticket_id TEXT NOT NULL,
+  PRIMARY KEY (ticket_id, depends_on_ticket_id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -73,6 +85,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   context_percent REAL,
   started_at      TEXT,
   updated_at      TEXT,
+  subagent_id     TEXT,
   PRIMARY KEY (ticket_id, session_id)
 );
 
@@ -103,5 +116,21 @@ CREATE TABLE IF NOT EXISTS events (
   payload   TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS hook_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  revision    INTEGER,
+  ticket_id   TEXT,
+  task_id     TEXT,
+  phase       TEXT NOT NULL CHECK (phase IN ('before','after')),
+  event       TEXT NOT NULL,
+  command     TEXT NOT NULL,
+  exit_code   INTEGER,
+  duration_ms INTEGER,
+  artifact    TEXT,
+  output      TEXT,
+  at          TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS tickets_status ON tickets(status, stage);
 CREATE INDEX IF NOT EXISTS events_ticket ON events(ticket_id, revision);
+CREATE INDEX IF NOT EXISTS hook_runs_ticket ON hook_runs(ticket_id, id);

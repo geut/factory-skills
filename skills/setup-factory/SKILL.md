@@ -37,7 +37,17 @@ Ask each role, then the ticket pattern, then pull requests, then labels:
 - **Pull requests.** Ask only when `gh` is authenticated and `origin` is GitHub: may wrap-up open or update a pull request? Recommend yes. Pass `--pull-requests true` or `false`. When auth fails or the remote is not GitHub, do not ask. Pass `--pull-requests false` and say why.
 - **Triage labels.** Ask only when `origin` is GitHub: keep the default triage labels? Recommend yes. The roles are `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. On yes, omit `--label` and pass `--github-repo` so a new factory stores each role as its own label string. If the repo name is unknown, or stored labels differ from those defaults, pass `--label <role>=<role>` for all five instead. On no, collect one tracker string per role and pass `--label <role>=<string>` for each, so an existing vocabulary is reused. When the remote is not GitHub, skip the question and do not pass `--label` or `--github-repo`.
 
-On a re-run, an omitted flag keeps the stored value.
+On a re-run, an omitted flag keeps the stored value. Pass `--github-cli true` when `gh auth status` succeeded and `origin` is GitHub. Pass `--github-cli false` otherwise. That flag selects the ticket source. There is no per-ticket override.
+
+After `init`, install the factory role agents if they are missing. Copy `agents/factory-plan.md`, `agents/factory-work.md`, `agents/factory-review.md`, and `agents/factory-wrapup.md` from this package into `~/.pi/agent/agents/` only when the destination file is absent. Do not overwrite an existing file.
+
+When the repository has a user-facing surface, run [../create-factory-verification/SKILL.md](../create-factory-verification/SKILL.md) and then:
+
+```sh
+node <factory-supervise>/scripts/write-verification-skill.mjs --code-root <code-root> --factory-root <factory-root>
+```
+
+Prove one mapped feature with that skill before supervised work. If it writes a verification command, store it on `FACTORY.json` `verification.command`. The default lifecycle hooks are already written by `init`.
 
 `limits` stay `maxTickets` 2, `maxAgents` 4, and `reviewRounds` 3. Show them in the draft. `init` has no limit flags. If the user changes them, after `init` succeeds update only the `limits` object in `FACTORY.json`.
 
@@ -52,6 +62,7 @@ node <factory-supervise>/scripts/fstate/cli.mjs init \
   [--arbiter-model <provider/id> --arbiter-thinking <level>] \
   [--ticket-id-pattern <pattern>] \
   [--github-repo <owner/name>] \
+  [--github-cli <true|false>] \
   --pull-requests <true|false> \
   [--label <role>=<string>]
 ```
