@@ -4,8 +4,8 @@
  * and a single SQLite transaction. Do not edit the database by hand.
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -106,13 +106,12 @@ const OPTION_SPEC = {
   evidence: { type: "string" },
   "subagent-id": { type: "string" },
   repo: { type: "string" },
-  replace: { type: "boolean" },
 };
 
 const USAGE_LINE = "node cli.mjs <command> [options]";
 const FACTORY_ROOT_NOTE = "Else FACTORY_ROOT, else <git-toplevel>/.factory";
-const SEED_FACTORY_ROOT_NOTE =
-  "Required. Seed writes only this directory and does not use FACTORY_ROOT or <git-toplevel>/.factory. --replace is required when the store already has tickets or revision > 0.";
+const SEED_NOTE =
+  "Always creates a new temporary factory root and prints factoryRoot. Does not read FACTORY_ROOT or <git-toplevel>/.factory.";
 
 const COMMANDS = [
   {
@@ -300,10 +299,10 @@ const COMMANDS = [
   {
     name: "seed",
     mutation: true,
-    summary: "Write the representative five-ticket test board into <factory-root>/db/state.sqlite.",
-    required: ["--factory-root"],
-    optional: ["--replace"],
-    note: SEED_FACTORY_ROOT_NOTE,
+    summary: "Write the representative five-ticket test board into a new temporary factory root.",
+    required: [],
+    optional: [],
+    note: SEED_NOTE,
   },
 ];
 
@@ -373,9 +372,7 @@ function helpPayload(topic) {
     throw new CliError(`unknown command: ${topic}`, EXIT_ARGS);
   }
   const global =
-    topic === "seed"
-      ? [{ flag: "--factory-root", required: true, note: SEED_FACTORY_ROOT_NOTE }]
-      : [{ flag: "--factory-root", required: false, note: FACTORY_ROOT_NOTE }];
+    topic === "seed" ? [] : [{ flag: "--factory-root", required: false, note: FACTORY_ROOT_NOTE }];
   return {
     ok: true,
     usage: USAGE_LINE,
@@ -1361,24 +1358,19 @@ function reconcileCommands(ticket) {
 }
 
 function cmdSeed(values, io) {
-  const flag = values["factory-root"];
-  if (flag === undefined || flag === "") {
-    throw new CliError("--factory-root is required", EXIT_ARGS);
+  if (values["factory-root"] !== undefined && values["factory-root"] !== "") {
+    throw new CliError(
+      "seed does not accept --factory-root; it writes a new temporary factory root and prints factoryRoot",
+      EXIT_ARGS,
+    );
   }
-  const factoryRoot = path.isAbsolute(flag) ? flag : path.resolve(codeRoot(), flag);
+  const factoryRoot = mkdtempSync(path.join(tmpdir(), "fstate-seed-"));
   const db = openStore(factoryRoot, { create: true });
   try {
-    const revision = Number(db.prepare("SELECT value FROM meta WHERE key = 'revision'").get()?.value || 0);
-    const ticketCount = db.prepare("SELECT COUNT(*) AS n FROM tickets").get().n;
-    if ((revision > 0 || ticketCount > 0) && !values.replace) {
-      throw new CliError(
-        "store already has tickets or revision > 0; pass --replace to overwrite",
-        EXIT_INVALID,
-      );
-    }
     const seeded = seedFixture(db);
     printJson(io.stdout, {
       ok: true,
+      factoryRoot,
       path: stateDbPath(factoryRoot),
       revision: seeded.revision,
       tickets: seeded.tickets,
