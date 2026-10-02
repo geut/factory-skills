@@ -637,6 +637,7 @@ test("help prints a JSON catalog without a factory root", async () => {
     "server",
     "worktree path",
     "github reconcile",
+    "seed",
   ]);
   const create = result.json.commands.find((command) => command.name === "create");
   assert.equal(create.mutation, true);
@@ -669,6 +670,98 @@ test("help <command> and <command> --help filter the catalog", async () => {
   const byFlag = await run(["create", "--help"]);
   assert.equal(byFlag.code, EXIT_OK, byFlag.err);
   assert.deepEqual(byFlag.json, byTopic.json);
+});
+
+test("seed help requires --factory-root and does not use the live default", async () => {
+  const byFlag = await run(["seed", "--help"]);
+  const byShort = await run(["seed", "-h"]);
+  const byTopic = await run(["help", "seed"]);
+  assert.equal(byFlag.code, EXIT_OK, byFlag.err);
+  assert.deepEqual(byShort.json, byFlag.json);
+  assert.deepEqual(byTopic.json, byFlag.json);
+  assert.equal(byFlag.json.global[0].flag, "--factory-root");
+  assert.equal(byFlag.json.global[0].required, true);
+  assert.match(byFlag.json.global[0].note, /does not use FACTORY_ROOT/);
+  assert.match(byFlag.json.global[0].note, /<git-toplevel>\/\.factory/);
+  const seed = byFlag.json.commands[0];
+  assert.equal(seed.name, "seed");
+  assert.equal(seed.mutation, true);
+  assert.deepEqual(seed.required, ["--factory-root"]);
+  assert.deepEqual(seed.optional, ["--replace"]);
+  assert.match(seed.note, /does not use FACTORY_ROOT/);
+});
+
+test("seed without --factory-root does not write FACTORY_ROOT", async () => {
+  const bare = await run(["seed"]);
+  assert.equal(bare.code, EXIT_ARGS);
+  assert.match(bare.err, /--factory-root is required/);
+
+  const absent = path.join(tmpdir(), `fstate-seed-absent-${process.pid}`);
+  const previous = process.env.FACTORY_ROOT;
+  process.env.FACTORY_ROOT = absent;
+  try {
+    const result = await run(["seed"]);
+    assert.equal(result.code, EXIT_ARGS);
+    assert.match(result.err, /--factory-root is required/);
+    assert.equal(existsSync(absent), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.FACTORY_ROOT;
+    } else {
+      process.env.FACTORY_ROOT = previous;
+    }
+  }
+});
+
+test("seed writes the board and --replace overwrites it", async () => {
+  const root = await tempRoot();
+  const seeded = await run(["seed", "--factory-root", root]);
+  assert.equal(seeded.code, EXIT_OK, seeded.err);
+  assert.equal(seeded.json.ok, true);
+  assert.equal(seeded.json.path, stateDbPath(root));
+  const ids = ["PROJ-14", "PROJ-22", "PROJ-29", "PROJ-38", "PROJ-41"];
+  assert.deepEqual(seeded.json.tickets, ids);
+
+  const status = await fstate(root, "status");
+  assert.equal(status.code, EXIT_OK, status.err);
+  assert.deepEqual(Object.keys(status.json.tickets).sort(), ids);
+  assert.equal(status.json.revision, seeded.json.revision);
+
+  const db = new DatabaseSync(stateDbPath(root), { readOnly: true });
+  const eventCount = Number(db.prepare("SELECT COUNT(*) AS n FROM events").get().n);
+  const revision = Number(db.prepare("SELECT value FROM meta WHERE key = 'revision'").get().value);
+  db.close();
+  assert.equal(revision, eventCount);
+  assert.equal(status.json.revision, eventCount);
+
+  const validated = await fstate(root, "validate");
+  assert.equal(validated.code, EXIT_OK, validated.err);
+  assert.deepEqual([...validated.json.tickets].sort(), ids);
+
+  const board = status.json.tickets;
+  assert.equal(board["PROJ-14"].stage, "done");
+  assert.equal(board["PROJ-14"].status, "complete");
+  assert.equal(board["PROJ-22"].status, "blocked");
+  assert.equal(board["PROJ-22"].blocker.owner, "user");
+  assert.equal(board["PROJ-29"].tasks["02"].status, "in_review");
+  const runningId = Object.keys(board["PROJ-29"].sessions).find(
+    (id) => board["PROJ-29"].sessions[id].status === "running",
+  );
+  assert.ok(runningId);
+  assert.equal(board["PROJ-29"].usage[runningId], undefined);
+  assert.deepEqual(board["PROJ-38"].dependsOn, ["PROJ-14"]);
+  assert.equal(board["PROJ-38"].tasks["01"].status, "ready_for_review");
+  assert.equal(board["PROJ-38"].tasks["02"].status, "in_progress");
+  assert.equal(board["PROJ-41"].status, "waiting_for_user");
+
+  const again = await run(["seed", "--factory-root", root]);
+  assert.equal(again.code, EXIT_INVALID);
+  assert.match(again.err, /--replace/);
+
+  const replaced = await run(["seed", "--factory-root", root, "--replace"]);
+  assert.equal(replaced.code, EXIT_OK, replaced.err);
+  assert.equal(replaced.json.revision, seeded.json.revision);
+  assert.deepEqual(replaced.json.tickets, ids);
 });
 
 test("unknown help topic and empty argv exit 2", async () => {

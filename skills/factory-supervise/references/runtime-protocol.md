@@ -178,6 +178,7 @@ A dashboard:
 - Uses session `pane_name` for display and `pane_id` plus `worktree_workspace_id` only for live navigation. Pane IDs may become stale after a process closes.
 - Treats missing optional metadata as unknown rather than as a zero or empty value.
 - For live updates, runs `fstate server` (default `127.0.0.1:8787`) and subscribes to `GET /events`. Cold connect without a cursor receives `event: hello` with the current revision. `Last-Event-ID` or `?after=` replays later `events` rows. After each event, the dashboard re-queries SQLite. The SSE payload is a compact `{ revision, op, ticket, task, payload }`, not a full snapshot.
+- Test setups populate a separate factory root with `node <skill-dir>/scripts/fstate/cli.mjs seed --factory-root <dir>`. That flag is required. Seed does not use `FACTORY_ROOT` or the live `<git-toplevel>/.factory` store. `--replace` overwrites a root that already has tickets.
 
 `scripts/fstate/cli.mjs` imports a leftover version 2 JSON file under the same transaction protocol. Unknown historical values remain `null`. The `events` table is the append-only history.
 
