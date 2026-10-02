@@ -39,8 +39,6 @@ Ask each role, then the ticket pattern, then pull requests, then labels:
 
 On a re-run, an omitted flag keeps the stored value. Pass `--github-cli true` when `gh auth status` succeeded and `origin` is GitHub. Pass `--github-cli false` otherwise. That flag selects the ticket source. There is no per-ticket override.
 
-After `init`, install the factory role agents if they are missing. Copy `agents/factory-plan.md`, `agents/factory-work.md`, `agents/factory-review.md`, and `agents/factory-wrapup.md` from this package into `~/.pi/agent/agents/` only when the destination file is absent. Do not overwrite an existing file.
-
 When the repository has a user-facing surface, run [../create-factory-verification/SKILL.md](../create-factory-verification/SKILL.md) and then:
 
 ```sh
@@ -71,7 +69,7 @@ A later run may omit model flags to keep the stored models. The first run requir
 
 ## Write the factory root
 
-`init` creates `.factory/tickets` when it is missing, appends `/.factory/` to `.git/info/exclude` when that line is absent, and writes `.factory/github.md` when `github.repo` is set. Do not do those yourself. It does not write a committed `.gitignore`.
+`init` creates `.factory/tickets` when it is missing, appends `/.factory/` to `.git/info/exclude` when that line is absent, writes `.factory/github.md` when `github.repo` is set, and copies missing `factory-plan.md`, `factory-work.md`, `factory-review.md`, and `factory-wrapup.md` into `~/.pi/agent/agents/`. It does not overwrite an agent file that is already there. Do not do those yourself. It does not write a committed `.gitignore`.
 
 After `init` succeeds, when `origin` is GitHub, write `.factory/triage-labels.md` from [references/triage-labels.md](references/triage-labels.md), with the label column taken from `factoryJson.github.labels`. Skip that file when the remote is not GitHub, and say that a pasted ticket string still works.
 
@@ -87,4 +85,4 @@ Use the meaning of the role, even when the tracker string differs. Leave an exis
 
 ## Done
 
-Say setup is complete. Repeat the ticket pattern, whether wrap-up may open a pull request, the five label strings when they were stored, and the GitHub auth result. A re-run updates the passed fields and does not wipe the database or ticket directories. The next step is `factory-supervise`.
+Say setup is complete. Repeat the ticket pattern, whether wrap-up may open a pull request, the five label strings when they were stored, the GitHub auth result, and the role agents `init` copied or left in place (`agents.copied` and `agents.skipped`). A re-run updates the passed fields and does not wipe the database or ticket directories. The next step is `factory-supervise`.

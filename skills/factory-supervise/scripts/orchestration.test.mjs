@@ -75,7 +75,7 @@ test("verification skill names Launch, Drive, Evidence, and Surf for a web app",
 test("factory agents auto-exit and specialist skills require subagent_done", async () => {
   const root = path.resolve(import.meta.dirname, "..", "..", "..");
   for (const role of ["factory-plan", "factory-work", "factory-review", "factory-wrapup"]) {
-    const agent = await readFile(path.join(root, "agents", `${role}.md`), "utf8");
+    const agent = await readFile(path.join(import.meta.dirname, "..", "agents", `${role}.md`), "utf8");
     assert.match(agent, /auto-exit:\s*true/);
     assert.match(agent, /subagent_done/);
     const skill = await readFile(path.join(root, "skills", role, "SKILL.md"), "utf8");

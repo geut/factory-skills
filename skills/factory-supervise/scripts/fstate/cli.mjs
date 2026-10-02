@@ -4,7 +4,7 @@
  * and a single SQLite transaction. Do not edit the database by hand.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -121,7 +121,7 @@ const COMMANDS = [
   {
     name: "init",
     mutation: false,
-    summary: "Write FACTORY.json, github.md when a repo is set, the tickets directory, the Git exclude line, and the empty SQLite store. Does not insert a ticket.",
+    summary: "Write FACTORY.json, github.md when a repo is set, the tickets directory, the Git exclude line, missing role agents in ~/.pi/agent/agents/, and the empty SQLite store. Does not insert a ticket or overwrite an existing agent file.",
     required: [],
     optional: [
       "--ticket-id-pattern",
@@ -1155,6 +1155,33 @@ function ensureStore(factoryRoot) {
   return loadState(factoryRoot);
 }
 
+const ROLE_AGENT_FILES = ["factory-plan.md", "factory-work.md", "factory-review.md", "factory-wrapup.md"];
+
+function piAgentsDir() {
+  return path.join(process.env.HOME || homedir(), ".pi", "agent", "agents");
+}
+
+function installRoleAgents() {
+  const destDir = piAgentsDir();
+  mkdirSync(destDir, { recursive: true });
+  const copied = [];
+  const skipped = [];
+  for (const filename of ROLE_AGENT_FILES) {
+    const dest = path.join(destDir, filename);
+    if (existsSync(dest)) {
+      skipped.push(filename);
+      continue;
+    }
+    const source = fileURLToPath(new URL(`../../agents/${filename}`, import.meta.url));
+    if (!existsSync(source)) {
+      throw new CliError(`missing role agent ${filename}`, EXIT_IO);
+    }
+    copyFileSync(source, dest);
+    copied.push(filename);
+  }
+  return { dir: destDir, copied, skipped };
+}
+
 function cmdInit(factoryRoot, values) {
   const existing = readFactoryJson(factoryRoot);
   const factoryJson = buildFactoryJson(existing, values);
@@ -1171,6 +1198,7 @@ function cmdInit(factoryRoot, values) {
     ticketIdPattern: factoryJson.ticketIdPattern,
     pullRequests: factoryJson.github.pullRequests,
     tickets: Object.keys(state.tickets),
+    agents: installRoleAgents(),
   };
 }
 

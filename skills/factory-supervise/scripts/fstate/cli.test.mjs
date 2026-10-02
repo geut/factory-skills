@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, test } from "node:test";
+import { after, afterEach, test } from "node:test";
 import {
   EXIT_ARGS,
   EXIT_INVALID,
@@ -17,8 +17,15 @@ import { startServer } from "./server.mjs";
 import { stateDbPath } from "./store.mjs";
 
 const FIXTURE = path.join(import.meta.dirname, "..", "fixtures", "recap-after-contract.jsonl");
+const ROLE_AGENTS = ["factory-plan.md", "factory-work.md", "factory-review.md", "factory-wrapup.md"];
+const suiteHome = mkdtempSync(path.join(tmpdir(), "fstate-home-"));
+process.env.HOME = suiteHome;
 const roots = [];
 const servers = [];
+
+after(async () => {
+  await rm(suiteHome, { recursive: true, force: true });
+});
 
 async function tempRoot(parent = tmpdir()) {
   const dir = await mkdtemp(path.join(parent, "fstate-"));
@@ -106,6 +113,8 @@ test("init writes FACTORY.json and an empty store", async () => {
   assert.equal(existsSync(stateDbPath(root)), true);
   assert.equal(existsSync(path.join(root, "tickets")), true);
   assert.equal(existsSync(path.join(root, "github.md")), false);
+  assert.equal(result.json.agents.dir, path.join(suiteHome, ".pi", "agent", "agents"));
+  assert.deepEqual([...result.json.agents.copied, ...result.json.agents.skipped].sort(), [...ROLE_AGENTS].sort());
   assert.deepEqual(readEvents(root), []);
 
   const file = await readFactoryJson(root);
@@ -216,6 +225,39 @@ test("init rejects a bad label role and a review model equal to work", async () 
   assert.equal(sameModel.code, EXIT_INVALID);
   assert.match(sameModel.err, /models\.review\.model must differ/);
   assert.equal(existsSync(stateDbPath(root)), false);
+});
+
+test("init copies missing role agents and does not overwrite an existing file", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "fstate-agents-"));
+  roots.push(home);
+  const root = mkdtempSync(path.join(tmpdir(), "fstate-"));
+  roots.push(root);
+  const cli = path.join(import.meta.dirname, "cli.mjs");
+  const agentsDir = path.join(home, ".pi", "agent", "agents");
+  const runInit = (args) =>
+    JSON.parse(
+      execFileSync(process.execPath, [cli, "--factory-root", root, "init", ...args], {
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+      }),
+    );
+  assert.throws(() => runInit(["--plan-model", "provider/plan"]), (err) => err.status === EXIT_ARGS);
+  assert.equal(existsSync(agentsDir), false);
+
+  const first = runInit(INIT_MODELS);
+  assert.deepEqual(first.agents.copied, ROLE_AGENTS);
+  assert.deepEqual(first.agents.skipped, []);
+  assert.equal(first.agents.dir, agentsDir);
+  const sourceDir = path.join(import.meta.dirname, "..", "..", "agents");
+  for (const filename of ROLE_AGENTS) {
+    assert.equal(await readFile(path.join(agentsDir, filename), "utf8"), await readFile(path.join(sourceDir, filename), "utf8"));
+  }
+  const custom = "custom agent\n";
+  await writeFile(path.join(agentsDir, "factory-review.md"), custom);
+  const second = runInit([]);
+  assert.deepEqual(second.agents.copied, []);
+  assert.deepEqual(second.agents.skipped, ROLE_AGENTS);
+  assert.equal(await readFile(path.join(agentsDir, "factory-review.md"), "utf8"), custom);
 });
 
 test("init requires role models until FACTORY.json exists", async () => {
