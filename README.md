@@ -40,7 +40,7 @@ Ticket `SHOP-42` asks the product to remember a user's catalog filter.
 2. `factory-work` implements task 01 in the ticket worktree and marks it `ready_for_review`.
 3. `factory-review`, running on a different model, either approves task 01 or returns focused findings. Work and review repeat for at most three rounds.
 4. The supervisor advances to task 02 only after task 01 is `done`.
-5. `factory-wrapup` summarizes the approved change, updates durable knowledge when warranted, and prints the commands the human can use to commit and merge the worktree. The supervisor shows the all-stage usage table, leaves a `SHOP-42 · summary` pane with the completed wrap-up Pi session, and opens a `SHOP-42 · diff` pane with Fresh's Review Diff.
+5. `factory-wrapup` summarizes the approved change, updates durable knowledge when warranted, and prints the commands the human can use to commit and merge the worktree. The supervisor shows the all-stage usage table, leaves a `SHOP-42 📦` pane with the completed wrap-up Pi session, and opens a `SHOP-42 🔀` pane with Fresh's Review Diff.
 
 ## Skills
 
@@ -185,7 +185,7 @@ Before supervision, run Pi inside Herdr and confirm that `subagents_list` is ava
 
 ## Live visibility
 
-Supervisor and child panes use compact labels such as `PROJ-123 · supervisor`, `PROJ-123 · work T01`, and `PROJ-123 · review T01 R2`. The supervisor also reports Herdr display tokens named `ticket`, `stage`, `task`, and `round`. Keep `pane` in `[ui.sidebar.agents]` and optionally add `$ticket`, `$stage`, `$task`, and `$round` to the row. The pane label answers “what is this?”, while tokens let a dense sidebar expose only the dimensions useful to you.
+Supervisor and child panes use compact labels such as `PROJ-123 🧭`, `PROJ-123 🔨 T01`, and `PROJ-123 🔍 T01 R2`. The label starts with the first 12 characters of the ticket id, then one role emoji. A shorter id is used whole. The supervisor also reports Herdr display tokens named `ticket` (the full id), `stage`, `task`, and `round`. Keep `pane` in `[ui.sidebar.agents]` and optionally add `$ticket`, `$stage`, `$task`, and `$round` to the row. The pane label answers “what is this?”, while tokens let a dense sidebar expose only the dimensions useful to you.
 
 These values are display metadata only. Herdr remains the source of live agent state, while `.factory/db/state.sqlite` remains the source of ticket progress.
 

@@ -428,7 +428,7 @@ test("task, review, session, message, block, and unblock", async () => {
     "--pane",
     "p4",
     "--pane-name",
-    "PROJ-123 · review T01 R1",
+    "PROJ-123 🔍 T01 R1",
     "--expected-revision",
     "4",
   );
@@ -481,7 +481,7 @@ test("task, review, session, message, block, and unblock", async () => {
   assert.equal(state.revision, 8);
   assert.equal(state.tickets["PROJ-123"].currentTask, "01");
   assert.equal(state.tickets["PROJ-123"].tasks["01"].review.round, 1);
-  assert.equal(state.tickets["PROJ-123"].sessions["sess-1"].paneName, "PROJ-123 · review T01 R1");
+  assert.equal(state.tickets["PROJ-123"].sessions["sess-1"].paneName, "PROJ-123 🔍 T01 R1");
   assert.equal(state.tickets["PROJ-123"].message, "Review task 01 completed");
   assert.equal(state.tickets["PROJ-123"].blocker, null);
 
@@ -1111,7 +1111,7 @@ test("session record keeps one active runtime per session file", async () => {
     "--subagent-id",
     "runtime-a",
     "--pane-name",
-    "PROJ-123 · work T01",
+    "PROJ-123 🔨 T01",
     "--expected-revision",
     "1",
   );

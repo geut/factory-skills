@@ -35,14 +35,19 @@ Create a new worktree at `$HOME/<repo-name>/worktrees/<ticket-id>`. Print that p
 
 ## Name panes and report metadata
 
-Rename the supervisor pane to `<ticket-id> · supervisor`. Pass a compact, unique `name` on every `subagent` and `subagent_resume` call. `pi-herdr-subagents` uses that name as the child pane label:
+Rename every pane to `<prefix> <emoji>`, then ` T<task>` and ` R<round>` only when they apply. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix, emoji, task, and round with a single space. Each role is one emoji:
 
-- `<ticket-id> · plan`
-- `<ticket-id> · work T<task>`
-- `<ticket-id> · review T<task> R<round>`
-- `<ticket-id> · wrapup`
+- 🧭 supervisor
+- 📋 plan
+- 🔨 work
+- 🔍 review
+- 📦 wrapup
+- ⚖️ arbiter
+- 🔀 diff
 
-After spawn returns a pane ID, report display-only Herdr metadata from source `factory-supervise`: `ticket`, `stage`, and, when they apply, `task` and `round`. Clear tokens that no longer apply. Store the pane label as `paneName` beside `paneId` in state. Call `herdr` directly for rename and `report-metadata`. For a single JSON field, use `jq`. Do not write `python3 -c` or a heredoc to parse Herdr JSON.
+Pass that label as `name` on every `subagent` and `subagent_resume` call, including the arbiter. `pi-herdr-subagents` uses that name as the child pane label. Rename the supervisor pane to the supervisor label. For `PROJ-123`: `PROJ-123 🧭`, `PROJ-123 🔨 T01`, `PROJ-123 🔍 T01 R1`.
+
+After spawn returns a pane ID, report display-only Herdr metadata from source `factory-supervise`: `ticket` as the full ticket id, `stage`, and, when they apply, `task` and `round`. Clear tokens that no longer apply. Store the pane label as `paneName` beside `paneId` in state. Call `herdr` directly for rename and `report-metadata`. For a single JSON field, use `jq`. Do not write `python3 -c` or a heredoc to parse Herdr JSON.
 
 Display-metadata commands are in [references/runtime-protocol.md](references/runtime-protocol.md#herdr-display-metadata).
 
@@ -127,8 +132,8 @@ Validate the wrap-up handoff with `contract --schema factory.wrapup.v1 --check`.
 
 `pi-herdr-subagents` closes a child pane after clean completion. Once the wrap-up result has been steered back, follow [../factory-wrapup/references/panes-handoff.md](../factory-wrapup/references/panes-handoff.md) to open two human-facing panes with its generic argv launcher and leave them open:
 
-- `<ticket-id> · summary` reopens the completed wrap-up Pi session with `pi --session` and no prompt.
-- `<ticket-id> · diff` opens Fresh in the worktree and runs the working-tree `Review Diff` command.
+- `<prefix> 📦` reopens the completed wrap-up Pi session with `pi --session` and no prompt.
+- `<prefix> 🔀` opens Fresh in the worktree and runs the working-tree `Review Diff` command.
 
 Use absolute executable, session, and script paths in the generic launcher. Capture each returned pane ID with `jq`, not inline Python. Do not call `subagent_resume`, send a prompt, start a model turn, or pass `--thinking` when reopening the transcript. If either surface cannot be opened, report the exact limitation in the handoff.
 

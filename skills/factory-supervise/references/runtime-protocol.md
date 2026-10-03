@@ -97,7 +97,7 @@ Configuration may include budgets and project-specific verification commands. `r
           "round": 1,
           "model": "provider/review-model",
           "paneId": "p4",
-          "paneName": "PROJ-123 · review T01 R1",
+          "paneName": "PROJ-123 🔍 T01 R1",
           "sessionFile": "/runtime/pi/session.jsonl",
           "status": "completed",
           "context": {
