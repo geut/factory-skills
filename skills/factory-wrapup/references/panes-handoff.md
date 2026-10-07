@@ -1,6 +1,6 @@
 # Handoff surfaces
 
-After the supervised wrap-up result and its usage have been recorded, open two named panes. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix and emoji with a single space.
+After the controller records the wrap-up result and usage, open two named panes. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix and emoji with a single space.
 
 - `<prefix> 📦` reopens the completed wrap-up Pi session for the human.
 - `<prefix> 🔀` shows Fresh's working-tree `Review Diff` from the ticket worktree.

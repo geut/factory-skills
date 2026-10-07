@@ -47,44 +47,12 @@ Prove the real artifact before claiming the task is ready. Follow [../prove-it-w
 
 Mark satisfied acceptance criteria and set the task status to `ready_for_review`, not `done`; review owns approval. Update durable context only for facts useful beyond this ticket.
 
-In a supervised run, report transitions and blockers in the result and let the supervisor update state and usage. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`. Never open `.factory/db/` by hand.
+In a controller run, report transitions and blockers in the result and let the controller validate evidence, state, and usage. In a direct invocation, report the result without inventing operational state edits. Never open `.factory/db/` by hand.
 
-Do not start the reviewer, commit, push, publish, or create a pull request. The supervisor owns the next stage.
+Do not start the reviewer, commit, push, publish, or create a pull request. The controller owns the next stage.
 
 ## Output
 
-Return only this template (`factory.work.v3`). No JSON object, no recap after it. Do not list changed paths; the supervisor already has git.
+Return only the `factory.work.v3` template in [references/output.md](references/output.md). No JSON object, no recap after it.
 
-```markdown
-## Status
-ready_for_review | blocked
-
-## Summary
-One sentence for the observable result.
-
-## Tests
-- `npm test`: passed — 22 files / 109 tests
-- `npm run lint`: not_run — unchanged config
-
-## E2E
-passed | failed | not_feasible
-Note: evidence or human path.
-
-## Review responses
-none
-
-- R1-01: fixed — tests/filter.test.ts:88
-
-## Plan changed
-false
-
-## Blocker
-none
-
-## Evidence
-.factory/evidence/PROJ-123/01/manifest.json
-```
-
-`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Evidence` only when the task is blocked. Each test line is `command: passed|failed|not_run` plus an optional note. `Evidence` is the manifest path written under the factory root, not the worktree.
-
-After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision.
+After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not edit the controller database.

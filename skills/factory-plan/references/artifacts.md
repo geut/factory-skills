@@ -8,7 +8,7 @@ Persist only durable guidance:
 ├── FACTORY.json
 ├── github.md                      # GitHub remotes only
 ├── triage-labels.md               # GitHub remotes only
-├── db/                            # created by fstate init
+├── db/                            # created by the factory controller
 ├── PRD.md                         # optional
 └── tickets/<ticket-id>/
     ├── plan.md
@@ -84,11 +84,11 @@ Only evidence and constraints the worker would otherwise have to rediscover.
 Task status uses one lifecycle vocabulary:
 
 ```text
-pending → in_progress → ready_for_review → in_review → done
+pending → working → ready_for_review → reviewing → done
              └─────────────────────→ blocked
 ```
 
-`ready_for_review` means the evidence manifest passed the lifecycle gate and review has not started. `in_review` means a reviewer is running. Only review approval moves a task to `done`.
+`ready_for_review` means the evidence manifest passed the lifecycle gate and review has not started. `reviewing` means a reviewer is running. A changes-requested verdict returns the task to `working`; only review approval moves it to `done`.
 
 Do not predesign implementation in the task unless a constraint or agreed contract makes it necessary.
 

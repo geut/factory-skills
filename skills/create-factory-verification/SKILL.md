@@ -1,6 +1,6 @@
 ---
 name: create-factory-verification
-description: Generate a project-local verification skill that drives the real app and captures evidence for factory lifecycle gates. Use during setup-factory or when a factory has no scripted way to prove UI, CLI, or service behavior.
+description: Generate a project-local verification skill that drives the real app and captures evidence for factory lifecycle gates. Use when a project has no scripted way to prove UI, CLI, or service behavior.
 ---
 
 # Create a factory verification skill
@@ -20,7 +20,7 @@ Answer these from the checkout:
 Then generate the files:
 
 ```sh
-node <factory-supervise>/scripts/write-verification-skill.mjs \
+node <skill-dir>/scripts/write-verification-skill.mjs \
   --code-root <code-root> \
   --factory-root <factory-root> \
   [--repo <repo-name>]
@@ -34,4 +34,4 @@ For a web UI, the Drive section must use a unique `SURF_SESSION`, a worktree-own
 
 Run the generated skill once: launch, doctor, drive one feature, capture evidence, clean up, then confirm the evidence file is still there. Fix the skill if that fails. A skill that was never executed is a draft.
 
-Store a rerunnable command in `FACTORY.json` as `verification.command` when one command can regenerate the manifest. The lifecycle hook still requires the manifest; it does not trust the command name.
+Store a rerunnable command in `FACTORY.json` as `verification.command` when one command can regenerate the manifest. Controller validation still requires the manifest; it does not trust the command name.
