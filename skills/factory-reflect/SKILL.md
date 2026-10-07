@@ -43,6 +43,7 @@ Return only this template. No recap after it.
 ## Candidates
 
 ### 1. [accept | revise | reject] Short title
+
 **Evidence:** tickets and observations
 **Mechanism:** general rule, not the incident
 **Route:** skill, CONTEXT.md, FACTORY.json, or tooling

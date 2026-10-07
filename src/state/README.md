@@ -6,18 +6,18 @@ The schema starts at version 1. It does not migrate a legacy database that still
 
 ## Model
 
-| Table | Purpose |
-| --- | --- |
-| `tickets` | Stable external ticket identity and source. |
-| `ticket_executions` | Explicit rerun generations and the current workflow state. |
-| `tasks`, `task_dependencies` | Ordered plan slices and their ready frontier. |
-| `agent_sessions` | Logical Pi conversations. A resumed agent reuses its session. |
-| `agent_runs` | One Herdr pane/process attempt. A resume creates a new run. |
-| `attention_requests`, `attention_replies` | Durable questions and versioned answers. |
-| `actions` | Transactional outbox leased by the runtime dispatcher. |
-| `events` | Deduplicated inputs and a monotonic dashboard/change cursor. |
-| `validation_runs`, `validation_checks` | Scripted evidence tied to a run and exact input hash. |
-| `usage_snapshots` | Cumulative Pi usage plus per-run deltas. |
+| Table                                     | Purpose                                                       |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `tickets`                                 | Stable external ticket identity and source.                   |
+| `ticket_executions`                       | Explicit rerun generations and the current workflow state.    |
+| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                 |
+| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session. |
+| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.   |
+| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                      |
+| `actions`                                 | Transactional outbox leased by the runtime dispatcher.        |
+| `events`                                  | Deduplicated inputs and a monotonic dashboard/change cursor.  |
+| `validation_runs`, `validation_checks`    | Scripted evidence tied to a run and exact input hash.         |
+| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                      |
 
 Accepted stage output is stored on `agent_runs.result_json`. Review findings do not need a separate audit tree in v0; the normalized review result stays with the review run and the latest verdict/counts are projected onto its task.
 
@@ -65,9 +65,9 @@ Action execution happens after commit. A dispatcher claims one pending action wi
 ## Opening the database
 
 ```js
-import { openStateDatabase } from "./src/state/database.ts";
+import { openStateDatabase } from './src/state/database.ts';
 
-const db = openStateDatabase("/absolute/project/.factory", { create: true });
+const db = openStateDatabase('/absolute/project/.factory', { create: true });
 // Run narrow statements or one controller transaction.
 db.close();
 ```

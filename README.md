@@ -37,14 +37,14 @@ Child sessions follow the named skill, return only the versioned template in tha
 
 ## Vocabulary
 
-| Term | Meaning |
-| --- | --- |
-| ticket | External work, from GitHub or a local document. |
-| execution | One generation of a ticket. |
-| stage | `plan`, `work`, `review`, `wrapup`, or `done`. |
-| session | One Pi conversation, reused when that agent resumes. |
-| run | One pane launch. A resume or retry creates a new run. |
-| factory root | Untracked `.factory/` in the code repository. |
+| Term         | Meaning                                               |
+| ------------ | ----------------------------------------------------- |
+| ticket       | External work, from GitHub or a local document.       |
+| execution    | One generation of a ticket.                           |
+| stage        | `plan`, `work`, `review`, `wrapup`, or `done`.        |
+| session      | One Pi conversation, reused when that agent resumes.  |
+| run          | One pane launch. A resume or retry creates a new run. |
+| factory root | Untracked `.factory/` in the code repository.         |
 
 ## Factory root
 

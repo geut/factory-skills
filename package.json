@@ -2,25 +2,11 @@
   "name": "factory-skills",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24"
-  },
   "scripts": {
-    "test": "node --test",
-    "lint": "oxlint .",
     "format": "oxfmt --write .",
+    "lint": "oxlint .",
+    "test": "node --test",
     "typecheck": "tsc --noEmit"
-  },
-  "pi": {
-    "extensions": [
-      "./src/extension/index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -29,5 +15,19 @@
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "typescript": "^5.9.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   }
 }

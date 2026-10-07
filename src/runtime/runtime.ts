@@ -1,15 +1,15 @@
-import type { ReconcileObservation, RunId, SessionId, TerminalOutcome } from "../domain.ts";
+import type { ReconcileObservation, RunId, SessionId, TerminalOutcome } from '../domain.ts';
 
 export type LaunchSpec = {
   cwd: string;
-  mode: "launch" | "resume";
+  mode: 'launch' | 'resume';
   model: string;
   paneName: string;
   prompt: string;
   runId: RunId;
   sessionFile: string;
   sessionId: SessionId;
-  stage: "plan" | "work";
+  stage: 'plan' | 'work';
   thinking: string;
   tools: string;
 };
@@ -29,9 +29,11 @@ export type ActiveWatch = {
 };
 
 export type FactorySubagentRuntime = {
-  interrupt: (input: { paneId: string; runId: RunId; }) => Promise<void>;
+  interrupt: (input: { paneId: string; runId: RunId }) => Promise<void>;
   launch: (spec: LaunchSpec) => Promise<RunStarted>;
   observe: (run: ActiveWatch, handler: (event: TerminalOutcome) => void) => () => void;
-  reconcile: (runs: Array<ActiveWatch>) => Promise<Array<{ observation: ReconcileObservation; runId: RunId; }>>;
+  reconcile: (
+    runs: Array<ActiveWatch>,
+  ) => Promise<Array<{ observation: ReconcileObservation; runId: RunId }>>;
   resume: (spec: LaunchSpec) => Promise<RunStarted>;
 };

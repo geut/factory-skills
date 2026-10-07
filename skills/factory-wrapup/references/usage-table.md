@@ -2,13 +2,13 @@
 
 Show one aggregate row for every factory stage and one total row:
 
-| Stage | Sessions | Models | Input | Output | Cache read | Cache write | Total tokens | Cost USD |
-| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Plan | 1 | provider/plan-model | 28 | 6,900 | 135,000 | 22,000 | 163,928 | 0.754 |
-| Work | 2 | provider/work-model | 100 | 8,000 | 90,000 | 5,000 | 103,100 | 0.620 |
-| Review | 2 | provider/review-model | 80 | 4,200 | 50,000 | 2,000 | 56,280 | 0.410 |
-| Wrap-up | 1 | provider/wrapup-model | 20 | 1,400 | 12,000 | 500 | 13,920 | 0.090 |
-| **Total** | **6** | — | **228** | **20,500** | **287,000** | **29,500** | **337,228** | **1.874** |
+| Stage     | Sessions | Models                |   Input |     Output |  Cache read | Cache write | Total tokens |  Cost USD |
+| --------- | -------: | --------------------- | ------: | ---------: | ----------: | ----------: | -----------: | --------: |
+| Plan      |        1 | provider/plan-model   |      28 |      6,900 |     135,000 |      22,000 |      163,928 |     0.754 |
+| Work      |        2 | provider/work-model   |     100 |      8,000 |      90,000 |       5,000 |      103,100 |     0.620 |
+| Review    |        2 | provider/review-model |      80 |      4,200 |      50,000 |       2,000 |       56,280 |     0.410 |
+| Wrap-up   |        1 | provider/wrapup-model |      20 |      1,400 |      12,000 |         500 |       13,920 |     0.090 |
+| **Total** |    **6** | —                     | **228** | **20,500** | **287,000** |  **29,500** |  **337,228** | **1.874** |
 
 Derive rows from the controller's `agent_sessions`, `agent_runs`, and `usage_snapshots` records in `.factory/db/state.sqlite`. Use the latest cumulative snapshot per session for ticket totals and the stored per-run deltas for stage totals, so resumed sessions are not counted twice. `Sessions` counts distinct logical sessions. Format integer tokens with separators only for display. List distinct models used in a stage, comma-separated. Convert stored USD micros for display, preserve recorded precision, and do not infer prices.
 

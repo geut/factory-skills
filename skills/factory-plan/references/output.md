@@ -4,21 +4,26 @@ Use this template (`factory.plan.v3`) as the handoff. No JSON object, no Markdow
 
 ```markdown
 ## Status
+
 planned | blocked
 
 ## Artifacts
+
 - plan: .factory/tickets/PROJ-123/plan.md
 - adr: none
 - tasks:
   - 01: .factory/tickets/PROJ-123/01-task-foundation.md (pending, blockedBy none)
 
 ## Ready
+
 01
 
 ## Assumptions
+
 - none
 
 ## Blocker
+
 none
 ```
 

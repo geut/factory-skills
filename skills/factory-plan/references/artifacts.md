@@ -25,27 +25,35 @@ Use the sections that carry information; omit empty ceremony.
 # <ticket title>
 
 ## Outcome
+
 What changes for the user or system, and how success is observed.
 
 ## Current behavior
+
 Relevant evidence from the code, tests, runtime, or documents.
 
 ## Scope
+
 Included behavior and explicit non-goals.
 
 ## Constraints
+
 Compatibility, security, performance, operational, and budget constraints.
 
 ## Test seams
+
 The highest existing seams that can prove the behavior. Note any missing seam.
 
 ## Task map
+
 Numbered tasks, their outcomes, and blocking edges.
 
 ## Risks and open questions
+
 Only unresolved items that could change the work.
 
 ## Discoveries
+
 New information learned during implementation that changed this plan.
 ```
 
@@ -63,21 +71,27 @@ Type: bug | feature | performance | refactor | investigation
 Blocked by: none | <task numbers>
 
 ## User story
+
 As <actor>, I want <behavior>, so that <benefit>.
 
 ## Outcome
+
 The independently observable result this task delivers.
 
 ## Scope
+
 What belongs in this task and what explicitly does not.
 
 ## Acceptance criteria
+
 - [ ] Observable, testable behavior.
 
 ## Verification
+
 Expected unit/integration seam and relevant end-to-end story. If E2E automation is not feasible, state why and give a human verification path.
 
 ## Context
+
 Only evidence and constraints the worker would otherwise have to rediscover.
 ```
 

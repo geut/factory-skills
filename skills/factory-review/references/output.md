@@ -4,21 +4,26 @@ Return only this template (`factory.review.v4`). No JSON object, no Markdown fen
 
 ```markdown
 ## Verdict
+
 approve | changes_requested | blocked
 
 ## Summary
+
 One evidence-based sentence.
 
 ## Findings
+
 none
 
 ### 1. [Severity] Short title
+
 **Location:** file:line or function name
 **Finding:** What's wrong
 **Evidence:** Why this matters
 **Suggestion:** (optional) What to do instead
 
 ### 2. [Severity] Short title
+
 ...
 ```
 

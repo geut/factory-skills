@@ -1,5 +1,11 @@
-import { zeroUsage, type ReconcileObservation, type RunId, type TerminalOutcome, type UsageTotals } from "../domain.ts";
-import type { ActiveWatch, FactorySubagentRuntime, LaunchSpec, RunStarted } from "./runtime.ts";
+import {
+  zeroUsage,
+  type ReconcileObservation,
+  type RunId,
+  type TerminalOutcome,
+  type UsageTotals,
+} from '../domain.ts';
+import type { ActiveWatch, FactorySubagentRuntime, LaunchSpec, RunStarted } from './runtime.ts';
 
 type Tracked = {
   alive: boolean;
@@ -28,21 +34,27 @@ export class FakeRuntime implements FactorySubagentRuntime {
   }
 
   observe(run: ActiveWatch, handler: (event: TerminalOutcome) => void): () => void {
-    if (this.watchers.has(run.runId)) {return () => undefined;}
+    if (this.watchers.has(run.runId)) {
+      return () => undefined;
+    }
     this.watchers.set(run.runId, handler);
     return () => {
       this.watchers.delete(run.runId);
     };
   }
 
-  async reconcile(runs: Array<ActiveWatch>): Promise<Array<{ observation: ReconcileObservation; runId: RunId; }>> {
+  async reconcile(
+    runs: Array<ActiveWatch>,
+  ): Promise<Array<{ observation: ReconcileObservation; runId: RunId }>> {
     return runs.map((run) => {
       const tracked = this.tracked.get(run.runId);
-      if (tracked === undefined) {return { observation: { kind: "missing" }, runId: run.runId };}
+      if (tracked === undefined) {
+        return { observation: { kind: 'missing' }, runId: run.runId };
+      }
       if (tracked.alive) {
         return {
           observation: {
-            kind: "still_running",
+            kind: 'still_running',
             paneId: tracked.started.paneId,
             piSessionId: tracked.started.piSessionId,
             sessionFile: tracked.started.sessionFile,
@@ -51,7 +63,10 @@ export class FakeRuntime implements FactorySubagentRuntime {
         };
       }
       return {
-        observation: { kind: "terminal", terminal: tracked.terminal ?? { kind: "gap_exit", message: "missing terminal" } },
+        observation: {
+          kind: 'terminal',
+          terminal: tracked.terminal ?? { kind: 'gap_exit', message: 'missing terminal' },
+        },
         runId: run.runId,
       };
     });
@@ -69,8 +84,10 @@ export class FakeRuntime implements FactorySubagentRuntime {
   private async start(spec: LaunchSpec): Promise<RunStarted> {
     if (this.failNext || this.failuresRemaining > 0) {
       this.failNext = false;
-      if (this.failuresRemaining > 0) {this.failuresRemaining -= 1;}
-      throw new Error("herdr launch failed");
+      if (this.failuresRemaining > 0) {
+        this.failuresRemaining -= 1;
+      }
+      throw new Error('herdr launch failed');
     }
     const started: RunStarted = {
       paneId: `pane-${spec.runId}`,
