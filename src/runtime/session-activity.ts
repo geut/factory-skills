@@ -153,6 +153,25 @@ export function lastAssistantText(jsonl: string): string {
   return sessionActivity(jsonl).lastText;
 }
 
+export function runAssistantText(jsonl: string, runId: string): string {
+  const marker = `Factory run ${runId}`;
+  const lines = jsonl.split('\n');
+  const start = lines.findIndex((line) => line.includes(marker));
+  if (start < 0) {
+    return lastAssistantText(jsonl);
+  }
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    if (line.includes('Factory run ') && !line.includes(marker)) {
+      end = index;
+      break;
+    }
+  }
+  const text = lastAssistantText(lines.slice(start + 1, end).join('\n'));
+  return text.length > 0 ? text : lastAssistantText(jsonl);
+}
+
 function numberField(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;

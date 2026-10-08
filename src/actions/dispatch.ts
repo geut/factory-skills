@@ -1,9 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { allowsEmptyDiff } from '../config.ts';
 import {
   applyControllerEvent,
   claimNextAction,
+  executionIsCurrent,
+  extendActionLease,
   finishLeasedAction,
   loadSnapshotByExecution,
   loadSnapshotByRun,
@@ -17,12 +20,15 @@ import type {
   RunId,
   RunRecord,
   SessionRecord,
+  TaskRecord,
   TerminalOutcome,
 } from '../domain.ts';
-import { childToolList, paneLabel } from '../runtime/policy.ts';
+import { childToolList, paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { inspectPlanDir, planChecks } from '../validation/plan.ts';
-import { writePlanValidation } from '../validation/record.ts';
+import { writePlanValidation, writeValidation } from '../validation/record.ts';
+import { validateWork, validationLeaseMs } from '../validation/work.ts';
+import { inspectWorkInput } from './work-input.ts';
 import { prepareWorktree } from './worktree.ts';
 
 function messageOf(error: unknown): string {
@@ -45,11 +51,35 @@ function paneName(snapshot: FactorySnapshot, session: SessionRecord): string {
   return paneLabel(session.stage, snapshot.ticket.displayRef, session.taskId);
 }
 
+function previousPaneId(snapshot: FactorySnapshot, run: RunRecord): string | null {
+  let paneId: string | null = null;
+  for (const item of snapshot.runs) {
+    if (item.sessionId === run.sessionId && item.id !== run.id && item.paneId !== null) {
+      paneId = item.paneId;
+    }
+  }
+  return paneId;
+}
+
+function taskLabel(snapshot: FactorySnapshot, session: SessionRecord): string | null {
+  if (session.taskId === null || (session.stage !== 'work' && session.stage !== 'review')) {
+    return null;
+  }
+  const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
+  if (task === null || task.title.trim().length === 0) {
+    return null;
+  }
+  const tasksLeft = snapshot.tasks.filter((item) => item.status !== 'done').length;
+  return taskProgressText(task.title, tasksLeft);
+}
+
 export async function dispatchPending(input: {
+  afterValidation: () => void;
   arm: (runId: RunId) => void;
   db: DatabaseSync;
   factoryRoot: string;
   ids: IdSource;
+  liveValidations: Set<string>;
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
@@ -62,6 +92,18 @@ export async function dispatchPending(input: {
     const snapshot = loadSnapshotByExecution(input.db, claimed.executionId);
     if (snapshot === null) {
       finishLeasedAction(input.db, claimed.action.id, input.now(), 'failed', 'execution missing');
+      continue;
+    }
+    if (
+      claimed.action.kind === 'validate_run' &&
+      workRun(snapshot, claimed.action.runId) !== null
+    ) {
+      const action = claimed.action;
+      input.liveValidations.add(action.id);
+      void runWorkValidation(input, action, snapshot).finally(() => {
+        input.liveValidations.delete(action.id);
+        input.afterValidation();
+      });
       continue;
     }
     try {
@@ -93,6 +135,8 @@ async function perform(
       return launch(input, action, snapshot);
     case 'validate_run':
       return validate(input, action, snapshot);
+    case 'prepare_work_input':
+      return prepareInput(input, action, snapshot);
     case 'prepare_worktree':
       return worktree(input, action, snapshot);
     case 'notify_attention':
@@ -139,23 +183,27 @@ async function launch(
   if (session === null) {
     throw new Error('launch action is missing its session');
   }
-  if (session.stage !== 'plan' && session.stage !== 'work') {
+  if (session.stage !== 'plan' && session.stage !== 'work' && session.stage !== 'review') {
     throw new Error(`cannot launch stage ${session.stage} in this slice`);
   }
   mkdirSync(path.dirname(snapshot.execution.factoryDir), { recursive: true });
   mkdirSync(snapshot.execution.factoryDir, { recursive: true });
   const sessionFile =
     session.sessionFile ?? path.join(input.factoryRoot, 'sessions', `${session.id}.jsonl`);
+  const mode = action.kind === 'resume_run' ? 'resume' : action.mode;
   const spec: LaunchSpec = {
     cwd: action.cwd,
-    mode: action.kind === 'resume_run' ? 'resume' : action.mode,
+    mode,
     model: session.model,
     paneName: paneName(snapshot, session),
+    previousPaneId: mode === 'resume' ? previousPaneId(snapshot, run) : null,
     prompt: action.prompt,
+    purpose: run.purpose,
     runId: run.id,
     sessionFile,
     sessionId: session.id,
     stage: session.stage,
+    taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
     tools: childToolList(session.stage),
   };
@@ -206,7 +254,7 @@ function validate(
   const now = input.now();
   apply(
     input,
-    { actionId: action.id, kind: 'validation_finished', outcome, runId },
+    { actionId: action.id, kind: 'validation_finished', outcome, runId, stage: 'plan' },
     `validation:${run.id}:${resultHash}:${outcome.kind}`,
     'validator',
     (db) => {
@@ -255,6 +303,162 @@ function worktree(
       worktreePath: prepared.path,
     },
     `worktree-ready:${action.id}`,
+    'action',
+  );
+  return Promise.resolve(null);
+}
+
+function workRun(snapshot: FactorySnapshot, id: RunId): RunRecord | null {
+  const run = snapshot.runs.find((item) => item.id === id) ?? null;
+  if (run === null) {
+    return null;
+  }
+  const session = sessionForRun(snapshot, run);
+  return session?.stage === 'work' ? run : null;
+}
+
+function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
+  const done = new Set(
+    snapshot.tasks.filter((task) => task.status === 'done').map((task) => task.taskId),
+  );
+  const ready = snapshot.tasks
+    .filter((task) => task.status === 'pending' && task.blockedBy.every((id) => done.has(id)))
+    .sort((left, right) => left.ordinal - right.ordinal);
+  return ready[0] ?? null;
+}
+
+function dependenciesDone(snapshot: FactorySnapshot, task: TaskRecord): boolean {
+  return task.blockedBy.every((id) =>
+    snapshot.tasks.some((item) => item.taskId === id && item.status === 'done'),
+  );
+}
+
+async function runWorkValidation(
+  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+  action: Extract<ActionRecord, { kind: 'validate_run' }>,
+  snapshot: FactorySnapshot,
+): Promise<void> {
+  const commands = snapshot.execution.policy.validation.work.commands;
+  extendActionLease(input.db, action.id, input.now(), validationLeaseMs(commands));
+  const worktree = snapshot.execution.worktreePath;
+  const baseSha = snapshot.execution.worktreeBaseSha;
+  const outcome =
+    worktree === null || baseSha === null
+      ? { kind: 'error' as const, message: 'Worktree is missing.' }
+      : await validateWork({
+          allowsEmptyDiff: allowsEmptyDiff(
+            snapshot.ticket.labels,
+            snapshot.execution.policy.labels.map,
+          ),
+          baseSha,
+          commands,
+          cwd: worktree,
+        });
+  const checks = outcome.kind === 'error' ? [] : outcome.checks;
+  const status =
+    outcome.kind === 'passed' ? 'passed' : outcome.kind === 'failed' ? 'failed' : 'error';
+  const summary =
+    outcome.kind === 'error'
+      ? outcome.message
+      : outcome.kind === 'failed'
+        ? outcome.failures.join('\n')
+        : 'passed';
+  const executionId = snapshot.execution.id;
+  const runId = action.runId;
+  const validationId = input.ids.event();
+  const now = input.now();
+  apply(
+    input,
+    { actionId: action.id, kind: 'validation_finished', outcome, runId, stage: 'work' },
+    `validation:${action.id}`,
+    'validator',
+    (db) => {
+      const current = db.prepare('SELECT status FROM actions WHERE id = ?').get(action.id);
+      const actionStatus =
+        typeof current === 'object' &&
+        current !== null &&
+        'status' in current &&
+        typeof current.status === 'string'
+          ? current.status
+          : '';
+      if (
+        actionStatus === 'succeeded' ||
+        actionStatus === 'failed' ||
+        actionStatus === 'cancelled'
+      ) {
+        return;
+      }
+      writeValidation(db, {
+        checks,
+        executionId,
+        id: validationId,
+        now,
+        resultHash: null,
+        runId,
+        status,
+        summary,
+        validatorVersion: 'work.v1',
+      });
+    },
+  );
+}
+
+function prepareInput(
+  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+  action: Extract<ActionRecord, { kind: 'prepare_work_input' }>,
+  snapshot: FactorySnapshot,
+): Promise<RunId | null> {
+  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
+  const task = snapshot.tasks.find((item) => item.taskId === action.taskId) ?? null;
+  const selected =
+    task !== null &&
+    (action.purpose === 'initial'
+      ? readyTask(snapshot)?.taskId === task.taskId
+      : action.purpose === 'validation_correction'
+        ? task.status === 'working'
+        : task.status === 'blocked');
+  const inspection =
+    task === null ||
+    snapshot.execution.worktreePath === null ||
+    snapshot.execution.worktreeBranch === null
+      ? { failures: ['The worktree is not ready for this execution.'], kind: 'failed' as const }
+      : inspectWorkInput({
+          activeChild: snapshot.runs.some((run) => run.status !== 'terminal'),
+          dependenciesDone: dependenciesDone(snapshot, task),
+          executionCurrent: executionIsCurrent(input.db, snapshot.execution.id),
+          expectedBranch: snapshot.execution.worktreeBranch,
+          factoryDir: snapshot.execution.factoryDir,
+          factoryRoot,
+          planPath:
+            snapshot.execution.planPath ?? path.join(snapshot.execution.factoryDir, 'plan.md'),
+          selectedTask: selected,
+          taskFile: task.taskFile,
+          worktreePath: snapshot.execution.worktreePath,
+          worktreeReady: snapshot.execution.worktreeStatus === 'ready',
+        });
+  if (inspection.kind === 'failed') {
+    apply(
+      input,
+      {
+        actionId: action.id,
+        kind: 'work_input_failed',
+        message: inspection.failures.join('\n'),
+      },
+      `work-input-failed:${action.id}`,
+      'action',
+    );
+    return Promise.resolve(null);
+  }
+  apply(
+    input,
+    {
+      actionId: action.id,
+      adrPath: inspection.adrPath,
+      contextPath: inspection.contextPath,
+      kind: 'work_input_ready',
+      taskType: inspection.taskType,
+    },
+    `work-input-ready:${action.id}`,
     'action',
   );
   return Promise.resolve(null);

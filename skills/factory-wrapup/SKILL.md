@@ -98,4 +98,4 @@ In a controller run, let the controller record wrap-up usage, show the final usa
 
 Return only the `factory.wrapup.v1` template in [references/output.md](references/output.md). No JSON object, no recap after it. Include every heading.
 
-After the template, call `subagent_done` and emit nothing else. Do not edit the controller database.
+After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is only for a question you cannot answer. Do not edit the controller database.

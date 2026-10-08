@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { RunningChildRow } from '../controller/store.ts';
+import { taskProgressText } from '../runtime/policy.ts';
 import { sessionActivity, type SessionActivity } from '../runtime/session-activity.ts';
 
 export type AgentTheme = {
@@ -45,6 +46,13 @@ export function readChildActivity(sessionFile: string | null): SessionActivity {
   }
 }
 
+export function childProgress(child: Pick<WidgetChild, 'taskTitle' | 'tasksLeft'>): string | null {
+  if (child.taskTitle === null || child.taskTitle.trim().length === 0 || child.tasksLeft === null) {
+    return null;
+  }
+  return taskProgressText(child.taskTitle, child.tasksLeft);
+}
+
 export function formatElapsed(startedAt: string | null, now: number): string {
   if (startedAt === null) {
     return '0.0s';
@@ -85,6 +93,7 @@ export function renderFactoryWidget(input: {
     const last = index === visible.length - 1 && hidden === 0;
     const connector = last ? '└─' : '├─';
     const childConnector = last ? '   ' : '│  ';
+    const progress = childProgress(child);
     const stats: Array<string> = [];
     if (child.toolUses > 0) {
       stats.push(`${child.toolUses} tool use${child.toolUses === 1 ? '' : 's'}`);
@@ -92,12 +101,15 @@ export function renderFactoryWidget(input: {
     if (child.context !== null) {
       stats.push(child.context);
     }
+    if (progress !== null) {
+      stats.push(progress);
+    }
     const statsText =
       stats.length > 0 ? ` ${theme.fg('dim', '·')} ${theme.fg('dim', stats.join(' · '))}` : '';
     lines.push(
       `${theme.fg('dim', connector)} ${theme.fg('accent', spinner)} ${theme.bold(child.paneName ?? 'factory')}${statsText}`,
     );
-    if (child.description !== null) {
+    if (progress === null && child.description !== null) {
       lines.push(
         `${theme.fg('dim', childConnector)}${theme.fg('muted', `  ${child.description}`)}`,
       );

@@ -25,4 +25,4 @@ After behavior and acceptance criteria, apply [references/code-quality.md](refer
 
 ## Return the verdict
 
-Return only the `factory.review.v4` template in [references/output.md](references/output.md). Do not emit a JSON object. Do not wrap the result in a Markdown fence. Do not add a recap after it. Never write a review artifact to the ticket directory. After the template, call `subagent_done` and emit nothing else. Do not edit the controller database.
+Return only the `factory.review.v4` template in [references/output.md](references/output.md). Do not emit a JSON object. Do not wrap the result in a Markdown fence. Do not add a recap after it. Never write a review artifact to the ticket directory. After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is only for a question you cannot answer. Do not edit the controller database.

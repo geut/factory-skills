@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import type { InternalLabel } from '../config.ts';
 import {
   actionId,
   attentionId,
@@ -28,6 +29,7 @@ import {
   type TicketRecord,
   type UsageTotals,
   type UsageWrite,
+  type WorkInputPurpose,
   type WorktreeStatus,
 } from '../domain.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
@@ -86,41 +88,96 @@ function jsonText(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function parseLabelMap(value: unknown): Policy['labels'] {
+  if (!isRecord(value)) {
+    throw new FactoryDatabaseError('execution policy is invalid');
+  }
+  const map: Record<string, InternalLabel> = {};
+  for (const [projectLabel, internal] of Object.entries(value)) {
+    if (internal !== 'investigation') {
+      throw new FactoryDatabaseError('execution policy is invalid');
+    }
+    map[projectLabel] = 'investigation';
+  }
+  return { map };
+}
+
+function parseCommands(value: unknown): Policy['validation'] {
+  if (!Array.isArray(value)) {
+    throw new FactoryDatabaseError('execution policy is invalid');
+  }
+  const commands: Policy['validation']['work']['commands'] = [];
+  for (const item of value) {
+    if (
+      !isRecord(item) ||
+      typeof item['name'] !== 'string' ||
+      typeof item['timeoutMs'] !== 'number' ||
+      !Array.isArray(item['argv']) ||
+      item['argv'].some((arg) => typeof arg !== 'string')
+    ) {
+      throw new FactoryDatabaseError('execution policy is invalid');
+    }
+    commands.push({
+      argv: item['argv'],
+      name: item['name'],
+      timeoutMs: item['timeoutMs'],
+    });
+  }
+  return { work: { commands } };
+}
+
 function parsePolicy(raw: string): Policy {
   const value: unknown = JSON.parse(raw);
   if (
     !isRecord(value) ||
     typeof value['codeRoot'] !== 'string' ||
     !isRecord(value['models']) ||
-    !isRecord(value['limits'])
+    !isRecord(value['limits']) ||
+    !isRecord(value['labels']) ||
+    !isRecord(value['validation'])
   ) {
     throw new FactoryDatabaseError('execution policy is invalid');
   }
   const models = value['models'];
   const limits = value['limits'];
+  const labels = value['labels'];
+  const validation = value['validation'];
   if (
     typeof models['plan'] !== 'string' ||
     typeof models['work'] !== 'string' ||
     typeof models['review'] !== 'string' ||
     typeof limits['planCorrections'] !== 'number' ||
-    typeof limits['infrastructureRetries'] !== 'number'
+    typeof limits['workCorrections'] !== 'number' ||
+    typeof limits['infrastructureRetries'] !== 'number' ||
+    !isRecord(labels['map']) ||
+    !isRecord(validation['work'])
   ) {
     throw new FactoryDatabaseError('execution policy is invalid');
   }
   return {
     codeRoot: value['codeRoot'],
+    labels: parseLabelMap(labels['map']),
     limits: {
       infrastructureRetries: limits['infrastructureRetries'],
       planCorrections: limits['planCorrections'],
+      workCorrections: limits['workCorrections'],
     },
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
+    validation: parseCommands(validation['work']['commands']),
   };
+}
+
+function stringList(value: unknown): Array<string> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
 }
 
 function parseTicketPayload(
   raw: string,
   fallbackTitle: string,
-): { body: string; commandRef: string; displayRef: string } {
+): { body: string; commandRef: string; displayRef: string; labels: Array<string> } {
   const value: unknown = JSON.parse(raw);
   if (!isRecord(value)) {
     throw new FactoryDatabaseError('ticket payload is invalid');
@@ -129,6 +186,7 @@ function parseTicketPayload(
     body: typeof value['body'] === 'string' ? value['body'] : '',
     commandRef: typeof value['commandRef'] === 'string' ? value['commandRef'] : fallbackTitle,
     displayRef: typeof value['displayRef'] === 'string' ? value['displayRef'] : fallbackTitle,
+    labels: stringList(value['labels']),
   };
 }
 
@@ -226,6 +284,29 @@ function loadExecutionRow(db: DatabaseSync, execution: ExecutionId): FactorySnap
   return hydrate(db, row(ticketRow), executionRecord);
 }
 
+export function listCurrentTicketRefs(db: DatabaseSync): Array<string> {
+  const rows = db
+    .prepare(
+      `SELECT json_extract(t.source_payload, '$.displayRef') AS display_ref
+       FROM ticket_executions AS e
+       JOIN tickets AS t ON t.id = e.ticket_id
+       WHERE e.is_current = 1
+       ORDER BY e.updated_at`,
+    )
+    .all();
+  const refs: Array<string> = [];
+  for (const entry of rows) {
+    if (typeof entry !== 'object' || entry === null || !('display_ref' in entry)) {
+      continue;
+    }
+    const ref = entry.display_ref;
+    if (typeof ref === 'string' && ref.length > 0) {
+      refs.push(ref);
+    }
+  }
+  return refs;
+}
+
 export function loadCurrentByTicketKey(db: DatabaseSync, key: string): FactorySnapshot | null {
   const found = db
     .prepare(
@@ -263,6 +344,7 @@ function hydrate(
     commandRef: payload.commandRef,
     displayRef: payload.displayRef,
     id: ticketId(text(ticketRow, 'id')),
+    labels: payload.labels,
     sourceHash: nullableText(ticketRow, 'source_hash') ?? '',
     sourceKind: text(ticketRow, 'source_kind'),
     sourceRef: nullableText(ticketRow, 'source_ref') ?? '',
@@ -522,6 +604,27 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
   if (kind === 'validate_run' && run !== null) {
     return { ...base, attentionReplyId: null, attentionRequestId: null, kind, runId: runId(run) };
   }
+  if (
+    kind === 'prepare_work_input' &&
+    typeof payload['taskId'] === 'string' &&
+    (payload['purpose'] === 'initial' ||
+      payload['purpose'] === 'validation_correction' ||
+      payload['purpose'] === 'human_reply') &&
+    Array.isArray(payload['failures']) &&
+    payload['failures'].every((item) => typeof item === 'string')
+  ) {
+    const purpose: WorkInputPurpose = payload['purpose'];
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      failures: payload['failures'],
+      kind,
+      purpose,
+      runId: null,
+      taskId: taskId(payload['taskId']),
+    };
+  }
   if (kind === 'prepare_worktree' && typeof payload['slug'] === 'string') {
     return {
       ...base,
@@ -553,6 +656,12 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ cwd: action.cwd, prompt: action.prompt });
     case 'validate_run':
       return '{}';
+    case 'prepare_work_input':
+      return jsonText({
+        failures: action.failures,
+        purpose: action.purpose,
+        taskId: action.taskId,
+      });
     case 'prepare_worktree':
       return jsonText({ slug: action.slug });
     case 'notify_attention':
@@ -582,6 +691,7 @@ function insertTicket(db: DatabaseSync, snapshot: FactorySnapshot, now: string):
       body: snapshot.ticket.body,
       commandRef: snapshot.ticket.commandRef,
       displayRef: snapshot.ticket.displayRef,
+      labels: snapshot.ticket.labels,
       title: snapshot.ticket.title,
     }),
     snapshot.ticket.sourceHash,
@@ -1036,6 +1146,8 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
+    case 'work_input_ready':
+    case 'work_input_failed':
       return loadByAction(db, event.actionId);
     default: {
       const _exhaustive: never = event;
@@ -1073,6 +1185,8 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'retry':
     case 'worktree_ready':
     case 'worktree_failed':
+    case 'work_input_ready':
+    case 'work_input_failed':
       return null;
     default: {
       const _exhaustive: never = event;
@@ -1172,27 +1286,47 @@ export type RunningChildRow = {
   paneName: string | null;
   sessionFile: string | null;
   startedAt: string | null;
+  tasksLeft: number | null;
+  taskTitle: string | null;
 };
 
 export function listRunningChildren(db: DatabaseSync): Array<RunningChildRow> {
   return db
     .prepare(
       `SELECT r.pane_name AS pane_name, r.lifecycle_json AS lifecycle_json, r.started_at AS started_at,
-              s.session_file AS session_file, s.model AS model
+              s.session_file AS session_file, s.model AS model, s.stage AS stage,
+              t.title AS task_title,
+              (
+                SELECT COUNT(*)
+                FROM tasks AS open_tasks
+                WHERE open_tasks.execution_id = s.execution_id
+                  AND open_tasks.status != 'done'
+              ) AS tasks_left
        FROM agent_runs AS r
        JOIN agent_sessions AS s ON s.id = r.session_id
+       LEFT JOIN tasks AS t
+         ON t.execution_id = s.execution_id
+        AND t.task_id = s.task_id
        WHERE r.status IN ('prepared', 'starting', 'running')
        ORDER BY r.started_at`,
     )
     .all()
     .map((item) => {
       const record = row(item);
+      const stage = text(record, 'stage');
+      const title = nullableText(record, 'task_title');
+      const taskTitle =
+        (stage === 'work' || stage === 'review') && title !== null && title.trim().length > 0
+          ? title
+          : null;
       return {
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
         model: text(record, 'model'),
         paneName: nullableText(record, 'pane_name'),
         sessionFile: nullableText(record, 'session_file'),
         startedAt: nullableText(record, 'started_at'),
+        tasksLeft: taskTitle === null ? null : integer(record, 'tasks_left'),
+        taskTitle,
       };
     });
 }
@@ -1215,6 +1349,78 @@ export function listActiveRuns(db: DatabaseSync): Array<ActiveRun> {
         startedAt: nullableText(record, 'started_at'),
       };
     });
+}
+
+export function executionIsCurrent(db: DatabaseSync, id: ExecutionId): boolean {
+  const found = db.prepare('SELECT is_current FROM ticket_executions WHERE id = ?').get(id);
+  return found !== undefined && integer(row(found), 'is_current') === 1;
+}
+
+export function extendActionLease(
+  db: DatabaseSync,
+  action: ActionId,
+  now: string,
+  ttlMs: number,
+): void {
+  const expires = new Date(Date.parse(now) + ttlMs).toISOString();
+  immediateTransaction(db, () => {
+    db.prepare(
+      `UPDATE actions
+       SET lease_expires_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'leased'`,
+    ).run(expires, now, action);
+  });
+}
+
+export function requeueOrphanedValidations(
+  db: DatabaseSync,
+  now: string,
+  liveActionIds: ReadonlySet<string>,
+): void {
+  immediateTransaction(db, () => {
+    const rows = db
+      .prepare(
+        `SELECT id, attempts, max_attempts, execution_id
+         FROM actions
+         WHERE kind = 'validate_run' AND status = 'leased'`,
+      )
+      .all();
+    for (const item of rows) {
+      const record = row(item);
+      const id = text(record, 'id');
+      if (liveActionIds.has(id)) {
+        continue;
+      }
+      const attempts = integer(record, 'attempts');
+      const maxAttempts = integer(record, 'max_attempts');
+      if (attempts + 1 > maxAttempts) {
+        db.prepare(
+          `UPDATE actions
+           SET status = 'failed', last_error = ?, lease_owner = NULL, lease_token = NULL,
+               lease_expires_at = NULL, completed_at = ?, updated_at = ?
+           WHERE id = ? AND status = 'leased'`,
+        ).run('Validation lease expired.', now, now, id);
+        db.prepare(
+          `UPDATE ticket_executions
+           SET status = 'failed', retryable = 1, status_reason_code = 'validator_error',
+               status_reason = ?, version = version + 1, message = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          'Validation lease expired.',
+          'Validation lease expired.',
+          now,
+          text(record, 'execution_id'),
+        );
+        continue;
+      }
+      db.prepare(
+        `UPDATE actions
+         SET status = 'pending', attempts = ?, lease_owner = NULL, lease_token = NULL,
+             lease_expires_at = NULL, updated_at = ?
+         WHERE id = ? AND status = 'leased'`,
+      ).run(attempts + 1, now, id);
+    }
+  });
 }
 
 export function claimNextAction(

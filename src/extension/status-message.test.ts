@@ -9,7 +9,7 @@ const theme: StatusTheme = {
 const notice = [
   'dpaez/factory-dashboard#7',
   'stage: plan',
-  'status: active',
+  'status: done',
   'Run ended with subagent_done.',
   'Artifacts are written and validated: every ticket AC maps to task criteria.',
   '## Status',
@@ -20,7 +20,7 @@ const notice = [
 
 test('a factory status folds the template behind a one-line summary', () => {
   const collapsed = renderFactoryStatus({ expanded: false, text: notice, theme, width: 80 });
-  assert.equal(collapsed[0], 'dpaez/factory-dashboard#7 · plan · active');
+  assert.equal(collapsed[0], 'dpaez/factory-dashboard#7 · plan · done');
   assert.match(collapsed[1] ?? '', /Artifacts are written and validated/);
   assert.doesNotMatch(collapsed.join('\n'), /## Status/);
   assert.match(collapsed.at(-1) ?? '', /\+\d+ lines · expand to read/);

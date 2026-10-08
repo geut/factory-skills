@@ -90,7 +90,10 @@ export class FakeRuntime implements FactorySubagentRuntime {
       throw new Error('herdr launch failed');
     }
     const started: RunStarted = {
-      paneId: `pane-${spec.runId}`,
+      paneId:
+        spec.mode === 'resume' && spec.previousPaneId !== null
+          ? spec.previousPaneId
+          : `pane-${spec.runId}`,
       paneName: spec.paneName,
       piSessionId: `pi-${spec.sessionId}`,
       runId: spec.runId,

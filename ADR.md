@@ -53,8 +53,6 @@ Dashboard SBX Kit mixin ──read-only views────────► SQLite
 
 ## Responsibility boundaries
 
-
-
 ### FactoryController
 
 The controller owns:
@@ -75,14 +73,12 @@ The controller does not research the ticket, design a solution, write code, or r
 
 Stage skills own specialist judgment and return a versioned structured result:
 
-
 | Skill            | Responsibility                                                                                                                                                                           | Durable or validated output                                                                                                                                         |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `factory-plan`   | Research the ticket, clarify ambiguity, and produce the smallest useful plan.                                                                                                            | `plan.md`, optional `adr.md`, one or more numbered task files, structured task/dependency data.                                                                     |
-| `factory-work`   | Design and implement one ready task, normally behavior-first and test-driven.                                                                                                            | Tests, code, verification evidence, structured work result.                                                                                                         |
+| `factory-work`   | Design and implement one ready task, normally behavior-first and test-driven.                                                                                                            | An uncommitted worktree diff. The controller accepts it when the diff and trusted commands pass.                                                                    |
 | `factory-review` | Perform a read-only adversarial review with a model different from the worker.                                                                                                           | Structured findings and `approve`, `changes_requested`, or `blocked` verdict.                                                                                       |
 | `factory-wrapup` | Update durable knowledge, prepare the approved work for handoff, retain the landing context, and apply concrete pull-request feedback until the pull request reaches a terminal outcome. | Summary, artifact changes, usage table, merge commands, documentation updates, useful visual evidence, verified feedback changes, and pull-request landing context. |
-
 
 A stage agent never launches the following stage and never mutates operational state directly.
 
@@ -106,11 +102,9 @@ Factory children are launched through this adapter, not through the ordinary mod
 
 Validators own mechanical truth. Depending on the stage and project policy, they check:
 
-- result-contract/schema validity;
 - required artifacts and paths;
-- exact input and result hashes;
 - task dependencies;
-- expected diffs;
+- the worktree diff and configured commands;
 - tests, lint, type checks, and project-specific verification;
 - reviewer isolation, packet freshness, and read-only policy;
 - wrap-up handoff completeness.
@@ -168,15 +162,17 @@ Every plan, work, review, and wrap-up run follows the same code-owned lifecycle:
 5. Lease the action and launch one child.
 6. Arm exactly one controller-owned watcher.
 7. Receive exactly one terminal runtime event.
-8. Normalize the proposed result against a versioned contract.
-9. Run hard validation against the exact normalized result hash.
+8. Record the terminal output.
+9. Run hard validation. Plan acceptance is the local `plan.md` and task files. Work acceptance is the diff plus the trusted commands in `validation.work.commands`. A pass is not bound to a result hash.
 10. Transactionally choose one outcome:
-  - accept and advance;
-    - send a concrete bounded correction to the same logical session;
-    - persist a user question;
-    - schedule an infrastructure retry;
-    - pause; or
-    - fail.
+
+- accept and advance;
+  - send a concrete bounded correction to the same logical session;
+  - persist a user question;
+  - schedule an infrastructure retry;
+  - pause; or
+  - fail.
+
 11. Dispatch newly committed actions after the transaction completes.
 
 The controller does not hold a database transaction open while launching a pane, running commands, notifying a user, or performing any other external effect.
@@ -194,13 +190,12 @@ Each process/pane launch is an **agent run** and ends in exactly one terminal ki
 - `gap_exit`;
 - `cancelled`.
 
-`subagent_done` means only that candidate output arrived. Three different facts must remain distinct:
+`subagent_done` means only that candidate output arrived. Two different facts must remain distinct:
 
 1. the child emitted a terminal result;
-2. the result was parsed and normalized against its contract;
-3. stage validation passed.
+2. stage validation passed.
 
-Only the third fact permits the controller to advance.
+Only the second fact permits the controller to advance. Plan validation inspects the files in the factory root. Work validation inspects the worktree diff and runs the configured commands. Neither acceptance depends on parsing a result contract or matching a result hash.
 
 `caller_ping` is terminal for that run. The controller stores an attention request before notifying the user and changes the execution status to `waiting_for_user`. The question must be visible in the main Factory UI and retrievable with Factory status even if a notification is missed.
 
@@ -232,8 +227,6 @@ Detailed review transcripts do not require a permanent review directory. The nor
 Validation corrections and action retries are also bounded, but their exact defaults remain project policy rather than being conflated with the three review rounds.
 
 ## Command semantics
-
-
 
 ### Start
 
@@ -268,7 +261,6 @@ The normalized snapshot is frozen on the execution in `input_json`, `input_hash`
 
 `start` is idempotent for the resolved canonical ticket identity, not for the literal command argument. Repeating it through a different URL or alias never launches a second child, resumes a question, retries a failure, or silently creates a new generation.
 
-
 | Current state                      | Repeated `start` behavior                                           |
 | ---------------------------------- | ------------------------------------------------------------------- |
 | Queued, active, or resuming        | Return the current execution and status; do nothing else.           |
@@ -278,7 +270,6 @@ The normalized snapshot is frozen on the execution in `input_json`, `input_hash`
 | Non-retryable failure              | Return the failure and stop; v0 does not create another generation. |
 | Ready for handoff                  | Return the handoff state; do not mark it complete.                  |
 | Complete or cancelled              | Return the existing generation; v0 does not reopen it.              |
-
 
 The schema retains execution generations so a future explicit rerun can preserve history, but `/factory rerun` is outside v0. `start` never emulates rerun, and operators must not create a new generation through direct database edits.
 
@@ -312,27 +303,24 @@ tickets
         └── events
 ```
 
+| Table                                     | Purpose                                                                                                                                                                       |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_meta`                             | Identifies the schema version.                                                                                                                                                |
+| `tickets`                                 | Provider-qualified canonical ticket identity, display/source metadata, and parent relationship.                                                                               |
+| `ticket_executions`                       | Explicit generations, frozen source snapshot/hash/fetch time, current stage/status, policy, paths, worktree state, and optimistic version.                                    |
+| `tasks`, `task_dependencies`              | Ordered plan slices and their dependency-ready frontier.                                                                                                                      |
+| `agent_sessions`                          | Logical Pi conversations reused across resumes.                                                                                                                               |
+| `agent_runs`                              | Individual pane/process attempts, lifecycle result, hashes, and semantic round.                                                                                               |
+| `attention_requests`, `attention_replies` | Durable questions and immutable, versioned answers.                                                                                                                           |
+| `pull_requests`                           | Attached provider/repository/PR identity, current head revision, normalized provider state, and terminal outcome for the landing stage.                                       |
+| `actions`                                 | Idempotent transactional outbox with compare-and-set leases.                                                                                                                  |
+| `events`                                  | Deduplicated command, runtime, provider, and domain events—including exact PR comments—with a monotonic observation cursor.                                                   |
+| `validation_runs`, `validation_checks`    | Checks for a finished run. A pass requires a terminal `subagent_done`, at least one passed check, and no failed, errored, or skipped check. It is not bound to a result hash. |
+| `usage_snapshots`                         | Cumulative Pi usage and computed per-run deltas.                                                                                                                              |
 
-| Table                                     | Purpose                                                                                                                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `schema_meta`                             | Identifies the schema version.                                                                                                             |
-| `tickets`                                 | Provider-qualified canonical ticket identity, display/source metadata, and parent relationship.                                            |
-| `ticket_executions`                       | Explicit generations, frozen source snapshot/hash/fetch time, current stage/status, policy, paths, worktree state, and optimistic version. |
-| `tasks`, `task_dependencies`              | Ordered plan slices and their dependency-ready frontier.                                                                                   |
-| `agent_sessions`                          | Logical Pi conversations reused across resumes.                                                                                            |
-| `agent_runs`                              | Individual pane/process attempts, lifecycle result, hashes, and semantic round.                                                            |
-| `attention_requests`, `attention_replies` | Durable questions and immutable, versioned answers.                                                                                        |
-| `pull_requests`                           | Attached provider/repository/PR identity, current head revision, normalized provider state, and terminal outcome for the landing stage.    |
-| `actions`                                 | Idempotent transactional outbox with compare-and-set leases.                                                                               |
-| `events`                                  | Deduplicated command, runtime, provider, and domain events—including exact PR comments—with a monotonic observation cursor.                |
-| `validation_runs`, `validation_checks`    | Scripted evidence bound to an exact result hash.                                                                                           |
-| `usage_snapshots`                         | Cumulative Pi usage and computed per-run deltas.                                                                                           |
-
-
-Accepted normalized stage output is stored on `agent_runs.result_json`. `result_status = valid` means the result satisfied its parsing/contract rules; it does not mean stage validation passed. A passed `validation_run` is the separate acceptance record and becomes immutable with its checks.
+Stage output may be stored on `agent_runs.result_json`. `result_status = valid` means a parser accepted that output; it does not mean stage validation passed. Work runs stay `pending` and keep the raw reply. A passed `validation_run` is the separate acceptance record and becomes immutable with its checks. Plan acceptance is the local plan files. Work acceptance is the diff plus trusted commands.
 
 The core v1 state vocabularies are deliberately closed:
-
 
 | Record               | States                                                                                                                                |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -342,7 +330,6 @@ The core v1 state vocabularies are deliberately closed:
 | Agent-session status | `prepared`, `open`, `completed`, `abandoned`                                                                                          |
 | Agent-run status     | `prepared`, `starting`, `running`, `terminal`                                                                                         |
 | Review verdict       | `approve`, `changes_requested`, `blocked`                                                                                             |
-
 
 Stages describe where an execution is in the workflow. Statuses describe its operational condition. Keeping those concepts separate allows, for example, a planning execution and a review execution to both be `waiting_for_user` without inventing additional stages.
 
@@ -360,8 +347,6 @@ Stages describe where an execution is in the workflow. Statuses describe its ope
 - v0 allows one active attached pull request per execution; its historical terminal record is retained.
 - Terminal runs, accepted validations, and completed actions are immutable.
 - The global event revision is a dashboard/change cursor, not a global write lock.
-
-
 
 ### Usage accounting
 
@@ -483,11 +468,7 @@ Budget is a first-class operational concern:
 - agents receive only the context required for their stage;
 - reflective improvements become proposals and require human approval—skills never rewrite themselves automatically.
 
-
-
 ## Consequences
-
-
 
 ### Benefits
 
@@ -497,12 +478,10 @@ Budget is a first-class operational concern:
 - Questions and answers survive pane or process failures.
 - Review and correction budgets are enforceable.
 - Parallel tickets are observable without sharing a global workflow lock.
-- Validation evidence is tied to exact inputs and outputs.
+- Plan acceptance is the local plan files. Work acceptance is the diff plus trusted commands, without a result-hash binding.
 - The subagent runtime can be replaced behind an interface.
 - The dashboard observes a versioned read-only contract over one authoritative state store.
 - Pull-request feedback uses a scoped, hard-validated wrap-up action while leaving review to the external PR reviewer.
-
-
 
 ### Costs
 
@@ -512,8 +491,6 @@ Budget is a first-class operational concern:
 - Restart recovery is more explicit and therefore requires deliberate testing.
 - Hard checks require project-specific configuration to remain useful rather than ceremonial.
 - Pull-request landing adds provider-event ingestion, long-lived execution state, and another bounded feedback loop.
-
-
 
 ## Rejected alternatives
 
@@ -530,8 +507,6 @@ Budget is a first-class operational concern:
 - Run unlimited review, pull-request feedback, correction, or infrastructure retry loops.
 - Commit, merge, publish, or clean up automatically without explicit policy.
 - Couple controller semantics to one subagent package.
-
-
 
 ## Open implementation decisions
 
@@ -551,8 +526,6 @@ These items are intentionally not resolved by this ADR:
 12. **Public API:** authentication, authorization, and command/result contracts for any post-v0 programmatic action surface.
 13. **Rerun:** the post-v0 command and quiescence policy for creating execution generation N+1.
 
-
-
 ## References
 
 - [factory-skills](https://github.com/geut/factory-skills)
@@ -560,4 +533,3 @@ These items are intentionally not resolved by this ADR:
 - [pi-herdr-subagents](https://github.com/modem-dev/pi-herdr-subagents)
 - [pi-subagents](https://github.com/edxeth/pi-subagents)
 - [Herdr agent automation](https://herdr.dev/docs/agent-automation/)
-

@@ -58,6 +58,38 @@ export function childToolList(stage: keyof typeof stageLaunchPolicy): string {
   return [...stageLaunchPolicy[stage].tools, ...handshakeTools].join(',');
 }
 
+const runStatusLabels = {
+  human_reply: 'reply',
+  infrastructure_retry: 'retry',
+  initial: 'initial',
+  manual_continue: 'continue',
+  review_changes: 'review',
+  validation_correction: 'correction',
+} as const;
+
+const taskTitleLimit = 40;
+const herdrTokenLimit = 80;
+
+export function runStatusLabel(purpose: keyof typeof runStatusLabels): string {
+  return runStatusLabels[purpose];
+}
+
+export function clipTaskTitle(title: string): string {
+  const trimmed = title.trim();
+  if (trimmed.length <= taskTitleLimit) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, taskTitleLimit - 1)}…`;
+}
+
+export function taskProgressText(title: string, tasksLeft: number): string {
+  const suffix = ` · ${tasksLeft} left`;
+  const clipped = clipTaskTitle(title);
+  const room = herdrTokenLimit - suffix.length;
+  const visible = clipped.length <= room ? clipped : `${clipped.slice(0, Math.max(0, room - 1))}…`;
+  return `${visible}${suffix}`;
+}
+
 export function childDescription(title: string): string {
   const stripped = title
     .replaceAll(/\([^)]*\)/g, ' ')
@@ -77,8 +109,9 @@ export function childDescription(title: string): string {
 export function childInstructions(skill: string, contract: string): string {
   return [
     `Follow the ${skill} skill.`,
-    `Return only the ${contract} template, then call subagent_done.`,
-    'Use caller_ping instead when you need a decision.',
+    `Return only the ${contract} template, then call subagent_done once.`,
+    'If subagent_done replies that the session is shutting down, stop. Do not call it again, do not call caller_ping, and do not send more text.',
+    'Use caller_ping instead when you need a decision you cannot make.',
     'Do not launch another stage or edit factory state.',
   ].join('\n');
 }
@@ -111,28 +144,90 @@ export function correctionPrompt(failures: Array<string>): string {
   ].join('\n');
 }
 
-export function replyPrompt(answer: string): string {
-  const policy = stageLaunchPolicy.plan;
+export function replyPrompt(stage: keyof typeof stageLaunchPolicy, answer: string): string {
+  const policy = stageLaunchPolicy[stage];
   return [childInstructions(policy.skill, policy.contract), '', 'The user answered:', answer].join(
     '\n',
   );
 }
 
 export function workPrompt(input: {
+  adrPath: string | null;
+  commands: Array<{ argv: Array<string>; name: string }>;
+  contextPath: string | null;
+  dependencies: Array<{ status: string; taskId: string }>;
   displayRef: string;
   planPath: string;
   taskFile: string;
+  taskId: string;
+  taskType: string | null;
   title: string;
   worktree: string;
+  worktreeBranch: string;
 }): string {
   const policy = stageLaunchPolicy.work;
+  const commands =
+    input.commands.length === 0
+      ? 'none'
+      : input.commands.map((command) => `${command.name}: ${command.argv.join(' ')}`).join('\n');
+  const dependencies =
+    input.dependencies.length === 0
+      ? 'none'
+      : input.dependencies.map((dep) => `${dep.taskId} (${dep.status})`).join(', ');
   return [
     childInstructions(policy.skill, policy.contract),
     '',
     `Ticket: ${input.displayRef}`,
-    `Task: ${input.title}`,
+    `Task: ${input.taskId} ${input.title}`,
+    `Type: ${input.taskType ?? 'unspecified'}`,
     `Task file: ${input.taskFile}`,
     `Plan: ${input.planPath}`,
+    `ADR: ${input.adrPath ?? 'none'}`,
+    `Context: ${input.contextPath ?? 'none'}`,
+    `Dependencies: ${dependencies}`,
+    `Branch: ${input.worktreeBranch}`,
+    `Tools: ${childToolList('work')}`,
     `Work only in ${input.worktree}.`,
+    'Leave the work uncommitted.',
+    'Configured checks:',
+    commands,
+  ].join('\n');
+}
+
+export function workCorrectionPrompt(failures: Array<string>): string {
+  const policy = stageLaunchPolicy.work;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    'Work validation failed. Fix these exact problems:',
+    ...failures.map((failure) => `- ${failure}`),
+  ].join('\n');
+}
+
+export function reviewPrompt(input: {
+  diff: string;
+  displayRef: string;
+  planPath: string;
+  rawOutput: string;
+  taskTitle: string;
+  validationSummary: string;
+}): string {
+  const policy = stageLaunchPolicy.review;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    `Ticket: ${input.displayRef}`,
+    `Task: ${input.taskTitle}`,
+    `Plan: ${input.planPath}`,
+    'Read only. Do not edit files.',
+    '',
+    'Validation:',
+    input.validationSummary,
+    '',
+    'Worker summary:',
+    input.rawOutput.length > 0 ? input.rawOutput : 'none',
+    '',
+    'Diff:',
+    input.diff.length > 0 ? input.diff : 'none',
   ].join('\n');
 }

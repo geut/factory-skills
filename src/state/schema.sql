@@ -2,11 +2,11 @@ BEGIN IMMEDIATE;
 
 CREATE TABLE schema_meta (
   singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 2),
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 1);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 2);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -313,7 +313,7 @@ CREATE TABLE actions (
   retry_of_action_id   TEXT,
   kind                 TEXT NOT NULL CHECK (
     kind IN (
-      'fetch_ticket', 'prepare_worktree', 'launch_run', 'resume_run',
+      'fetch_ticket', 'prepare_worktree', 'prepare_work_input', 'launch_run', 'resume_run',
       'interrupt_run', 'validate_run', 'notify_attention',
       'publish_projection', 'update_ticket_source', 'open_diff'
     )
@@ -367,6 +367,10 @@ CREATE TABLE actions (
 
 CREATE INDEX dispatchable_actions
 ON actions(status, available_at, lease_expires_at);
+
+CREATE UNIQUE INDEX one_active_validation_per_execution
+ON actions(execution_id)
+WHERE kind = 'validate_run' AND status IN ('pending', 'leased');
 
 CREATE UNIQUE INDEX one_start_action_per_run
 ON actions(run_id)
@@ -448,7 +452,7 @@ CREATE TABLE validation_runs (
   run_id            TEXT NOT NULL,
   attempt           INTEGER NOT NULL CHECK (attempt > 0),
   validator_version TEXT NOT NULL CHECK (length(trim(validator_version)) > 0),
-  input_hash        TEXT NOT NULL CHECK (length(trim(input_hash)) > 0),
+  input_hash        TEXT CHECK (input_hash IS NULL OR length(trim(input_hash)) > 0),
   status            TEXT NOT NULL CHECK (
     status IN ('pending', 'running', 'passed', 'failed', 'error')
   ),
@@ -494,8 +498,9 @@ BEGIN
   SELECT RAISE(ABORT, 'validation must start pending or running');
 END;
 
--- A validator may approve only the exact normalized output of a successful
--- child run, and only after every recorded check is non-failing.
+-- A pass requires a finished subagent_done run and only passing checks.
+-- Plan and work acceptance live in those checks. The guard does not require
+-- a parsed result or a matching result hash.
 CREATE TRIGGER validation_pass_guard
 BEFORE UPDATE OF status ON validation_runs
 WHEN NEW.status = 'passed'
@@ -507,9 +512,7 @@ BEGIN
       AND r.execution_id = NEW.execution_id
       AND r.status = 'terminal'
       AND r.terminal_kind = 'subagent_done'
-      AND r.result_status = 'valid'
-      AND r.result_hash = NEW.input_hash
-  ) THEN RAISE(ABORT, 'validation subject does not match a valid subagent result') END;
+  ) THEN RAISE(ABORT, 'validation subject does not match a subagent_done run') END;
 
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1
@@ -521,7 +524,7 @@ BEGIN
     SELECT 1
     FROM validation_checks AS c
     WHERE c.validation_id = NEW.id
-      AND c.status IN ('failed', 'error')
+      AND c.status IN ('failed', 'error', 'skipped')
   ) THEN RAISE(ABORT, 'passed validation contains a failing check') END;
 END;
 
@@ -889,6 +892,6 @@ END;
 
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 COMMIT;

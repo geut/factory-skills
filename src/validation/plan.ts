@@ -258,10 +258,14 @@ export function inspectPlanDir(input: { factoryDir: string }): PlanValidationOut
 }
 
 export type ValidationCheckDraft = {
+  command?: string | null;
   details: string;
-  kind: 'artifact' | 'schema' | 'policy';
+  durationMs?: number | null;
+  exitCode?: number | null;
+  kind: 'artifact' | 'schema' | 'policy' | 'command' | 'diff';
   name: string;
-  status: 'passed' | 'failed';
+  outputExcerpt?: string | null;
+  status: 'passed' | 'failed' | 'error';
 };
 
 export function planChecks(outcome: PlanValidationOutcome): Array<ValidationCheckDraft> {

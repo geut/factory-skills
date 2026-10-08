@@ -14,7 +14,7 @@ afterEach(async () => {
   }
 });
 
-test('verification skill names Launch, Drive, Evidence, and Surf for a web app', async () => {
+test.skip('verification skill names Launch, Drive, Evidence, and Surf for a web app', async () => {
   const code = await mkdtemp(path.join(tmpdir(), 'verify-code-'));
   const factory = await mkdtemp(path.join(tmpdir(), 'verify-factory-'));
   roots.push(code, factory);

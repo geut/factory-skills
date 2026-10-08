@@ -1,11 +1,23 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+export const INTERNAL_LABELS = ['investigation'] as const;
+export type InternalLabel = (typeof INTERNAL_LABELS)[number];
+
+export type WorkCommand = {
+  argv: Array<string>;
+  name: string;
+  timeoutMs: number;
+};
+
 export type FactoryConfig = {
   github: { host: string; owner: string; repo: string } | null;
   keys: Record<string, { provider: 'github' }>;
-  limits: { infrastructureRetries: number; planCorrections: number };
+  labels: { map: Record<string, InternalLabel> };
+  limits: { infrastructureRetries: number; planCorrections: number; workCorrections: number };
   models: { plan: string; review: string; work: string };
+  validation: { work: { commands: Array<WorkCommand> } };
 };
 
 export type ConfigResult =
@@ -32,6 +44,89 @@ function readLimit(record: Record<string, unknown>, key: string, fallback: numbe
   return value;
 }
 
+function isInternalLabel(value: string): value is InternalLabel {
+  return INTERNAL_LABELS.some((label) => label === value);
+}
+
+function readLabelMap(value: unknown): FactoryConfig['labels'] | null {
+  if (value === undefined) {
+    return { map: {} };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const mapValue = value['map'] ?? {};
+  if (!isRecord(mapValue)) {
+    return null;
+  }
+  const map: Record<string, InternalLabel> = {};
+  for (const [projectLabel, internal] of Object.entries(mapValue)) {
+    if (
+      projectLabel.trim().length === 0 ||
+      typeof internal !== 'string' ||
+      !isInternalLabel(internal)
+    ) {
+      return null;
+    }
+    map[projectLabel] = internal;
+  }
+  return { map };
+}
+
+function readTimeout(value: unknown): number | null {
+  if (value === undefined) {
+    return DEFAULT_COMMAND_TIMEOUT_MS;
+  }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    return null;
+  }
+  return value;
+}
+
+function readCommands(value: unknown): Array<WorkCommand> | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const work = value['work'] ?? {};
+  if (!isRecord(work)) {
+    return null;
+  }
+  const commands = work['commands'] ?? [];
+  if (!Array.isArray(commands)) {
+    return null;
+  }
+  const parsed: Array<WorkCommand> = [];
+  for (const command of commands) {
+    if (!isRecord(command)) {
+      return null;
+    }
+    const name = readString(command, 'name');
+    const timeoutMs = readTimeout(command['timeoutMs']);
+    const argvValue = command['argv'];
+    if (
+      name === null ||
+      timeoutMs === null ||
+      !Array.isArray(argvValue) ||
+      argvValue.length === 0 ||
+      argvValue.some((arg) => typeof arg !== 'string' || arg.length === 0)
+    ) {
+      return null;
+    }
+    parsed.push({ argv: argvValue, name, timeoutMs });
+  }
+  return parsed;
+}
+
+export function allowsEmptyDiff(
+  labels: Array<string>,
+  map: Record<string, InternalLabel>,
+): boolean {
+  return labels.some((label) => label === 'investigation' || map[label] === 'investigation');
+}
+
 export function parseFactoryConfig(value: unknown): ConfigResult {
   if (!isRecord(value)) {
     return { kind: 'error', message: 'FACTORY.json must be an object.' };
@@ -52,18 +147,37 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
 
   const limitsValue = value['limits'];
   let planCorrections = 3;
+  let workCorrections = 3;
   let infrastructureRetries = 3;
   if (limitsValue !== undefined) {
     if (!isRecord(limitsValue)) {
       return { kind: 'error', message: 'FACTORY.json limits must be an object.' };
     }
-    const corrections = readLimit(limitsValue, 'planCorrections', 3);
+    const planLimit = readLimit(limitsValue, 'planCorrections', 3);
+    const workLimit = readLimit(limitsValue, 'workCorrections', 3);
     const retries = readLimit(limitsValue, 'infrastructureRetries', 3);
-    if (corrections === null || retries === null) {
+    if (planLimit === null || workLimit === null || retries === null) {
       return { kind: 'error', message: 'FACTORY.json limits must be non-negative integers.' };
     }
-    planCorrections = corrections;
+    planCorrections = planLimit;
+    workCorrections = workLimit;
     infrastructureRetries = retries;
+  }
+
+  const labels = readLabelMap(value['labels']);
+  if (labels === null) {
+    return {
+      kind: 'error',
+      message: 'FACTORY.json labels.map values must be internal labels such as investigation.',
+    };
+  }
+  const commands = readCommands(value['validation']);
+  if (commands === null) {
+    return {
+      kind: 'error',
+      message:
+        'FACTORY.json validation.work.commands must be objects with a name, an argv array, and an optional timeoutMs.',
+    };
   }
 
   let github: FactoryConfig['github'] = null;
@@ -99,8 +213,10 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     config: {
       github,
       keys,
-      limits: { infrastructureRetries, planCorrections },
+      labels,
+      limits: { infrastructureRetries, planCorrections, workCorrections },
       models: { plan, review, work },
+      validation: { work: { commands } },
     },
     kind: 'ok',
   };

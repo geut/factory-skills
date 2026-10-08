@@ -4,6 +4,7 @@ import {
   childReplyExcerpt,
   contextLabel,
   lastAssistantText,
+  runAssistantText,
   sessionActivity,
 } from './session-activity.ts';
 
@@ -45,4 +46,28 @@ test('session activity reports pending tools, tokens, and the last assistant tex
     childReplyExcerpt('## Status\nplanned\n\nTasks are ready.'),
     '## Status\nplanned\nTasks are ready.',
   );
+});
+
+test('a run message is the assistant text after that run marker', () => {
+  const jsonl = [
+    JSON.stringify({
+      message: { content: 'Factory run run-1', role: 'user' },
+      type: 'message',
+    }),
+    JSON.stringify({
+      message: { content: [{ text: 'Plan is ready.', type: 'text' }], role: 'assistant' },
+      type: 'message',
+    }),
+    JSON.stringify({
+      message: { content: 'Factory run run-2', role: 'user' },
+      type: 'message',
+    }),
+    JSON.stringify({
+      message: { content: [{ text: 'Checks still fail.', type: 'text' }], role: 'assistant' },
+      type: 'message',
+    }),
+  ].join('\n');
+  assert.equal(runAssistantText(jsonl, 'run-1'), 'Plan is ready.');
+  assert.equal(runAssistantText(jsonl, 'run-2'), 'Checks still fail.');
+  assert.equal(runAssistantText(jsonl, 'missing'), 'Checks still fail.');
 });

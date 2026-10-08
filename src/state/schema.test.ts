@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { listRunningChildren } from '../controller/store.ts';
 import {
   APPLICATION_ID,
   IncompatibleFactoryDatabaseError,
@@ -788,26 +789,60 @@ test('a passed validation matches the exact valid result and has no failing chec
     /terminal validation is immutable/,
   );
 
+  addRun(db, {
+    endedAt: '2026-01-01T00:00:02Z',
+    id: 'run-2',
+    sequence: 2,
+    status: 'terminal',
+    terminalKind: 'subagent_done',
+  });
   db.prepare(
     `INSERT INTO validation_runs
       (id, execution_id, run_id, attempt, validator_version, input_hash, status)
-     VALUES ('validation-2', 'exec-1', 'run-1', 2, 'v1', 'stale-hash', 'running')`,
+     VALUES ('validation-2', 'exec-1', 'run-2', 1, 'work.v1', NULL, 'running')`,
   ).run();
   db.prepare(
     `INSERT INTO validation_checks
       (validation_id, ordinal, name, kind, status)
-     VALUES ('validation-2', 1, 'output contract', 'schema', 'passed')`,
+     VALUES ('validation-2', 1, 'diff', 'diff', 'passed')`,
+  ).run();
+  db.prepare(
+    `UPDATE validation_runs
+     SET status = 'passed', completed_at = '2026-01-01T00:00:02Z'
+     WHERE id = 'validation-2'`,
+  ).run();
+  assert.equal(
+    scalar(db, "SELECT status FROM validation_runs WHERE id = 'validation-2'"),
+    'passed',
+  );
+
+  addRun(db, {
+    endedAt: '2026-01-01T00:00:03Z',
+    id: 'run-3',
+    sequence: 3,
+    status: 'terminal',
+    terminalKind: 'caller_ping',
+  });
+  db.prepare(
+    `INSERT INTO validation_runs
+      (id, execution_id, run_id, attempt, validator_version, status)
+     VALUES ('validation-3', 'exec-1', 'run-3', 1, 'v1', 'running')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO validation_checks
+      (validation_id, ordinal, name, kind, status)
+     VALUES ('validation-3', 1, 'diff', 'diff', 'passed')`,
   ).run();
   assert.throws(
     () =>
       db
         .prepare(
           `UPDATE validation_runs
-           SET status = 'passed', completed_at = '2026-01-01T00:00:02Z'
-           WHERE id = 'validation-2'`,
+           SET status = 'passed', completed_at = '2026-01-01T00:00:04Z'
+           WHERE id = 'validation-3'`,
         )
         .run(),
-    /validation subject does not match/,
+    /validation subject does not match a subagent_done run/,
   );
   db.close();
 });
@@ -825,5 +860,36 @@ test('rolls back a failed controller transaction', () => {
   );
   assert.equal(scalar(db, 'SELECT count(*) FROM tickets'), 0);
   assert.throws(() => immediateTransaction(db, async () => 42), /must be synchronous/);
+  db.close();
+});
+
+test('running children carry the task title and how many tasks are not done', () => {
+  const root = factoryRoot();
+  const db = openStateDatabase(root, { create: true });
+  addTicket(db);
+  addExecution(db);
+  addTask(db, { id: '01', ordinal: 1, status: 'working' });
+  addTask(db, { id: '02', ordinal: 2, status: 'pending' });
+  addTask(db, { id: '03', ordinal: 3, status: 'done' });
+  db.prepare("UPDATE tasks SET title = 'Implement /tickets route' WHERE task_id = '01'").run();
+  addSession(db, { id: 'work-1', key: 'work:01', stage: 'work', task: '01' });
+  addRun(db, { id: 'run-work', session: 'work-1', status: 'running' });
+  db.prepare(
+    `UPDATE agent_runs
+     SET pane_name = 'pane', lifecycle_json = '{"description":"Implement tickets"}'
+     WHERE id = 'run-work'`,
+  ).run();
+  addTicket(db, 'PROJ-2');
+  addExecution(db, { id: 'exec-2', ticket: 'PROJ-2' });
+  addSession(db, { execution: 'exec-2', id: 'plan-1', key: 'plan', stage: 'plan' });
+  addRun(db, { execution: 'exec-2', id: 'run-plan', session: 'plan-1', status: 'running' });
+  const children = listRunningChildren(db);
+  const work = children.find((child) => child.paneName === 'pane');
+  const plan = children.find((child) => child.paneName === null);
+  assert.equal(work?.taskTitle, 'Implement /tickets route');
+  assert.equal(work?.tasksLeft, 2);
+  assert.equal(work?.description, 'Implement tickets');
+  assert.equal(plan?.taskTitle, null);
+  assert.equal(plan?.tasksLeft, null);
   db.close();
 });

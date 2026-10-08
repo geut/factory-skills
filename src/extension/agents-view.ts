@@ -5,7 +5,7 @@ import {
   type Component,
   type TUI,
 } from '@earendil-works/pi-tui';
-import { formatElapsed, type WidgetChild } from './widget.ts';
+import { childProgress, formatElapsed, type WidgetChild } from './widget.ts';
 
 export type AgentsViewTheme = {
   bg: (color: 'selectedBg', text: string) => string;
@@ -32,11 +32,15 @@ function childRows(
   if (child.context !== null) {
     details.push(child.context);
   }
-  const rows = [
-    `  ${theme.bold(child.paneName ?? 'factory')}`,
-    `    ${theme.fg('muted', child.description ?? 'No description')}`,
-    `    ${theme.fg('dim', details.join(' · '))}`,
-  ];
+  const progress = childProgress(child);
+  if (progress !== null) {
+    details.push(progress);
+  }
+  const rows = [`  ${theme.bold(child.paneName ?? 'factory')}`];
+  if (progress === null) {
+    rows.push(`    ${theme.fg('muted', child.description ?? 'No description')}`);
+  }
+  rows.push(`    ${theme.fg('dim', details.join(' · '))}`);
   if (child.sessionFile !== null) {
     rows.push(`    ${theme.fg('dim', child.sessionFile)}`);
   }

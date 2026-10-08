@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { InternalLabel, WorkCommand } from './config.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -136,10 +137,14 @@ export type AttentionKind = 'agent_question' | 'policy_limit' | 'manual_approval
 export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'cancelled';
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
+export type WorkInputPurpose = 'initial' | 'validation_correction' | 'human_reply';
+
 export type Policy = {
   codeRoot: string;
-  limits: { infrastructureRetries: number; planCorrections: number };
+  labels: { map: Record<string, InternalLabel> };
+  limits: { infrastructureRetries: number; planCorrections: number; workCorrections: number };
   models: { plan: string; review: string; work: string };
+  validation: { work: { commands: Array<WorkCommand> } };
 };
 
 export type UsageTotals = {
@@ -171,6 +176,7 @@ export type ResolvedTicket = {
   factoryDir: string;
   fetchedAt: string;
   id: TicketId;
+  labels: Array<string>;
   sourceKind: 'github' | 'file' | 'text';
   sourceRef: string;
   title: string;
@@ -188,6 +194,22 @@ export type PlannedTask = {
 export type PlanValidationOutcome =
   | { kind: 'passed'; planPath: string; tasks: Array<PlannedTask> }
   | { failures: Array<string>; kind: 'failed' };
+
+export type WorkCheck = {
+  command: string | null;
+  details: string;
+  durationMs: number | null;
+  exitCode: number | null;
+  kind: 'diff' | 'command' | 'policy';
+  name: string;
+  outputExcerpt: string | null;
+  status: 'passed' | 'failed';
+};
+
+export type WorkValidationOutcome =
+  | { checks: Array<WorkCheck>; diff: string; kind: 'passed' }
+  | { checks: Array<WorkCheck>; failures: Array<string>; kind: 'failed' }
+  | { kind: 'error'; message: string };
 
 export type ReconcileObservation =
   | {
@@ -207,7 +229,23 @@ export type ControllerEvent =
       kind: 'validation_finished';
       outcome: PlanValidationOutcome;
       runId: RunId;
+      stage: 'plan';
     }
+  | {
+      actionId: ActionId;
+      kind: 'validation_finished';
+      outcome: WorkValidationOutcome;
+      runId: RunId;
+      stage: 'work';
+    }
+  | {
+      actionId: ActionId;
+      adrPath: string | null;
+      contextPath: string | null;
+      kind: 'work_input_ready';
+      taskType: string | null;
+    }
+  | { actionId: ActionId; kind: 'work_input_failed'; message: string }
   | {
       actionId: ActionId;
       baseBranch: string;
@@ -248,6 +286,7 @@ export type TicketRecord = {
   commandRef: string;
   displayRef: string;
   id: TicketId;
+  labels: Array<string>;
   sourceHash: string;
   sourceKind: string;
   sourceRef: string;
@@ -374,6 +413,15 @@ export type ActionRecord =
       attentionRequestId: null;
       kind: 'validate_run';
       runId: RunId;
+    })
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      failures: Array<string>;
+      kind: 'prepare_work_input';
+      purpose: WorkInputPurpose;
+      runId: null;
+      taskId: TaskId;
     })
   | (ActionBase & {
       attentionReplyId: null;

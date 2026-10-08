@@ -64,6 +64,7 @@ export function relatedTickets(issues: Array<RelatedIssue>, rootNumber: number):
 export type GithubIssue = {
   body: string;
   host: string;
+  labels: Array<string>;
   nodeId: string;
   number: number;
   owner: string;
@@ -100,7 +101,7 @@ export function githubCliClient(): GithubClient {
         '--repo',
         `${input.owner}/${input.repo}`,
         '--json',
-        'id,number,title,body,url',
+        'id,number,title,body,url,labels',
       ]);
       if (
         !isRecord(payload) ||
@@ -111,9 +112,15 @@ export function githubCliClient(): GithubClient {
           `GitHub issue ${input.owner}/${input.repo}#${input.number} did not return an id.`,
         );
       }
+      const labels = Array.isArray(payload['labels'])
+        ? payload['labels'].flatMap((item) =>
+            isRecord(item) && typeof item['name'] === 'string' ? [item['name']] : [],
+          )
+        : [];
       return {
         body: typeof payload['body'] === 'string' ? payload['body'] : '',
         host: input.host,
+        labels,
         nodeId: payload['id'],
         number: payload['number'],
         owner: input.owner,
@@ -193,11 +200,12 @@ function resolvedGithub(
   return {
     body: issue.body,
     commandRef,
-    contentHash: sha256(`${issue.title}\n${issue.body}`),
+    contentHash: sha256(`${issue.title}\n${issue.body}\n${issue.labels.join('\n')}`),
     displayRef,
     factoryDir: factoryDir(factoryRoot, displayRef, id),
     fetchedAt,
     id,
+    labels: issue.labels,
     sourceKind: 'github',
     sourceRef: issue.url.length > 0 ? issue.url : displayRef,
     title: issue.title,
@@ -288,6 +296,7 @@ function localTicket(input: {
     factoryDir: factoryDir(input.factoryRoot, input.id, id),
     fetchedAt: input.fetchedAt,
     id,
+    labels: [],
     sourceKind: input.sourceKind,
     sourceRef: input.sourceRef,
     title: input.title,

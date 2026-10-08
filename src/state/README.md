@@ -2,22 +2,22 @@
 
 This directory is the persistence boundary for the deterministic factory controller. The SQLite database at `<factory-root>/db/state.sqlite` is authoritative. Dashboard reads use the SQL views below. The controller does not write a JSON state file.
 
-The schema starts at version 1. It does not migrate a legacy database that still has the old `meta` table. `openStateDatabase()` rejects that database with a message telling the operator to back it up or remove it.
+The schema starts at version 2. It does not migrate a legacy database that still has the old `meta` table, or an older factory database. `openStateDatabase()` rejects that database with a message telling the operator to back it up or remove it.
 
 ## Model
 
-| Table                                     | Purpose                                                       |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| `tickets`                                 | Stable external ticket identity and source.                   |
-| `ticket_executions`                       | Explicit rerun generations and the current workflow state.    |
-| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                 |
-| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session. |
-| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.   |
-| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                      |
-| `actions`                                 | Transactional outbox leased by the runtime dispatcher.        |
-| `events`                                  | Deduplicated inputs and a monotonic dashboard/change cursor.  |
-| `validation_runs`, `validation_checks`    | Scripted evidence tied to a run and exact input hash.         |
-| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                      |
+| Table                                     | Purpose                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `tickets`                                 | Stable external ticket identity and source.                       |
+| `ticket_executions`                       | Explicit rerun generations and the current workflow state.        |
+| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                     |
+| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session.     |
+| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.       |
+| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                          |
+| `actions`                                 | Transactional outbox leased by the runtime dispatcher.            |
+| `events`                                  | Deduplicated inputs and a monotonic dashboard/change cursor.      |
+| `validation_runs`, `validation_checks`    | Checks for a finished run. A pass does not require a result hash. |
+| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                          |
 
 Accepted stage output is stored on `agent_runs.result_json`. Review findings do not need a separate audit tree in v0; the normalized review result stays with the review run and the latest verdict/counts are projected onto its task.
 
@@ -26,7 +26,7 @@ Accepted stage output is stored on `agent_runs.result_json`. Review findings do 
 - Repeating `start` returns the existing current execution. The partial unique index on `ticket_executions.ticket_id` is the final duplicate-start guard.
 - `rerun` is explicit: first quiesce runs, tasks, actions, sessions, attention, validations, and pending events; then clear the old `is_current` flag and insert generation N+1 in one transaction. Retired generations cannot acquire new active runs or actions.
 - Only one task and one child run may be active for a ticket execution in v0.
-- A `subagent_done` result is only a validation candidate. It does not move a stage by itself. A passed validation must match the result hash, contain no failed checks, and becomes immutable with its checks and normalized result.
+- A `subagent_done` result is only a validation candidate. It does not move a stage by itself. A passed validation requires that terminal run, at least one passed check, and no failed, errored, or skipped check. It becomes immutable with its checks. Plan acceptance is the local plan files. Work acceptance is the worktree diff and the configured commands. Neither pass requires a result hash.
 - Each run accepts one terminal runtime event. Runtime and command inputs are deduplicated by stable keys.
 - State changes and their required external `actions` are committed together. A worker must claim an action with a compare-and-set lease before performing its side effect. Reclaiming an expired lease may increment `attempts`; a definitive launch failure creates a new run and a new action linked by `retry_of_action_id`.
 - `caller_ping` persists an attention request before notifying the user. A reply is stored before a resume action is queued. If resume fails, `/factory retry` can reuse the current stored reply.

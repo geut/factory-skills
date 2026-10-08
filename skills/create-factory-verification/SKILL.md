@@ -34,4 +34,4 @@ For a web UI, the Drive section must use a unique `SURF_SESSION`, a worktree-own
 
 Run the generated skill once: launch, doctor, drive one feature, capture evidence, clean up, then confirm the evidence file is still there. Fix the skill if that fails. A skill that was never executed is a draft.
 
-Store a rerunnable command in `FACTORY.json` as `verification.command` when one command can regenerate the manifest. Controller validation still requires the manifest; it does not trust the command name.
+Store project checks in `FACTORY.json` as `validation.work.commands`. Each command has a name, an argv array, and an optional `timeoutMs`. The controller runs those commands in the ticket worktree. It does not read `verification.command` or an evidence manifest.

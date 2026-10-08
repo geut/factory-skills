@@ -1,15 +1,24 @@
-import type { ReconcileObservation, RunId, SessionId, TerminalOutcome } from '../domain.ts';
+import type {
+  ReconcileObservation,
+  RunId,
+  RunPurpose,
+  SessionId,
+  TerminalOutcome,
+} from '../domain.ts';
 
 export type LaunchSpec = {
   cwd: string;
   mode: 'launch' | 'resume';
   model: string;
   paneName: string;
+  previousPaneId: string | null;
   prompt: string;
+  purpose: RunPurpose;
   runId: RunId;
   sessionFile: string;
   sessionId: SessionId;
-  stage: 'plan' | 'work';
+  stage: 'plan' | 'work' | 'review';
+  taskLabel: string | null;
   thinking: string;
   tools: string;
 };

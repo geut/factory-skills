@@ -6,12 +6,17 @@ export type ParsedCommand =
   | { kind: 'retry'; ref: string }
   | { kind: 'status'; ref: string }
   | { kind: 'agents' }
+  | { kind: 'ticket'; ref: string | null }
   | { kind: 'invalid'; message: string };
 
 export function parseFactoryCommand(args: string): ParsedCommand {
   const trimmed = args.trim();
   if (trimmed.length === 0) {
-    return { kind: 'invalid', message: 'Usage: /factory start|reply|retry|status <ticket>' };
+    return {
+      kind: 'invalid',
+      message:
+        'Usage: /factory start|reply|retry|status <ticket> | /factory agents | /factory ticket',
+    };
   }
   const space = trimmed.indexOf(' ');
   const head = space === -1 ? trimmed : trimmed.slice(0, space);
@@ -60,10 +65,13 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return { kind: 'status', ref: rest };
     case 'agents':
       return { kind: 'agents' };
+    case 'ticket':
+      return { kind: 'ticket', ref: rest.length === 0 ? null : rest };
     default:
       return {
         kind: 'invalid',
-        message: 'Usage: /factory start|reply|retry|status <ticket> | /factory agents',
+        message:
+          'Usage: /factory start|reply|retry|status <ticket> | /factory agents | /factory ticket',
       };
   }
 }

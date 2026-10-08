@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   zeroUsage,
   type ReconcileObservation,
@@ -9,6 +9,8 @@ import {
   type TerminalOutcome,
   type UsageTotals,
 } from '../domain.ts';
+import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
+import { runStatusLabel } from './policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec, RunStarted } from './runtime.ts';
 import { lastAssistantText } from './session-activity.ts';
 
@@ -27,6 +29,7 @@ export type SidecarInput = {
   exitJson: string | null;
   runId: string;
   sessionEntryCount: number;
+  sessionText?: string;
   trigger: 'event' | 'sidecar' | 'gone';
   withinStartupWindow: boolean;
 };
@@ -35,11 +38,89 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function terminalCallAfterMarker(
+  sessionText: string,
+  runId: string,
+): { kind: 'caller_ping'; question: string } | { kind: 'subagent_done' } | null {
+  const at = sessionText.indexOf(promptMarker(runId));
+  if (at < 0) {
+    return null;
+  }
+  let found: { kind: 'caller_ping'; question: string } | { kind: 'subagent_done' } | null = null;
+  for (const line of sessionText.slice(at).split('\n')) {
+    const call = terminalToolCall(line);
+    if (call?.name === 'caller_ping') {
+      found = { kind: 'caller_ping', question: call.question };
+    } else if (call?.name === 'subagent_done') {
+      found = { kind: 'subagent_done' };
+    }
+  }
+  return found;
+}
+
+function terminalToolCall(
+  line: string,
+): { name: 'caller_ping' | 'subagent_done'; question: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const message = isRecord(parsed) && isRecord(parsed['message']) ? parsed['message'] : null;
+  const content = message === null ? null : message['content'];
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  let found: { name: 'caller_ping' | 'subagent_done'; question: string } | null = null;
+  for (const block of content) {
+    if (!isRecord(block) || block['type'] !== 'toolCall') {
+      continue;
+    }
+    if (block['name'] !== 'subagent_done' && block['name'] !== 'caller_ping') {
+      continue;
+    }
+    const args = isRecord(block['arguments']) ? block['arguments'] : {};
+    found = {
+      name: block['name'],
+      question: typeof args['message'] === 'string' ? args['message'] : '',
+    };
+  }
+  return found;
+}
+
+export function promptMarker(runId: string): string {
+  return `Factory run ${runId}`;
+}
+
+export function markedPrompt(runId: string, prompt: string): string {
+  const marker = promptMarker(runId);
+  if (prompt === marker || prompt.endsWith(`\n${marker}`)) {
+    return prompt;
+  }
+  return `${prompt}\n${marker}`;
+}
+
+export function gateExitSidecar(input: {
+  exitJson: string | null;
+  runId: string;
+  sessionText: string;
+}): { discard: boolean; exitJson: string | null } {
+  if (input.exitJson !== null && !input.sessionText.includes(promptMarker(input.runId))) {
+    return { discard: true, exitJson: null };
+  }
+  return { discard: false, exitJson: input.exitJson };
+}
+
 export function classifySidecar(input: SidecarInput): ClassifiedChild {
-  if (input.exitJson !== null) {
+  const exitJson =
+    input.sessionText !== undefined && !input.sessionText.includes(promptMarker(input.runId))
+      ? null
+      : input.exitJson;
+  if (exitJson !== null) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(input.exitJson);
+      parsed = JSON.parse(exitJson);
     } catch {
       parsed = null;
     }
@@ -55,12 +136,28 @@ export function classifySidecar(input: SidecarInput): ClassifiedChild {
   }
   if (input.exitCodeText !== null) {
     const [codeText, stamped] = input.exitCodeText.trim().split(/\s+/, 2);
-    if (stamped !== undefined && stamped !== input.runId) {
+    const code = Number(codeText);
+    const stampMatches = stamped === undefined || stamped === input.runId;
+    const sessionText = input.sessionText ?? '';
+    const resumedScript =
+      !stampMatches &&
+      input.sessionText !== undefined &&
+      sessionText.includes(promptMarker(input.runId));
+    if (!stampMatches && !resumedScript) {
       return { kind: 'pending' };
     }
-    const code = Number(codeText);
     if (!Number.isInteger(code)) {
       return { kind: 'pending' };
+    }
+    if (resumedScript) {
+      if (code !== 0) {
+        return { kind: 'crashed', message: `child crashed with exit code ${code}` };
+      }
+      const call = terminalCallAfterMarker(sessionText, input.runId);
+      if (call?.kind === 'caller_ping') {
+        return call;
+      }
+      return { kind: 'subagent_done' };
     }
     if (code === 0) {
       return { kind: 'completed_user_exit' };
@@ -106,13 +203,17 @@ export function herdrPaneArgs(input: {
   ];
 }
 
+export function handshakeExtensionPath(): string {
+  return fileURLToPath(new URL('./child-handshake.ts', import.meta.url));
+}
+
 export function renderLaunchScript(input: {
+  handshakePath: string;
   model: string;
   piBin: string;
   promptFile: string;
   runId: string;
   sessionFile: string;
-  subagentDonePath: string;
   thinking: string;
   tools: string;
 }): string {
@@ -123,65 +224,82 @@ trap '' TSTP
 export PI_SUBAGENT_SESSION=${session}
 export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
-${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.subagentDonePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
+${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
 `;
 }
 
-let cachedSubagentDonePath: string | null = null;
-
-export function resolveSubagentDonePath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env['PI_HERDR_SUBAGENT_DONE'];
-  if (override !== undefined && override.length > 0) {
-    if (!existsSync(override)) {
-      throw new Error(`subagent-done.ts was not found at ${override}`);
-    }
-    return override;
-  }
-  if (cachedSubagentDonePath !== null && existsSync(cachedSubagentDonePath)) {
-    return cachedSubagentDonePath;
-  }
-  const root = path.join(os.homedir(), '.pi');
-  const found = findNamed(root, 'subagent-done.ts', 0);
-  const hit = found[0];
-  if (hit === undefined) {
-    throw new Error(
-      `subagent-done.ts was not found under ${root}. Set PI_HERDR_SUBAGENT_DONE to the pi-herdr-subagents file.`,
-    );
-  }
-  cachedSubagentDonePath = hit;
-  return hit;
-}
-
-function findNamed(dir: string, name: string, depth: number): Array<string> {
-  if (depth > 8 || !existsSync(dir)) {
-    return [];
-  }
-  let entries: Array<{ isDirectory: () => boolean; isFile: () => boolean; name: string }>;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const hits: Array<string> = [];
-  for (const entry of entries) {
-    if (entry.name === '.git') {
-      continue;
-    }
-    const full = path.join(dir, entry.name);
-    if (entry.isFile() && entry.name === name) {
-      hits.push(full);
-    } else if (entry.isDirectory()) {
-      hits.push(...findNamed(full, name, depth + 1));
-    }
-  }
-  return hits;
-}
-
 export function herdrRenameArgs(paneId: string, label: string): Array<string> {
   return ['pane', 'rename', paneId, label];
+}
+
+export function herdrProcessInfoArgs(paneId: string): Array<string> {
+  return ['pane', 'process-info', '--pane', paneId];
+}
+
+export function herdrAgentPromptArgs(paneId: string, prompt: string): Array<string> {
+  return ['agent', 'prompt', paneId, prompt];
+}
+
+export function herdrMetadataArgs(input: {
+  paneId: string;
+  purpose: LaunchSpec['purpose'];
+  seq: number;
+  taskLabel: string | null;
+}): Array<string> {
+  const args = [
+    'pane',
+    'report-metadata',
+    input.paneId,
+    '--source',
+    'factory',
+    '--seq',
+    String(input.seq),
+    '--token',
+    `status=${runStatusLabel(input.purpose)}`,
+  ];
+  if (input.taskLabel !== null && input.taskLabel.length > 0) {
+    args.push('--token', `task=${input.taskLabel}`);
+  }
+  return args;
+}
+
+export function paneProcessIsLive(code: number, stdout: string): boolean {
+  if (code !== 0) {
+    return false;
+  }
+  const parsed = jsonRecord(stdout);
+  if (parsed === null) {
+    return false;
+  }
+  const result = isRecord(parsed['result']) ? parsed['result'] : parsed;
+  const info = isRecord(result['process_info']) ? result['process_info'] : null;
+  if (info === null) {
+    return false;
+  }
+  const foreground = info['foreground_processes'];
+  if (Array.isArray(foreground) && foreground.length > 0) {
+    return true;
+  }
+  const shellPid = info['shell_pid'];
+  return typeof shellPid === 'number' && Number.isInteger(shellPid) && shellPid > 0;
+}
+
+function jsonRecord(stdout: string): Record<string, unknown> | null {
+  const trimmed = stdout.trim();
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start === -1 || end <= start) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed.slice(start, end + 1));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function shellQuote(value: string): string {
@@ -343,35 +461,126 @@ function toTerminal(
   }
 }
 
+function writeMarkedPrompt(spec: LaunchSpec): string {
+  mkdirSync(path.dirname(spec.sessionFile), { recursive: true });
+  const prompt = markedPrompt(spec.runId, spec.prompt);
+  writeFileSync(`${spec.sessionFile}.prompt`, prompt);
+  return prompt;
+}
+
+function clearSidecars(sessionFile: string): void {
+  for (const suffix of ['.exit', '.exitcode']) {
+    try {
+      unlinkSync(`${sessionFile}${suffix}`);
+    } catch {
+      // The sidecar is already gone.
+    }
+  }
+}
+
+function takeExitJson(sessionFile: string, runId: string, sessionText: string): string | null {
+  const exitPath = `${sessionFile}.exit`;
+  const gated = gateExitSidecar({
+    exitJson: readOptional(exitPath),
+    runId,
+    sessionText,
+  });
+  if (gated.discard) {
+    try {
+      unlinkSync(exitPath);
+    } catch {
+      // The finishing turn removed it.
+    }
+  }
+  return gated.exitJson;
+}
+
+const childPollMs = 5000;
+
+function noop(): void {
+  return undefined;
+}
+
 export function createPiHerdrRuntime(options?: {
+  events?: PaneExitSource | null;
   piBin?: string;
+  pollMs?: number;
   run?: CommandRunner;
+  socketPath?: string;
   targetPaneId?: string;
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
   const piBin = options?.piBin ?? 'pi';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
-  const watchers = new Map<string, ReturnType<typeof setInterval>>();
+  const pollMs = options?.pollMs ?? childPollMs;
+  const watchers = new Map<string, () => void>();
   const startedAt = new Map<string, number>();
+  const checks = new Set<() => void>();
+  let events: PaneExitSource | null | undefined = options?.events;
+  let metadataSeq = 0;
+
+  function eventSource(): PaneExitSource | null {
+    if (events !== undefined) {
+      return events;
+    }
+    const socketPath = options?.socketPath ?? process.env['HERDR_SOCKET_PATH'] ?? '';
+    if (socketPath.length === 0) {
+      events = null;
+      return null;
+    }
+    events = connectHerdrEvents({
+      onReconnect: () => {
+        for (const check of checks) {
+          check();
+        }
+      },
+      socketPath,
+    });
+    return events;
+  }
+
+  async function reportMetadata(paneId: string, spec: LaunchSpec): Promise<void> {
+    metadataSeq += 1;
+    try {
+      await run(
+        herdrMetadataArgs({
+          paneId,
+          purpose: spec.purpose,
+          seq: metadataSeq,
+          taskLabel: spec.taskLabel,
+        }),
+      );
+    } catch {
+      // A sidebar label must not fail the child.
+    }
+  }
+
+  async function paneIsLive(paneId: string): Promise<boolean> {
+    try {
+      const listed = await run(herdrProcessInfoArgs(paneId));
+      return paneProcessIsLive(listed.code, listed.stdout);
+    } catch {
+      return false;
+    }
+  }
 
   async function openPane(spec: LaunchSpec): Promise<RunStarted> {
     if (targetPaneId.length === 0) {
       throw new Error('HERDR_PANE_ID is required to launch a factory child');
     }
-    const directory = path.dirname(spec.sessionFile);
-    mkdirSync(directory, { recursive: true });
+    writeMarkedPrompt(spec);
+    clearSidecars(spec.sessionFile);
     const promptFile = `${spec.sessionFile}.prompt`;
     const scriptFile = `${spec.sessionFile}.sh`;
-    writeFileSync(promptFile, spec.prompt);
     writeFileSync(
       scriptFile,
       renderLaunchScript({
+        handshakePath: handshakeExtensionPath(),
         model: spec.model,
         piBin,
         promptFile,
         runId: spec.runId,
         sessionFile: spec.sessionFile,
-        subagentDonePath: resolveSubagentDonePath(),
         thinking: spec.thinking,
         tools: spec.tools,
       }),
@@ -392,6 +601,7 @@ export function createPiHerdrRuntime(options?: {
       await run(['pane', 'close', paneId]);
       throw new Error(renamed.stderr.trim() || `herdr pane rename failed for ${paneId}`);
     }
+    await reportMetadata(paneId, spec);
     return {
       paneId,
       paneName: spec.paneName,
@@ -401,32 +611,69 @@ export function createPiHerdrRuntime(options?: {
     };
   }
 
+  async function resume(spec: LaunchSpec): Promise<RunStarted> {
+    const previous = spec.previousPaneId;
+    if (previous !== null && (await paneIsLive(previous))) {
+      const prompt = writeMarkedPrompt(spec);
+      clearSidecars(spec.sessionFile);
+      const prompted = await run(herdrAgentPromptArgs(previous, prompt));
+      if (prompted.code !== 0) {
+        throw new Error(prompted.stderr.trim() || 'herdr agent prompt failed');
+      }
+      await reportMetadata(previous, spec);
+      return {
+        paneId: previous,
+        paneName: spec.paneName,
+        piSessionId: spec.sessionId,
+        runId: spec.runId,
+        sessionFile: spec.sessionFile,
+      };
+    }
+    if (previous !== null) {
+      try {
+        await run(['pane', 'close', previous]);
+      } catch {
+        // The dead pane is already gone.
+      }
+    }
+    return openPane(spec);
+  }
+
   return {
     interrupt: async () => undefined,
     launch: openPane,
     observe(active, handler) {
-      if (watchers.has(active.runId) || active.sessionFile === null) {
+      const sessionFile = active.sessionFile;
+      if (watchers.has(active.runId) || sessionFile === null) {
         return () => undefined;
       }
       startedAt.set(active.runId, Date.now());
-      const timer = setInterval(() => {
-        const sessionFile = active.sessionFile;
-        if (sessionFile === null) {
+      let paneGone = false;
+      let bareExitSeen = false;
+      let settled = false;
+      let unwatch = noop;
+      const stop = (): void => {
+        clearInterval(timer);
+        unwatch();
+        checks.delete(check);
+        watchers.delete(active.runId);
+        startedAt.delete(active.runId);
+      };
+      const check = (): void => {
+        if (settled) {
           return;
         }
         const openedAt = startedAt.get(active.runId) ?? Date.now();
+        const jsonl = readOptional(sessionFile) ?? '';
         const classified = classifySidecar({
           exitCodeText: readOptional(`${sessionFile}.exitcode`),
-          exitJson: readOptional(`${sessionFile}.exit`),
+          exitJson: takeExitJson(sessionFile, active.runId, jsonl),
           runId: active.runId,
-          sessionEntryCount:
-            readOptional(sessionFile)
-              ?.split('\n')
-              .filter((line) => line.length > 0).length ?? 0,
-          trigger: 'sidecar',
+          sessionEntryCount: jsonl.split('\n').filter((line) => line.length > 0).length,
+          sessionText: jsonl,
+          trigger: paneGone ? 'event' : 'sidecar',
           withinStartupWindow: Date.now() - openedAt < 15_000,
         });
-        const jsonl = readOptional(sessionFile) ?? '';
         const terminal = toTerminal(
           classified,
           childOutput(classified, jsonl),
@@ -435,17 +682,25 @@ export function createPiHerdrRuntime(options?: {
         if (terminal === null) {
           return;
         }
-        clearInterval(timer);
-        watchers.delete(active.runId);
-        startedAt.delete(active.runId);
+        if (classified.kind === 'pane_killed' && !bareExitSeen) {
+          bareExitSeen = true;
+          return;
+        }
+        settled = true;
+        stop();
         handler(terminal);
-      }, 1000);
-      watchers.set(active.runId, timer);
-      return () => {
-        clearInterval(timer);
-        watchers.delete(active.runId);
-        startedAt.delete(active.runId);
       };
+      const timer = setInterval(check, pollMs);
+      const source = eventSource();
+      if (source !== null && active.paneId !== null) {
+        unwatch = source.watch(active.paneId, () => {
+          paneGone = true;
+          check();
+        });
+      }
+      checks.add(check);
+      watchers.set(active.runId, stop);
+      return stop;
     },
     async reconcile(runs) {
       const observations: Array<{ observation: ReconcileObservation; runId: RunId }> = [];
@@ -454,15 +709,16 @@ export function createPiHerdrRuntime(options?: {
           observations.push({ observation: { kind: 'missing' }, runId: active.runId });
           continue;
         }
+        const jsonl = readOptional(active.sessionFile) ?? '';
         const classified = classifySidecar({
           exitCodeText: readOptional(`${active.sessionFile}.exitcode`),
-          exitJson: readOptional(`${active.sessionFile}.exit`),
+          exitJson: takeExitJson(active.sessionFile, active.runId, jsonl),
           runId: active.runId,
-          sessionEntryCount: 1,
+          sessionEntryCount: jsonl.split('\n').filter((line) => line.length > 0).length,
+          sessionText: jsonl,
           trigger: 'gone',
           withinStartupWindow: false,
         });
-        const jsonl = readOptional(active.sessionFile) ?? '';
         const usage = usageFromSession(jsonl);
         const terminal = toTerminal(classified, childOutput(classified, jsonl), usage);
         if (terminal !== null && classified.kind !== 'gap_exit') {
@@ -486,6 +742,6 @@ export function createPiHerdrRuntime(options?: {
       }
       return observations;
     },
-    resume: openPane,
+    resume,
   };
 }

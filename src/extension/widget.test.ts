@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { clipTaskTitle, taskProgressText } from '../runtime/policy.ts';
 import { renderFactoryAgents, type AgentsViewTheme } from './agents-view.ts';
 import { renderFactoryWidget, type AgentTheme, type WidgetChild } from './widget.ts';
 
@@ -17,6 +18,8 @@ function child(overrides: Partial<WidgetChild>): WidgetChild {
     paneName: '🔎 dpaez/factory-dashboard#3',
     sessionFile: '/tmp/session.jsonl',
     startedAt: '2026-10-06T18:00:00.000Z',
+    tasksLeft: null,
+    taskTitle: null,
     toolUses: 3,
     ...overrides,
   };
@@ -75,4 +78,49 @@ test('the agents overlay is a full-width framed list', () => {
   for (const line of lines) {
     assert.ok(line.length >= width);
   }
+});
+
+test('work and review rows show the clipped task and how many are left', () => {
+  const title = 'Implement /tickets route and the list filters';
+  const progress = taskProgressText(title, 3);
+  assert.equal(clipTaskTitle(title).length, 40);
+  assert.equal(progress, `${clipTaskTitle(title)} · 3 left`);
+  assert.ok(progress.length <= 80);
+  const lines = renderFactoryWidget({
+    children: [
+      child({
+        description: 'Turn derivation layer',
+        paneName: '🛠 dpaez/factory-dashboard#3 01',
+        tasksLeft: 3,
+        taskTitle: title,
+      }),
+    ],
+    frame: 0,
+    now: Date.parse('2026-10-06T18:00:14.200Z'),
+    theme,
+    width: 160,
+  });
+  assert.match(lines.join('\n'), /Implement \/tickets route and the list f… · 3 left/);
+  assert.doesNotMatch(lines.join('\n'), /Turn derivation layer/);
+  const overlay = renderFactoryAgents({
+    children: [
+      child({
+        description: 'Local diff bug review',
+        paneName: '👀 dpaez/factory-dashboard#3',
+        tasksLeft: 1,
+        taskTitle: title,
+      }),
+    ],
+    height: 12,
+    now: Date.parse('2026-10-06T18:00:14.200Z'),
+    selected: 0,
+    theme: {
+      bg: (_color, text) => text,
+      bold: (text) => text,
+      fg: (_tone, text) => text,
+    },
+    width: 120,
+  });
+  assert.match(overlay.join('\n'), /Implement \/tickets route and the list f… · 1 left/);
+  assert.doesNotMatch(overlay.join('\n'), /Local diff bug review/);
 });

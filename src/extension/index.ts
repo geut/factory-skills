@@ -1,10 +1,16 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { parseFactoryCommand } from '../controller/parse.ts';
-import { createFactoryService, factoryPaths, type FactoryService } from '../controller/service.ts';
+import {
+  createFactoryService,
+  factoryPaths,
+  type FactoryService,
+  type TicketDetail,
+} from '../controller/service.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { FactoryAgentsView } from './agents-view.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
+import { FactoryTicketView } from './ticket-view.ts';
 import { readChildActivity, renderFactoryWidget, type WidgetChild } from './widget.ts';
 
 const services = new Map<string, FactoryService>();
@@ -136,6 +142,35 @@ async function toggleAgents(ctx: ExtensionContext): Promise<void> {
   closeOverlay = null;
 }
 
+async function openTicket(ctx: ExtensionContext, load: () => TicketDetail | null): Promise<void> {
+  if (ctx.mode !== 'tui' || !ctx.hasUI) {
+    return;
+  }
+  if (closeOverlay !== null) {
+    closeOverlay();
+  }
+  let closed = false;
+  await ctx.ui.custom<undefined>(
+    (tui, theme, _keybindings, done) => {
+      const finish = (): void => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        closeOverlay = null;
+        done(undefined);
+      };
+      closeOverlay = finish;
+      return new FactoryTicketView(load, theme, tui, finish);
+    },
+    {
+      overlay: true,
+      overlayOptions: { anchor: 'center', margin: 0, maxHeight: '100%', width: '100%' },
+    },
+  );
+  closeOverlay = null;
+}
+
 export default function factoryExtension(pi: ExtensionAPI): void {
   if (process.env['FACTORY_CHILD'] === '1') {
     return;
@@ -157,8 +192,22 @@ export default function factoryExtension(pi: ExtensionAPI): void {
     description: 'Start or continue a factory ticket',
     handler: async (args, ctx) => {
       latest = ctx;
-      if (parseFactoryCommand(args).kind === 'agents') {
+      const parsed = parseFactoryCommand(args);
+      if (parsed.kind === 'agents') {
         await toggleAgents(ctx);
+        return;
+      }
+      if (parsed.kind === 'ticket') {
+        const service = serviceFor(ctx.cwd);
+        const detail = service.ticketDetail(parsed.ref);
+        if (typeof detail === 'string') {
+          publishStatus(detail);
+          return;
+        }
+        await openTicket(ctx, () => {
+          const next = service.ticketDetail(parsed.ref);
+          return typeof next === 'string' ? null : next;
+        });
         return;
       }
       publishStatus(await serviceFor(ctx.cwd).command(args));

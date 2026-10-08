@@ -37,9 +37,9 @@ none
 
 ## Evidence
 
-.factory/evidence/PROJ-123/01/manifest.json
+none
 ```
 
-`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Evidence` only when the task is blocked. Each test line is `command: passed|failed|not_run` plus an optional note. `Evidence` is the manifest path written under the factory root, not the worktree.
+`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Evidence` unless a screenshot or transcript path helps a reviewer. The controller checks the worktree diff and `validation.work.commands`; it does not read this template or an evidence manifest. Each test line is `command: passed|failed|not_run` plus an optional note. Leave the work uncommitted.
 
 After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision.
