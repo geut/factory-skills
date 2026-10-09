@@ -30,6 +30,25 @@ The reviewer returns the `factory.review.v4` template. The controller parses the
 
 Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round. This slice launches wrap-up but does not validate it. It does not open a pull request or implement `/factory rerun`.
 
+## What you see
+
+Every status card names the ticket, the stage, and what the run led to, then the task and round:
+
+```text
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+```
+
+Outcomes are `planned`, `ready for review`, `approved`, `changes requested`, `blocked`, `correcting`, `retrying`, `diff changed`, `paused`, `waiting for you`, `failed`, and `finished`. The plan card lists every task with its dependencies. Blocking findings show under the card. A card that waits on you (`▲`) shows its whole message and the command to run next.
+
+Above the editor, the widget keeps each unfinished ticket's progress on screen between runs, followed by the running agents:
+
+```text
+● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+  03/06 Overview page
+```
+
 ## Layout
 
 ```text
@@ -38,6 +57,7 @@ src/controller/    commands, pure reducer, SQLite persistence
 src/actions/       leased dispatcher, worktree preparation
 src/runtime/       FactorySubagentRuntime, fake, pi-herdr adapter
 src/validation/    plan, work, and review checks
+src/stories/       component gallery: fixtures, scenarios, server, snapshots
 src/state/         schema and database opener
 skills/            specialist procedures and output templates
 tests/             recovery tests against real SQLite
@@ -94,3 +114,24 @@ npx tsc --noEmit
 ```
 
 Node.js 24 runs the TypeScript tests directly.
+
+## Component gallery
+
+Each TUI component (Status Message, Widget, Ticket View, Agents View) has scenarios next to it in `src/extension/*.stories.ts`. A scenario is one state of the component, rendered without Pi from plain JSON state. The scenarios cover a ticket's life, from the plan card through review rounds, pauses, questions, retries, and wrap-up.
+
+```sh
+npm run gallery                       # live gallery at http://127.0.0.1:5180/
+npm run gallery -- --port 5200 --host 0.0.0.0
+```
+
+The sidebar lists the components. `/component/<id>` shows that component's scenarios, each in its own card with a description, rendered with Pi's own theme at the widths you pick (40, 60, 80, 120). The theme selector at the top applies to every page. **Edit state** opens a scenario's state as JSON; the render updates as you type, the edit is kept in the browser, and **Reset** restores it. The server runs under `node --watch`, so a code change restarts it and the open page reloads.
+
+The same scenarios print in the terminal:
+
+```sh
+npm run stories                              # every scenario at 40, 60, 80, 120 columns, Pi's dark theme
+npm run stories -- --story widget --width 60 # filter by component or scenario name
+npm run stories -- --theme light --plain     # light theme, or no colour
+```
+
+`node --test` renders every story at every width, fails if a line is wider than its width, and compares the text with `src/stories/snapshots/`. After an intended UI change, run `npm run stories:update` and review the snapshot diff.

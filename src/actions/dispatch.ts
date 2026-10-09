@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { allowsEmptyDiff } from '../config.ts';
+import { attentionCard } from '../controller/run-card.ts';
 import {
   applyControllerEvent,
   claimNextAction,
@@ -143,7 +144,7 @@ async function perform(
     case 'prepare_worktree':
       return worktree(input, action, snapshot);
     case 'notify_attention':
-      input.notify(action.message);
+      input.notify(attentionCard(snapshot, action.message));
       finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
       return null;
     default: {

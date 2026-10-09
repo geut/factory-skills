@@ -1,12 +1,13 @@
 import { readFileSync, statSync } from 'node:fs';
 import { truncateToWidth } from '@earendil-works/pi-tui';
+import type { TicketProgress } from '../controller/progress.ts';
 import type { RunningChildRow } from '../controller/store.ts';
 import { taskProgressText } from '../runtime/policy.ts';
 import { sessionActivity, type SessionActivity } from '../runtime/session-activity.ts';
 
 export type AgentTheme = {
   bold: (text: string) => string;
-  fg: (tone: 'accent' | 'dim' | 'muted', text: string) => string;
+  fg: (tone: 'accent' | 'dim' | 'muted' | 'success' | 'warning', text: string) => string;
 };
 
 export type WidgetChild = RunningChildRow & {
@@ -17,6 +18,44 @@ export type WidgetChild = RunningChildRow & {
 
 const spinnerFrames = ['◜', '◠', '◝', '◞', '◡', '◟'];
 const maxLines = 10;
+const maxTickets = 2;
+const barCells = 10;
+
+// `■■□□□□`, scaled down when a ticket has more than ten tasks.
+export function progressBar(done: number, total: number): string {
+  if (total <= 0) {
+    return '';
+  }
+  const cells = Math.min(total, barCells);
+  const filled = Math.round((Math.min(done, total) / total) * cells);
+  return `${'■'.repeat(filled)}${'□'.repeat(cells - filled)}`;
+}
+
+// Stays visible between runs, so the plan and the current task are always
+// on screen:
+//   ● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+//     03/06 Overview page
+export function ticketLines(ticket: TicketProgress, theme: AgentTheme): Array<string> {
+  const tone = ticket.needsUser ? 'warning' : 'accent';
+  const parts = [theme.bold(ticket.displayRef)];
+  if (ticket.total > 0) {
+    parts.push(
+      `${theme.fg('success', progressBar(ticket.done, ticket.total))} ${theme.fg('dim', `${ticket.done}/${ticket.total}`)}`,
+    );
+  }
+  parts.push(theme.fg('muted', ticket.current?.step ?? ticket.stage));
+  const lines = [
+    `${theme.fg(tone, ticket.needsUser ? '▲' : '●')} ${parts.join(theme.fg('dim', ' · '))}`,
+  ];
+  if (ticket.current !== null) {
+    lines.push(`  ${ticket.current.label}`);
+  }
+  if (ticket.needsUser) {
+    const next = ticket.next === null ? '' : ` · → ${ticket.next}`;
+    lines.push(`  ${theme.fg('warning', `${ticket.status}${next}`)}`);
+  }
+  return lines;
+}
 
 const sessionCache = new Map<string, { activity: SessionActivity; size: number }>();
 
@@ -69,11 +108,17 @@ export function renderFactoryWidget(input: {
   frame: number;
   now: number;
   theme: AgentTheme;
+  tickets?: Array<TicketProgress>;
   width: number;
 }): Array<string> {
   const { children, theme } = input;
+  const tickets = input.tickets ?? [];
+  const progress = tickets.slice(0, maxTickets).flatMap((ticket) => ticketLines(ticket, theme));
+  if (tickets.length > maxTickets) {
+    progress.push(theme.fg('muted', `... (+${tickets.length - maxTickets} more tickets)`));
+  }
   if (children.length === 0) {
-    return [];
+    return progress.map((line) => truncateToWidth(line, Math.max(1, input.width - 4)));
   }
   const visible = children.slice(0, 2);
   const hidden = children.length - visible.length;
@@ -119,7 +164,7 @@ export function renderFactoryWidget(input: {
   if (hidden > 0) {
     lines.push(theme.fg('muted', `... (+${hidden} more — /factory agents)`));
   }
-  return lines
-    .slice(0, maxLines)
-    .map((line) => truncateToWidth(line, Math.max(1, input.width - 4)));
+  return [...progress, ...lines.slice(0, maxLines)].map((line) =>
+    truncateToWidth(line, Math.max(1, input.width - 4)),
+  );
 }

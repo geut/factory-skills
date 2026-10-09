@@ -200,7 +200,9 @@ test('caller_ping is durable and reply resumes that session', async () => {
   const waiting = service.status('proj-123');
   assert.match(waiting, /waiting_for_user/);
   assert.match(waiting, /Which API should the filter use\?/);
-  assert.equal(notified[0], 'Which API should the filter use?');
+  assert.match(notified[0] ?? '', /status: waiting for you\n/);
+  assert.match(notified[0] ?? '', /next: \/factory reply proj-123\.md "answer"\n/);
+  assert.match(notified[0] ?? '', /Which API should the filter use\?$/);
   const illegal = await service.command('reply proj-123 "Use the existing API"');
   assert.match(illegal, /Resuming the session|stage:/);
   assert.equal(runtime.launches.at(-1)?.mode, 'resume');
@@ -438,15 +440,21 @@ test('failed work validation resumes the same session and the limit pauses', asy
     usage: sampleUsage(),
   });
   await waitFor(() => service.status('proj-123').includes('paused'));
-  await waitFor(() =>
-    notified.some((message) => message.includes('status: correction 1 · checks failed')),
-  );
+  await waitFor(() => notified.some((message) => message.includes('status: correction · paused')));
   assert.ok(
-    notified.some((message) => message.includes('stage: plan') && message.includes('status: done')),
+    notified.some(
+      (message) =>
+        message.includes('stage: plan') &&
+        message.includes('status: planned') &&
+        message.includes('item: 01 '),
+    ),
   );
   assert.ok(
     notified.some(
-      (message) => message.includes('stage: work') && message.includes('\nstatus: checks failed'),
+      (message) =>
+        message.includes('stage: work') &&
+        message.includes('\nstatus: correcting') &&
+        message.includes('\ntask: 01/01 '),
     ),
   );
   assert.equal(

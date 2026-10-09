@@ -24,6 +24,8 @@ import {
 } from '../tickets.ts';
 import { parseReview } from '../validation/review.ts';
 import { parseFactoryCommand } from './parse.ts';
+import { ticketProgress, type TicketProgress } from './progress.ts';
+import { detail } from './reduce.ts';
 import {
   finishedRunCard,
   firstSummaryLine,
@@ -55,11 +57,30 @@ export type TicketRunRow = {
 
 export type TicketDetail = {
   displayRef: string;
+  progress: TicketProgress | null;
   runs: Array<TicketRunRow>;
 };
 
+export function ticketDetailOf(snapshot: FactorySnapshot): TicketDetail {
+  return {
+    displayRef: snapshot.ticket.displayRef,
+    progress: ticketProgress(snapshot),
+    runs: runsInStartOrder(snapshot.runs).map((run) => {
+      const session = snapshot.sessions.find((item) => item.id === run.sessionId) ?? null;
+      return {
+        label: runListLabel(snapshot, run),
+        outcome: runOutcome(snapshot, run),
+        runId: run.id,
+        sessionFile: session?.sessionFile ?? null,
+      };
+    }),
+  };
+}
+
 export type FactoryService = {
   command: (args: string) => Promise<string>;
+  // Progress of every current ticket that is not finished.
+  progress: () => Array<TicketProgress>;
   recover: () => Promise<void>;
   runningChildren: () => Array<RunningChildRow>;
   status: (ref: string) => string;
@@ -332,19 +353,7 @@ export function createFactoryService(input: {
     if (snapshot === null) {
       return `No factory execution matches ${key}.`;
     }
-    const runs = runsInStartOrder(snapshot.runs);
-    return {
-      displayRef: snapshot.ticket.displayRef,
-      runs: runs.map((run) => {
-        const session = snapshot.sessions.find((item) => item.id === run.sessionId) ?? null;
-        return {
-          label: runListLabel(snapshot, run),
-          outcome: runOutcome(snapshot, run),
-          runId: run.id,
-          sessionFile: session?.sessionFile ?? null,
-        };
-      }),
-    };
+    return ticketDetailOf(snapshot);
   }
 
   function status(ref: string): string {
@@ -352,22 +361,12 @@ export function createFactoryService(input: {
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    return formatStatus({
-      displayRef: snapshot.ticket.displayRef,
-      kind: 'status',
-      message:
+    return formatStatus(
+      detail(
+        snapshot,
         snapshot.execution.message ?? `${snapshot.execution.stage}/${snapshot.execution.status}`,
-      question:
-        snapshot.attention.find(
-          (item) =>
-            item.status === 'open' || item.status === 'answered' || item.status === 'resuming',
-        )?.question ?? null,
-      retryHint: snapshot.execution.retryable
-        ? `Retry with /factory retry ${snapshot.ticket.commandRef}.`
-        : null,
-      stage: snapshot.execution.stage,
-      status: snapshot.execution.status,
-    });
+      ),
+    );
   }
 
   return {
@@ -394,6 +393,13 @@ export function createFactoryService(input: {
         }
       }
     },
+    progress: () =>
+      listCurrentTicketRefs(db).flatMap((ref) => {
+        const snapshot = loadCurrentByTicketKey(db, ref);
+        return snapshot === null || snapshot.execution.stage === 'done'
+          ? []
+          : [ticketProgress(snapshot)];
+      }),
     recover,
     runningChildren: () => listRunningChildren(db),
     status,
@@ -401,7 +407,7 @@ export function createFactoryService(input: {
   };
 }
 
-function terminalSummary(
+export function terminalSummary(
   snapshot: FactorySnapshot,
   runId: RunId,
   terminal: TerminalOutcome,
@@ -416,11 +422,12 @@ function terminalSummary(
   if (terminal.kind === 'subagent_done' && runStage(snapshot, run) === 'review') {
     const parsed = parseReview(terminal.output, run.semanticRound);
     if (parsed.kind === 'valid') {
-      return `${parsed.result.verdict}: ${parsed.result.summary}`;
+      return parsed.result.summary;
     }
     return run.resultError?.split('\n')[0] ?? 'The review result is malformed.';
   }
-  if (runOutcome(snapshot, run) === 'checks failed') {
+  const outcome = runOutcome(snapshot, run);
+  if (outcome === 'correcting' || outcome === 'paused') {
     const prefix = `work-input:${runId}:correction:`;
     const queued = snapshot.actions.find(
       (action) => action.kind === 'prepare_work_input' && action.idempotencyKey.startsWith(prefix),

@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { parseFactoryCommand } from '../controller/parse.ts';
+import type { TicketProgress } from '../controller/progress.ts';
 import {
   createFactoryService,
   factoryPaths,
@@ -18,6 +19,7 @@ let latest: ExtensionContext | null = null;
 let frame = 0;
 let tick: ReturnType<typeof setInterval> | null = null;
 let widgetTui: TUI | null = null;
+let tickets: Array<TicketProgress> = [];
 let closeOverlay: (() => void) | null = null;
 let publishStatus: (text: string) => void = (text) => {
   latest?.ui.notify(text, 'info');
@@ -56,7 +58,10 @@ function refreshWidget(service: FactoryService): void {
   if (ctx === null || !ctx.hasUI) {
     return;
   }
-  if (widgetChildren(service).length === 0) {
+  // Progress is read on activity, not on every spinner frame.
+  tickets = service.progress();
+  const running = widgetChildren(service).length > 0;
+  if (!running && tickets.length === 0) {
     ctx.ui.setWidget('factory-agents', undefined);
     stopTick();
     return;
@@ -75,6 +80,7 @@ function refreshWidget(service: FactoryService): void {
             frame,
             now: Date.now(),
             theme,
+            tickets,
             width,
           });
         },
@@ -83,6 +89,10 @@ function refreshWidget(service: FactoryService): void {
     },
     { placement: 'aboveEditor' },
   );
+  if (!running) {
+    stopTick();
+    return;
+  }
   if (tick !== null) {
     return;
   }

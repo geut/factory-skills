@@ -33,7 +33,7 @@ export const stageLaunchPolicy = {
   },
 } as const;
 
-const stageEmoji = {
+export const stageEmoji = {
   plan: '🔎',
   review: '👀',
   work: '🛠',

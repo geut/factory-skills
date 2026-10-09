@@ -34,6 +34,7 @@ import {
   wrapupPrompt,
 } from '../runtime/policy.ts';
 import { formatFinding, parseReview } from '../validation/review.ts';
+import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
   return {
@@ -45,7 +46,7 @@ function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
   };
 }
 
-function detail(snapshot: FactorySnapshot, message: string): ControllerResponse {
+export function detail(snapshot: FactorySnapshot, message: string): ControllerResponse {
   const question =
     snapshot.attention.find(
       (item) => item.status === 'open' || item.status === 'answered' || item.status === 'resuming',
@@ -54,12 +55,15 @@ function detail(snapshot: FactorySnapshot, message: string): ControllerResponse 
     displayRef: snapshot.ticket.displayRef,
     kind: 'status',
     message,
+    next: nextAction(snapshot),
+    progress: progressText(snapshot),
     question: question?.question ?? null,
     retryHint: snapshot.execution.retryable
       ? `Retry with /factory retry ${snapshot.ticket.commandRef}.`
       : null,
     stage: snapshot.execution.stage,
     status: snapshot.execution.status,
+    task: currentStep(snapshot),
   };
 }
 
@@ -97,7 +101,7 @@ function repeatMessage(snapshot: FactorySnapshot): string {
     case 'waiting_for_user':
       return `Ticket ${ref} is waiting for user input. Reply with /factory reply ${ref} "answer".`;
     case 'paused':
-      return `Ticket ${ref} is paused: ${snapshot.execution.statusReason ?? 'no reason recorded'}. Reply with /factory reply ${ref} "answer".`;
+      return `Ticket ${ref} is paused: ${snapshot.execution.statusReason ?? 'no reason recorded'}.${nextAction(snapshot) === null ? '' : ` Next: ${nextAction(snapshot)}.`}`;
     case 'resume_failed':
     case 'failed':
       return snapshot.execution.retryable
@@ -625,26 +629,6 @@ function lowestReady(snapshot: FactorySnapshot): FactorySnapshot['tasks'][number
   return ready[0] ?? null;
 }
 
-function rawOutput(run: RunRecord): string {
-  if (run.resultJson === null) {
-    return '';
-  }
-  try {
-    const parsed: unknown = JSON.parse(run.resultJson);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'output' in parsed &&
-      typeof parsed.output === 'string'
-    ) {
-      return parsed.output;
-    }
-  } catch {
-    return run.resultJson;
-  }
-  return run.resultJson;
-}
-
 function retryValidation(
   snapshot: FactorySnapshot,
   run: RunRecord,
@@ -719,7 +703,7 @@ function finishWorkValidation(
     diff: outcome.diff,
     displayRef: snapshot.ticket.displayRef,
     planPath: snapshot.execution.planPath ?? '',
-    rawOutput: rawOutput(run),
+    rawOutput: runOutput(run),
     round,
     taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
     taskTitle: task.title,
@@ -767,7 +751,7 @@ function minorFindings(snapshot: FactorySnapshot): Array<string> {
     if (latest === undefined) {
       continue;
     }
-    const parsed = parseReview(rawOutput(latest), latest.semanticRound);
+    const parsed = parseReview(runOutput(latest), latest.semanticRound);
     // Finding ids restart in every task's review, so name the task.
     if (parsed.kind === 'valid') {
       findings.push(
@@ -1101,7 +1085,7 @@ function finishReviewValidation(
     case 'malformed':
       return correctReview(snapshot, session, task, run, outcome.failures, ids);
     case 'passed': {
-      const parsed = parseReview(rawOutput(run), run.semanticRound);
+      const parsed = parseReview(runOutput(run), run.semanticRound);
       if (parsed.kind === 'invalid') {
         return correctReview(snapshot, session, task, run, parsed.failures, ids);
       }

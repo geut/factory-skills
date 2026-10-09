@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ticketProgress } from '../controller/progress.ts';
 import { clipTaskTitle, taskProgressText } from '../runtime/policy.ts';
+import { approvedNext, diffKeepsChanging } from '../stories/scenarios.ts';
 import { renderFactoryAgents, type AgentsViewTheme } from './agents-view.ts';
-import { renderFactoryWidget, type AgentTheme, type WidgetChild } from './widget.ts';
+import {
+  progressBar,
+  renderFactoryWidget,
+  ticketLines,
+  type AgentTheme,
+  type WidgetChild,
+} from './widget.ts';
 
 const theme: AgentTheme = {
   bold: (text) => text,
@@ -123,4 +131,29 @@ test('work and review rows show the clipped task and how many are left', () => {
   });
   assert.match(overlay.join('\n'), /Implement \/tickets route and the list f… · 1 left/);
   assert.doesNotMatch(overlay.join('\n'), /Local diff bug review/);
+});
+
+test('ticket progress stays on screen when no child is running', () => {
+  const { snapshot } = approvedNext();
+  const lines = renderFactoryWidget({
+    children: [],
+    frame: 0,
+    now: 0,
+    theme,
+    tickets: [ticketProgress(snapshot)],
+    width: 80,
+  });
+  assert.deepEqual(lines, [
+    '● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work',
+    '  04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module',
+  ]);
+  assert.equal(progressBar(3, 6), '■■■□□□');
+  assert.equal(progressBar(5, 20), '■■■□□□□□□□');
+});
+
+test('a ticket waiting on the user shows the command to run', () => {
+  const { snapshot } = diffKeepsChanging();
+  const lines = ticketLines(ticketProgress(snapshot), theme);
+  assert.equal(lines[0], '▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1');
+  assert.equal(lines[2], '  paused · → /factory retry dpaez/factory-dashboard#11');
 });

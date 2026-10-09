@@ -10,7 +10,7 @@ import { childProgress, formatElapsed, type WidgetChild } from './widget.ts';
 export type AgentsViewTheme = {
   bg: (color: 'selectedBg', text: string) => string;
   bold: (text: string) => string;
-  fg: (color: 'accent' | 'dim' | 'muted' | 'text', text: string) => string;
+  fg: (color: 'accent' | 'dim' | 'muted' | 'success' | 'text' | 'warning', text: string) => string;
 };
 
 function fitLine(text: string, width: number): string {

@@ -10,6 +10,7 @@ import {
 import type { TicketDetail, TicketRunRow } from '../controller/service.ts';
 import { runAssistantText } from '../runtime/session-activity.ts';
 import type { AgentsViewTheme } from './agents-view.ts';
+import { ticketLines } from './widget.ts';
 
 function fitLine(text: string, width: number): string {
   const clipped = truncateToWidth(text, Math.max(1, width));
@@ -40,11 +41,12 @@ export function renderTicketDetail(input: {
 }): Array<string> {
   const { detail, height, theme, width } = input;
   const rule = fitLine(theme.fg('accent', '─'.repeat(Math.max(1, width))), width);
-  const header = [
-    rule,
-    fitLine(` ${theme.bold(theme.fg('accent', detail.displayRef))}`, width),
-    fitLine('', width),
-  ];
+  // The progress lines start with the ticket ref, so they replace the title.
+  const title =
+    detail.progress === null
+      ? [` ${theme.bold(theme.fg('accent', detail.displayRef))}`]
+      : ticketLines(detail.progress, theme).map((line) => ` ${line}`);
+  const header = [rule, ...title.map((line) => fitLine(line, width)), fitLine('', width)];
   const footer = [
     fitLine('', width),
     fitLine(
@@ -58,7 +60,7 @@ export function renderTicketDetail(input: {
     detail.runs.length === 0
       ? [fitLine(`  ${theme.fg('text', 'This ticket has no runs yet.')}`, width)]
       : detail.runs.map((run, index) => {
-          const row = fitLine(`  ${run.label}`, width);
+          const row = fitLine(` ${index === input.selected ? '▶' : ' '} ${run.label}`, width);
           return index === input.selected ? theme.bg('selectedBg', row) : row;
         });
   const messageRows = wrapTextWithAnsi(input.message, Math.max(1, width - 2)).map((row) =>
@@ -67,6 +69,7 @@ export function renderTicketDetail(input: {
   const room = Math.max(1, bodyBudget - runRows.length - 1);
   const scroll = Math.max(0, Math.min(input.scroll, Math.max(0, messageRows.length - room)));
   const visibleMessage = messageRows.slice(scroll, scroll + room);
+  
   const body = [...runRows, fitLine('', width), ...visibleMessage];
   while (body.length < bodyBudget) {
     body.push(fitLine('', width));
@@ -131,7 +134,7 @@ export class FactoryTicketView implements Component {
     const height = Math.max(12, this.tui.terminal.rows);
     if (detail === null) {
       return renderTicketDetail({
-        detail: { displayRef: 'factory', runs: [] },
+        detail: { displayRef: 'factory', progress: null, runs: [] },
         height,
         message: 'This ticket is no longer current.',
         scroll: 0,

@@ -1,55 +1,86 @@
 import type { MessageRenderer } from '@earendil-works/pi-coding-agent';
-import { wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui';
+import {
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from '@earendil-works/pi-tui';
+import { decodeCard, type CardTone, type FactoryCard } from '../controller/card.ts';
+
+export type StatusColor =
+  | 'accent'
+  | 'customMessageLabel'
+  | 'customMessageText'
+  | 'dim'
+  | 'error'
+  | 'muted'
+  | 'success'
+  | 'text'
+  | 'warning';
 
 export type StatusTheme = {
-  fg: (color: 'customMessageLabel' | 'customMessageText' | 'muted', text: string) => string;
+  bold: (text: string) => string;
+  fg: (color: StatusColor, text: string) => string;
 };
 
 export type FactoryStatusDetails = {
   text: string;
 };
 
-function clip(text: string, max: number): string {
-  const line = text.trim();
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+const toneStyle: Record<CardTone, { color: StatusColor; glyph: string }> = {
+  attention: { color: 'warning', glyph: '▲' },
+  done: { color: 'success', glyph: '✓' },
+  failed: { color: 'error', glyph: '✗' },
+  progress: { color: 'accent', glyph: '●' },
+};
+
+function bodyLines(value: FactoryCard): Array<string> {
+  return value.body
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => !line.trim().startsWith('Run ended with '));
 }
 
-function statusParts(text: string): { body: string; summary: string; title: string } {
-  const lines = text.split('\n');
-  const displayRef = lines[0]?.trim() ?? 'factory';
-  let cursor = 1;
-  const stage =
-    lines[cursor]?.startsWith('stage: ') === true
-      ? (lines[cursor]?.slice('stage: '.length) ?? '')
-      : '';
-  if (stage.length > 0) {
-    cursor += 1;
-  }
-  const status =
-    lines[cursor]?.startsWith('status: ') === true
-      ? (lines[cursor]?.slice('status: '.length) ?? '')
-      : '';
-  if (status.length > 0) {
-    cursor += 1;
-  }
-  const bodyLines = lines.slice(cursor);
-  const useful = bodyLines
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith('Run ended with '));
-  return {
-    body: bodyLines.join('\n').trim(),
-    summary: clip(useful[0] ?? bodyLines.find((line) => line.trim().length > 0) ?? status, 100),
-    title: [displayRef, stage, status].filter((part) => part.length > 0).join(' · '),
-  };
+function summaryOf(value: FactoryCard): string {
+  return (
+    bodyLines(value)
+      .find((line) => line.trim().length > 0)
+      ?.trim() ?? ''
+  );
+}
+
+// `03/06 Overview page · r1 · 3/6 done`
+function contextLine(value: FactoryCard): string {
+  return [value.task, value.round === null ? null : `r${value.round}`, value.progress]
+    .filter((part) => part !== null && part.length > 0)
+    .join(' · ');
+}
+
+function titleText(value: FactoryCard): string {
+  return [value.displayRef, value.stage, value.outcome]
+    .filter((part) => part.length > 0)
+    .join(' · ');
 }
 
 export function factoryStatusPayload(text: string): {
   content: string;
   details: FactoryStatusDetails;
 } {
-  const parts = statusParts(text);
-  const content = parts.summary.length > 0 ? `${parts.title}\n${parts.summary}` : parts.title;
-  return { content, details: { text } };
+  const value = decodeCard(text);
+  const lines = [titleText(value), contextLine(value), summaryOf(value)];
+  if (value.next !== null) {
+    lines.push(`Next: ${value.next}`);
+  }
+  return {
+    content: lines.filter((line) => line.length > 0).join('\n'),
+    details: { text },
+  };
+}
+
+// Wraps `text` under `first`, with later rows aligned under the text.
+function wrapIndented(text: string, width: number, first: string, rest = first): Array<string> {
+  const room = Math.max(1, width - Math.max(visibleWidth(first), visibleWidth(rest)));
+  return wrapTextWithAnsi(text, room).map((row, index) => `${index === 0 ? first : rest}${row}`);
 }
 
 export function renderFactoryStatus(input: {
@@ -58,18 +89,70 @@ export function renderFactoryStatus(input: {
   theme: StatusTheme;
   width: number;
 }): Array<string> {
-  const parts = statusParts(input.text);
+  const { theme } = input;
   const width = Math.max(1, input.width);
-  const wrapped = wrapTextWithAnsi(parts.body, width);
-  const preview = input.expanded ? wrapped : wrapTextWithAnsi(parts.summary, width);
-  const omitted = input.expanded ? 0 : Math.max(0, wrapped.length - preview.length);
-  return [
-    input.theme.fg('customMessageLabel', parts.title),
-    ...preview
-      .filter((row) => row.length > 0)
-      .map((row) => input.theme.fg('customMessageText', row)),
-    ...(omitted > 0 ? [input.theme.fg('muted', `+${omitted} lines · expand to read`)] : []),
-  ];
+  const value = decodeCard(input.text);
+  const style = toneStyle[value.tone];
+  const headed = value.stage.length > 0 || value.outcome.length > 0;
+  const rows: Array<string> = [];
+
+  const ref = theme.bold(theme.fg('customMessageLabel', value.displayRef));
+  const parts = [ref];
+  if (value.stage.length > 0) {
+    parts.push(theme.fg('muted', value.stage));
+  }
+  if (value.outcome.length > 0) {
+    parts.push(theme.fg(style.color, value.outcome));
+  }
+  const title = headed
+    ? `${theme.fg(style.color, style.glyph)} ${parts.join(theme.fg('muted', ' · '))}`
+    : ref;
+  rows.push(...wrapIndented(title, width, '', headed ? '  ' : ''));
+
+  const context = contextLine(value);
+  if (context.length > 0) {
+    rows.push(...wrapIndented(theme.fg('dim', context), width, '  '));
+  }
+
+  const lines = bodyLines(value);
+  const summary = summaryOf(value);
+  const indent = headed ? '  ' : '';
+  let omitted = 0;
+  // A notice that waits on the user is short, and every line of it matters.
+  if (input.expanded || value.tone === 'attention') {
+    // List lines hang under their text, not under the dash.
+    for (const line of lines) {
+      const hang = /^\s*[-*•] /.test(line) ? `${indent}  ` : indent;
+      rows.push(...wrapIndented(theme.fg('customMessageText', line.trim()), width, indent, hang));
+    }
+  } else if (summary.length > 0) {
+    rows.push(truncateToWidth(`${indent}${theme.fg('customMessageText', summary)}`, width, '…'));
+    const total = wrapTextWithAnsi(lines.join('\n').trim(), Math.max(1, width - indent.length));
+    omitted = Math.max(0, total.filter((row) => row.trim().length > 0).length - 1);
+  }
+
+  for (const item of value.items) {
+    rows.push(...wrapIndented(theme.fg('text', item), width, '  • ', '    '));
+  }
+  if (value.next !== null) {
+    rows.push(
+      ...wrapIndented(
+        theme.fg(style.color, value.next),
+        width,
+        `  ${theme.fg(style.color, '→')} `,
+        '    ',
+      ),
+    );
+  }
+  if (omitted > 0) {
+    rows.push(
+      truncateToWidth(
+        `${indent}${theme.fg('dim', `+${omitted} line${omitted === 1 ? '' : 's'} · expand to read`)}`,
+        width,
+      ),
+    );
+  }
+  return rows.filter((row, index) => index === 0 || row.trim().length > 0);
 }
 
 function detailsText(details: unknown): string | null {
@@ -104,6 +187,7 @@ export const factoryStatusRenderer: MessageRenderer<FactoryStatusDetails> = (
         expanded: options.expanded,
         text: detailsText(message.details) ?? textOf(message.content),
         theme: {
+          bold: (text) => theme.bold(text),
           fg: (color, text) => theme.fg(color, text),
         },
         width: Math.max(1, width - Math.max(0, options.outputPad)),

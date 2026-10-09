@@ -1,0 +1,319 @@
+== no agents running · 40 cols ==
+────────────────────────────────────────
+ Factory agents
+
+  No factory agents are running.
+  A plan, work, review, or wrap-up ch...
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────
+
+== no agents running · 60 cols ==
+────────────────────────────────────────────────────────────
+ Factory agents
+
+  No factory agents are running.
+  A plan, work, review, or wrap-up child will show up here.
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────
+
+== no agents running · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  No factory agents are running.
+  A plan, work, review, or wrap-up child will show up here.
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────
+
+== no agents running · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  No factory agents are running.
+  A plan, work, review, or wrap-up child will show up here.
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== one worker on task 03/06 · 40 cols ==
+────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 t...
+    /repo/.factory/sessions/work-03.j...
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────
+
+== one worker on task 03/06 · 60 cols ==
+────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ...
+    /repo/.factory/sessions/work-03.jsonl
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────
+
+== one worker on task 03/06 · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ctx (33.5%) · Overvi...
+    /repo/.factory/sessions/work-03.jsonl
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────
+
+== one worker on task 03/06 · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ctx (33.5%) · Overview page (`/`) on the v2 read modu… · 4 left
+    /repo/.factory/sessions/work-03.jsonl
+
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== worker and reviewer, reviewer selected · 40 cols ==
+────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 t...
+    /repo/.factory/sessions/work-03.j...
+
+  👀 geut/factory-skills#12 01
+    reading src/lib/server/read.ts… ·...
+    /repo/.factory/sessions/review-01...
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────
+
+== worker and reviewer, reviewer selected · 60 cols ==
+────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ...
+    /repo/.factory/sessions/work-03.jsonl
+
+  👀 geut/factory-skills#12 01
+    reading src/lib/server/read.ts… · 120.0s · Read-only ...
+    /repo/.factory/sessions/review-01.jsonl
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────
+
+== worker and reviewer, reviewer selected · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ctx (33.5%) · Overvi...
+    /repo/.factory/sessions/work-03.jsonl
+
+  👀 geut/factory-skills#12 01
+    reading src/lib/server/read.ts… · 120.0s · Read-only v2 connection, schem...
+    /repo/.factory/sessions/review-01.jsonl
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────
+
+== worker and reviewer, reviewer selected · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🛠 dpaez/factory-dashboard#11 03
+    running npm test… · 180.0s · 12 tool uses · 67K/200K ctx (33.5%) · Overview page (`/`) on the v2 read modu… · 4 left
+    /repo/.factory/sessions/work-03.jsonl
+
+  👀 geut/factory-skills#12 01
+    reading src/lib/server/read.ts… · 120.0s · Read-only v2 connection, schema guard, … · 2 left
+    /repo/.factory/sessions/review-01.jsonl
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== plan child without a task · 40 cols ==
+────────────────────────────────────────
+ Factory agents
+
+  🔎 dpaez/factory-dashboard#11
+    Migrate the dashboard data layer ...
+    running npm test… · 120.0s · 12 t...
+    /repo/.factory/sessions/plan.jsonl
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────
+
+== plan child without a task · 60 cols ==
+────────────────────────────────────────────────────────────
+ Factory agents
+
+  🔎 dpaez/factory-dashboard#11
+    Migrate the dashboard data layer to factory state sch...
+    running npm test… · 120.0s · 12 tool uses · 67K/200K ...
+    /repo/.factory/sessions/plan.jsonl
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────
+
+== plan child without a task · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🔎 dpaez/factory-dashboard#11
+    Migrate the dashboard data layer to factory state schema v2
+    running npm test… · 120.0s · 12 tool uses · 67K/200K ctx (33.5%)
+    /repo/.factory/sessions/plan.jsonl
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────
+
+== plan child without a task · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Factory agents
+
+  🔎 dpaez/factory-dashboard#11
+    Migrate the dashboard data layer to factory state schema v2
+    running npm test… · 120.0s · 12 tool uses · 67K/200K ctx (33.5%)
+    /repo/.factory/sessions/plan.jsonl
+
+
+
+
+
+
+
+
+
+ ↑↓ navigate  q close  esc close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

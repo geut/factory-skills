@@ -320,10 +320,15 @@ export type ControllerResponse =
       displayRef: string;
       kind: 'status';
       message: string;
+      // The command the user is expected to run next, if any.
+      next: string | null;
+      progress: string | null;
       question: string | null;
       retryHint: string | null;
       stage: Stage;
       status: ExecutionStatus;
+      // The current task, as `03/06 Title` plus its step (`review r1`).
+      task: string | null;
     }
   | { kind: 'rejected'; message: string };
 

@@ -14,16 +14,17 @@ const theme: AgentsViewTheme = {
 test('the ticket view lists runs and shows the selected message', () => {
   const detail: TicketDetail = {
     displayRef: 'proj-123',
+    progress: null,
     runs: [
       {
-        label: 'plan · done',
-        outcome: 'done',
+        label: 'plan · planned',
+        outcome: 'planned',
         runId: runId('run-1'),
         sessionFile: null,
       },
       {
-        label: 'work · correction 1 · checks failed',
-        outcome: 'checks failed',
+        label: 'work · 01 · correction · correcting',
+        outcome: 'correcting',
         runId: runId('run-2'),
         sessionFile: null,
       },
@@ -40,8 +41,8 @@ test('the ticket view lists runs and shows the selected message', () => {
   });
   const text = lines.join('\n');
   assert.match(text, /proj-123/);
-  assert.match(text, /plan · done/);
-  assert.match(text, /work · correction 1 · checks failed/);
+  assert.match(text, /plan · planned/);
+  assert.match(text, /work · 01 · correction · correcting/);
   assert.match(text, /diff is empty/);
   assert.match(text, /The files were not changed/);
 });

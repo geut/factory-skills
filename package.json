@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "format": "oxfmt --write .",
+    "gallery": "node --watch src/stories/server.ts",
     "lint": "oxlint .",
+    "stories": "node src/stories/run.ts",
+    "stories:update": "STORIES_UPDATE=1 node --test src/stories/stories.test.ts",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },

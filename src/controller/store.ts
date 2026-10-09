@@ -34,6 +34,7 @@ import {
   type WorktreeStatus,
 } from '../domain.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
+import { card, encodeCard } from './card.ts';
 import { describeExisting, reduce } from './reduce.ts';
 
 type ApplySource = 'command' | 'runtime' | 'action' | 'validator' | 'controller';
@@ -1526,20 +1527,27 @@ export function formatStatus(response: ControllerResponse): string {
   if (response.kind === 'rejected') {
     return response.message;
   }
-  const lines = [
-    response.displayRef,
-    `stage: ${response.stage}`,
-    `status: ${response.status}`,
-    response.message,
-  ];
-  if (response.question !== null) {
-    lines.push(
-      `question: ${response.question}`,
-      `Reply with: /factory reply ${response.displayRef} "answer"`,
-    );
+  const waiting =
+    response.status === 'waiting_for_user' ||
+    response.status === 'paused' ||
+    response.status === 'resume_failed';
+  const body = [response.message];
+  if (response.question !== null && response.question !== response.message) {
+    body.push(response.question);
   }
-  if (response.retryHint !== null) {
-    lines.push(response.retryHint);
+  if (response.next === null && response.retryHint !== null) {
+    body.push(response.retryHint);
   }
-  return lines.join('\n');
+  return encodeCard(
+    card({
+      body: body.join('\n'),
+      displayRef: response.displayRef,
+      next: response.next,
+      outcome: response.status,
+      progress: response.progress,
+      stage: response.stage,
+      task: response.task,
+      tone: response.status === 'failed' ? 'failed' : waiting ? 'attention' : 'progress',
+    }),
+  );
 }
