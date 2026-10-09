@@ -100,6 +100,27 @@ test('work validation records the real diff and configured commands', async () =
   if (untrackedResult.kind === 'passed') {
     assert.match(untrackedResult.diff, /new.txt/);
   }
+
+  // The returned diff is the worktree after the commands, so files they
+  // write are part of what the reviewer sees.
+  const written = repo();
+  writeFileSync(path.join(written.cwd, 'README.md'), '# demo\nchanged\n');
+  const writtenResult = await validateWork({
+    allowsEmptyDiff: false,
+    baseSha: written.baseSha,
+    commands: [
+      {
+        argv: ['node', '-e', "require('node:fs').writeFileSync('report.json', '{}')"],
+        name: 'tests',
+        timeoutMs: 5000,
+      },
+    ],
+    cwd: written.cwd,
+  });
+  assert.equal(writtenResult.kind, 'passed');
+  if (writtenResult.kind === 'passed') {
+    assert.match(writtenResult.diff, /report.json/);
+  }
 });
 
 test('empty diffs, whitespace, commits, timeouts, and command results are checks', async () => {

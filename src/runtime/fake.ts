@@ -38,6 +38,14 @@ export class FakeRuntime implements FactorySubagentRuntime {
       return () => undefined;
     }
     this.watchers.set(run.runId, handler);
+    // Like an exit file on disk, a terminal that landed before the watch
+    // still reaches a late observer.
+    const terminal = this.tracked.get(run.runId)?.terminal ?? null;
+    if (terminal !== null) {
+      queueMicrotask(() => {
+        handler(terminal);
+      });
+    }
     return () => {
       this.watchers.delete(run.runId);
     };

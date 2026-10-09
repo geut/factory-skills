@@ -209,6 +209,8 @@ export function reviewPrompt(input: {
   displayRef: string;
   planPath: string;
   rawOutput: string;
+  round: number;
+  taskFile: string;
   taskTitle: string;
   validationSummary: string;
 }): string {
@@ -218,7 +220,12 @@ export function reviewPrompt(input: {
     '',
     `Ticket: ${input.displayRef}`,
     `Task: ${input.taskTitle}`,
+    `Task file: ${input.taskFile}`,
     `Plan: ${input.planPath}`,
+    `Review round: ${input.round}`,
+    input.round > 1
+      ? 'The worker addressed your earlier blocking findings. Verify those fixes first and keep the same finding numbers for problems that remain.'
+      : 'This is the first review of this task.',
     'Read only. Do not edit files.',
     '',
     'Validation:',
@@ -229,5 +236,53 @@ export function reviewPrompt(input: {
     '',
     'Diff:',
     input.diff.length > 0 ? input.diff : 'none',
+  ].join('\n');
+}
+
+export function reviewCorrectionPrompt(failures: Array<string>): string {
+  const policy = stageLaunchPolicy.review;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    `The controller could not read your verdict. Fix these exact problems and return the complete ${policy.contract} template again:`,
+    ...failures.map((failure) => `- ${failure}`),
+  ].join('\n');
+}
+
+export function reviewChangesPrompt(round: number, findings: Array<string>): string {
+  const policy = stageLaunchPolicy.work;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    `Review round ${round} requested changes. Resolve these blocking findings in the same worktree:`,
+    ...findings.map((finding) => `- ${finding}`),
+    '',
+    'Change only what these findings require. Leave the work uncommitted.',
+  ].join('\n');
+}
+
+export function wrapupPrompt(input: {
+  displayRef: string;
+  minorFindings: Array<string>;
+  planPath: string;
+  tasks: Array<{ taskFile: string; taskId: string; title: string }>;
+  worktree: string;
+  worktreeBranch: string;
+}): string {
+  const policy = stageLaunchPolicy.wrapup;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    `Ticket: ${input.displayRef}`,
+    `Plan: ${input.planPath}`,
+    `Worktree: ${input.worktree}`,
+    `Branch: ${input.worktreeBranch}`,
+    'Every task passed work validation and review:',
+    ...input.tasks.map((task) => `- ${task.taskId} ${task.title} (${task.taskFile})`),
+    '',
+    'Non-blocking review findings:',
+    ...(input.minorFindings.length === 0
+      ? ['none']
+      : input.minorFindings.map((finding) => `- ${finding}`)),
   ].join('\n');
 }

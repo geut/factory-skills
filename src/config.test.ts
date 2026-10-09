@@ -39,3 +39,15 @@ test('label map accepts investigation and rejects unknown internal labels', () =
   assert.equal(allowsEmptyDiff(['bug'], parsed.config.labels.map), false);
   assert.equal(parseFactoryConfig({ labels: { map: { spike: 'feature' } }, models }).kind, 'error');
 });
+
+test('review limits default to 3 and reviewRounds needs at least one round', () => {
+  const parsed = parseFactoryConfig({ limits: { reviewCorrections: 0 }, models });
+  assert.equal(parsed.kind, 'ok');
+  if (parsed.kind !== 'ok') {
+    return;
+  }
+  assert.equal(parsed.config.limits.reviewRounds, 3);
+  assert.equal(parsed.config.limits.reviewCorrections, 0);
+  assert.equal(parseFactoryConfig({ limits: { reviewRounds: 0 }, models }).kind, 'error');
+  assert.equal(parseFactoryConfig({ limits: { reviewRounds: 1.5 }, models }).kind, 'error');
+});

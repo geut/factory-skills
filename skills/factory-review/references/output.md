@@ -31,4 +31,6 @@ If there are no findings, `## Findings` is exactly `none` and the review stops. 
 
 A `Suggestion` states the outcome needed. Do not prescribe an unnecessary implementation.
 
+The controller parses this template. `## Verdict` holds exactly one verdict word. Every finding needs a `### n. [Severity] Title` heading, a `**Finding:**`, and an `**Evidence:**`. A result that cannot be parsed comes back to you with the exact errors.
+
 After the template, call `subagent_done` and emit nothing else.

@@ -6,6 +6,8 @@ import {
   type FactorySnapshot,
   type IdSource,
   type Reduction,
+  type ReviewResult,
+  type ReviewValidationOutcome,
   type RunId,
   type RunPurpose,
   type RunRecord,
@@ -23,11 +25,15 @@ import {
   correctionPrompt,
   planPrompt,
   replyPrompt,
+  reviewChangesPrompt,
+  reviewCorrectionPrompt,
   reviewPrompt,
   stageLaunchPolicy,
   workCorrectionPrompt,
   workPrompt,
+  wrapupPrompt,
 } from '../runtime/policy.ts';
+import { formatFinding, parseReview } from '../validation/review.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
   return {
@@ -132,6 +138,8 @@ function addRun(
   const sequence = Math.max(0, ...sequences) + 1;
   const run: RunRecord = {
     description: null,
+    // A resumed reviewer still answers for the diff its session was given.
+    diffHash: parent !== null && parent.sessionId === session.id ? parent.diffHash : null,
     endedAt: null,
     id: ids.run(),
     inputHash: sha256(prompt),
@@ -203,6 +211,8 @@ function pauseWithNotice(
     ids: IdSource;
     question: string;
     retryable: boolean;
+    // A reply to this notice resumes the session that owns this run.
+    runId?: RunId;
   },
 ): void {
   resolveOpen(snapshot);
@@ -214,7 +224,7 @@ function pauseWithNotice(
     id: input.ids.attention(),
     kind: 'policy_limit',
     question: input.question,
-    runId: null,
+    runId: input.runId ?? null,
     status: 'open',
   });
   const attention = snapshot.attention.at(-1);
@@ -254,10 +264,7 @@ function pauseForLimit(
 }
 
 function sessionCwd(snapshot: FactorySnapshot, session: SessionRecord): string {
-  if (
-    (session.stage === 'work' || session.stage === 'review') &&
-    snapshot.execution.worktreePath !== null
-  ) {
+  if (session.stage !== 'plan' && snapshot.execution.worktreePath !== null) {
     return snapshot.execution.worktreePath;
   }
   return snapshot.execution.policy.codeRoot;
@@ -265,6 +272,28 @@ function sessionCwd(snapshot: FactorySnapshot, session: SessionRecord): string {
 
 function taskById(snapshot: FactorySnapshot, id: TaskId): TaskRecord | null {
   return snapshot.tasks.find((task) => task.taskId === id) ?? null;
+}
+
+function enqueueValidation(
+  snapshot: FactorySnapshot,
+  run: RunRecord,
+  idempotencyKey: string,
+  ids: IdSource,
+  retryOf: ActionRecord['id'] | null = null,
+): void {
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    id: ids.action(),
+    idempotencyKey,
+    kind: 'validate_run',
+    lastError: null,
+    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    retryOfActionId: retryOf,
+    runId: run.id,
+    status: 'pending',
+  });
 }
 
 function enqueueWorkInput(
@@ -432,43 +461,32 @@ function applyTerminal(
         run.resultContract = 'factory.plan.v3';
         run.resultJson = marker;
         run.resultHash = sha256(marker);
-        snapshot.actions.push({
-          attempts: 0,
-          attentionReplyId: null,
-          attentionRequestId: null,
-          id: ids.action(),
-          idempotencyKey: `validate:${run.id}`,
-          kind: 'validate_run',
-          lastError: null,
-          maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-          retryOfActionId: null,
-          runId: run.id,
-          status: 'pending',
-        });
-        snapshot.execution.status = 'active';
       }
       if (session?.stage === 'work') {
         run.resultJson = JSON.stringify({ output: terminal.output });
-        snapshot.actions.push({
-          attempts: 0,
-          attentionReplyId: null,
-          attentionRequestId: null,
-          id: ids.action(),
-          idempotencyKey: `validate:${run.id}`,
-          kind: 'validate_run',
-          lastError: null,
-          maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-          retryOfActionId: null,
-          runId: run.id,
-          status: 'pending',
-        });
+      }
+      if (session?.stage === 'review') {
+        const parsed = parseReview(terminal.output, run.semanticRound);
+        run.resultContract = stageLaunchPolicy.review.contract;
+        if (parsed.kind === 'valid') {
+          run.resultJson = JSON.stringify({ output: terminal.output, review: parsed.result });
+          run.resultStatus = 'valid';
+          run.resultHash = sha256(run.resultJson);
+        } else {
+          run.resultJson = JSON.stringify({ output: terminal.output });
+          run.resultStatus = 'invalid';
+          run.resultError = parsed.failures.join('\n');
+        }
+      }
+      if (session !== null && session.stage !== 'wrapup') {
+        enqueueValidation(snapshot, run, `validate:${run.id}`, ids);
         snapshot.execution.status = 'active';
       }
       return usageFor(run, terminal);
     }
     case 'caller_ping': {
       resolveOpen(snapshot);
-      if (session?.stage === 'work' && session.taskId !== null) {
+      if ((session?.stage === 'work' || session?.stage === 'review') && session.taskId !== null) {
         const task = taskById(snapshot, session.taskId);
         if (task !== null) {
           task.status = 'blocked';
@@ -627,6 +645,30 @@ function rawOutput(run: RunRecord): string {
   return run.resultJson;
 }
 
+function retryValidation(
+  snapshot: FactorySnapshot,
+  run: RunRecord,
+  action: Extract<ActionRecord, { kind: 'validate_run' }>,
+  message: string,
+  ids: IdSource,
+): Reduction {
+  action.status = 'failed';
+  action.lastError = message;
+  const failed = snapshot.actions.filter(
+    (item) => item.kind === 'validate_run' && item.runId === run.id && item.status === 'failed',
+  ).length;
+  if (failed >= snapshot.execution.policy.limits.infrastructureRetries) {
+    snapshot.execution.status = 'failed';
+    snapshot.execution.retryable = true;
+    snapshot.execution.statusReasonCode = 'validator_error';
+    snapshot.execution.statusReason = message;
+    return finish(snapshot, message);
+  }
+  enqueueValidation(snapshot, run, `validate:${run.id}:${failed + 1}`, ids, action.id);
+  snapshot.execution.status = 'active';
+  return finish(snapshot, 'Retrying validation.');
+}
+
 function finishWorkValidation(
   snapshot: FactorySnapshot,
   existing: FactorySnapshot,
@@ -640,33 +682,7 @@ function finishWorkValidation(
     return reject(existing, 'Work session is missing.');
   }
   if (outcome.kind === 'error') {
-    action.status = 'failed';
-    action.lastError = outcome.message;
-    const failed = snapshot.actions.filter(
-      (item) => item.kind === 'validate_run' && item.runId === run.id && item.status === 'failed',
-    ).length;
-    if (failed >= snapshot.execution.policy.limits.infrastructureRetries) {
-      snapshot.execution.status = 'failed';
-      snapshot.execution.retryable = true;
-      snapshot.execution.statusReasonCode = 'validator_error';
-      snapshot.execution.statusReason = outcome.message;
-      return finish(snapshot, outcome.message);
-    }
-    snapshot.actions.push({
-      attempts: 0,
-      attentionReplyId: null,
-      attentionRequestId: null,
-      id: ids.action(),
-      idempotencyKey: `validate:${run.id}:${failed + 1}`,
-      kind: 'validate_run',
-      lastError: null,
-      maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-      retryOfActionId: action.id,
-      runId: run.id,
-      status: 'pending',
-    });
-    snapshot.execution.status = 'active';
-    return finish(snapshot, 'Retrying work validation.');
+    return retryValidation(snapshot, run, action, outcome.message, ids);
   }
   action.status = 'succeeded';
   if (outcome.kind === 'failed') {
@@ -680,7 +696,11 @@ function finishWorkValidation(
   task.status = 'ready_for_review';
   snapshot.execution.stage = 'review';
   snapshot.execution.status = 'active';
-  const reviewSession: SessionRecord = {
+  // Later rounds resume the same reviewer so it can check its earlier findings.
+  const previous =
+    snapshot.sessions.find((item) => item.stage === 'review' && item.taskId === task.taskId) ??
+    null;
+  const reviewSession: SessionRecord = previous ?? {
     id: ids.session(),
     logicalKey: `review:${task.taskId}`,
     model: snapshot.execution.policy.models.review,
@@ -691,19 +711,407 @@ function finishWorkValidation(
     taskId: task.taskId,
     thinking: stageLaunchPolicy.review.thinking,
   };
-  snapshot.sessions.push(reviewSession);
+  if (previous === null) {
+    snapshot.sessions.push(reviewSession);
+  }
+  const round = task.reviewRound + 1;
   const prompt = reviewPrompt({
     diff: outcome.diff,
     displayRef: snapshot.ticket.displayRef,
     planPath: snapshot.execution.planPath ?? '',
     rawOutput: rawOutput(run),
+    round,
+    taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
     taskTitle: task.title,
     validationSummary: outcome.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
   });
-  const reviewRun = addRun(snapshot, reviewSession, null, 'initial', 1, ids, prompt);
+  const reviewRun = addRun(
+    snapshot,
+    reviewSession,
+    null,
+    previous === null ? 'initial' : 'review_changes',
+    round,
+    ids,
+    prompt,
+  );
   reviewRun.description = childDescription(task.title);
-  launchAction(snapshot, reviewRun, prompt, 'launch', ids, snapshot.execution.worktreePath);
-  return finish(snapshot, `Review queued for task ${task.taskId}.`);
+  reviewRun.diffHash = sha256(outcome.diff);
+  launchAction(
+    snapshot,
+    reviewRun,
+    prompt,
+    reviewSession.sessionFile === null ? 'launch' : 'resume',
+    ids,
+    snapshot.execution.worktreePath,
+  );
+  return finish(snapshot, `Review round ${round} queued for task ${task.taskId}.`);
+}
+
+function closeTaskSessions(snapshot: FactorySnapshot, task: TaskRecord): void {
+  for (const session of snapshot.sessions) {
+    if (session.taskId === task.taskId && session.status !== 'abandoned') {
+      session.status = 'completed';
+    }
+  }
+}
+
+function minorFindings(snapshot: FactorySnapshot): Array<string> {
+  const findings: Array<string> = [];
+  for (const session of snapshot.sessions) {
+    if (session.stage !== 'review') {
+      continue;
+    }
+    const latest = snapshot.runs
+      .filter((run) => run.sessionId === session.id && run.resultStatus === 'valid')
+      .sort((left, right) => right.sequence - left.sequence)[0];
+    if (latest === undefined) {
+      continue;
+    }
+    const parsed = parseReview(rawOutput(latest), latest.semanticRound);
+    // Finding ids restart in every task's review, so name the task.
+    if (parsed.kind === 'valid') {
+      findings.push(
+        ...parsed.result.findings
+          .filter((item) => !item.blocking)
+          .map((item) => `Task ${session.taskId ?? '?'} ${formatFinding(item)}`),
+      );
+    }
+  }
+  return findings;
+}
+
+function queueWrapup(snapshot: FactorySnapshot, ids: IdSource): string | null {
+  const worktree = snapshot.execution.worktreePath;
+  if (worktree === null) {
+    return 'The worktree is missing.';
+  }
+  const session: SessionRecord = {
+    id: ids.session(),
+    logicalKey: 'wrapup',
+    model: snapshot.execution.policy.models.work,
+    piSessionId: null,
+    sessionFile: null,
+    stage: 'wrapup',
+    status: 'prepared',
+    taskId: null,
+    thinking: stageLaunchPolicy.wrapup.thinking,
+  };
+  snapshot.sessions.push(session);
+  const prompt = wrapupPrompt({
+    displayRef: snapshot.ticket.displayRef,
+    minorFindings: minorFindings(snapshot),
+    planPath: snapshot.execution.planPath ?? '',
+    tasks: snapshot.tasks.map((task) => ({
+      taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+      taskId: task.taskId,
+      title: task.title,
+    })),
+    worktree,
+    worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+  });
+  const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
+  run.description = childDescription(snapshot.ticket.title);
+  launchAction(snapshot, run, prompt, 'launch', ids, worktree);
+  snapshot.execution.stage = 'wrapup';
+  snapshot.execution.status = 'active';
+  return null;
+}
+
+// After an approval, either start the next dependency-ready task or, once
+// every task is done, hand the ticket to wrap-up.
+function advanceAfterApproval(
+  snapshot: FactorySnapshot,
+  ids: IdSource,
+  approved: TaskRecord,
+): string {
+  const next = lowestReady(snapshot);
+  if (next !== null) {
+    snapshot.execution.stage = 'work';
+    snapshot.execution.status = 'active';
+    enqueueWorkInput(snapshot, {
+      failures: [],
+      idempotencyKey: `work-input:${snapshot.execution.id}:${next.taskId}:initial`,
+      ids,
+      purpose: 'initial',
+      taskId: next.taskId,
+    });
+    return `Task ${approved.taskId} approved. Work input queued for task ${next.taskId}.`;
+  }
+  const open = snapshot.tasks.filter(
+    (task) => task.status !== 'done' && task.status !== 'cancelled',
+  );
+  if (open.length > 0) {
+    const waiting = open.map((task) => task.taskId).join(', ');
+    pauseWithNotice(snapshot, {
+      code: 'no_ready_task',
+      failures: [`No remaining task is ready: ${waiting}.`],
+      ids,
+      question: `Task ${approved.taskId} was approved, but no remaining task is ready: ${waiting}.`,
+      retryable: false,
+    });
+    return `Task ${approved.taskId} approved. No remaining task is ready.`;
+  }
+  const failure = queueWrapup(snapshot, ids);
+  if (failure !== null) {
+    pauseWithNotice(snapshot, {
+      code: 'wrapup_input_invalid',
+      failures: [failure],
+      ids,
+      question: failure,
+      retryable: false,
+    });
+    return failure;
+  }
+  return `Task ${approved.taskId} approved. Every task is done; wrap-up queued.`;
+}
+
+function applyVerdict(
+  snapshot: FactorySnapshot,
+  task: TaskRecord,
+  run: RunRecord,
+  result: ReviewResult,
+  ids: IdSource,
+): Reduction {
+  const blocking = result.findings.filter((finding) => finding.blocking);
+  task.reviewRound = result.round;
+  task.reviewVerdict = result.verdict;
+  task.findingCount = result.findings.length;
+  task.blockingCount = blocking.length;
+  const limit = snapshot.execution.policy.limits.reviewRounds;
+  switch (result.verdict) {
+    case 'approve': {
+      task.status = 'done';
+      closeTaskSessions(snapshot, task);
+      return finish(snapshot, advanceAfterApproval(snapshot, ids, task));
+    }
+    case 'changes_requested': {
+      const lines = blocking.map((finding) => formatFinding(finding));
+      if (result.round >= limit) {
+        task.status = 'blocked';
+        pauseWithNotice(snapshot, {
+          code: 'review_round_limit',
+          failures: lines,
+          ids,
+          question: [
+            `Review round ${result.round} of ${limit} for task ${task.taskId} still has blocking findings:`,
+            ...lines.map((line) => `- ${line}`),
+            'Reply to tell the reviewer how to settle them.',
+          ].join('\n'),
+          retryable: false,
+          runId: run.id,
+        });
+        return finish(snapshot, `Review round limit reached for task ${task.taskId}.`);
+      }
+      task.status = 'working';
+      snapshot.execution.stage = 'work';
+      snapshot.execution.status = 'active';
+      enqueueWorkInput(snapshot, {
+        failures: lines,
+        idempotencyKey: `work-input:${run.id}:review:${result.round}`,
+        ids,
+        purpose: 'review_changes',
+        taskId: task.taskId,
+      });
+      return finish(snapshot, `Review round ${result.round} requested changes to ${task.taskId}.`);
+    }
+    case 'blocked': {
+      const lines = result.findings.map((finding) => formatFinding(finding));
+      task.status = 'blocked';
+      pauseWithNotice(snapshot, {
+        code: 'review_blocked',
+        failures: [result.summary, ...lines],
+        ids,
+        question: [
+          `The reviewer blocked task ${task.taskId}: ${result.summary}`,
+          ...lines.map((line) => `- ${line}`),
+          'Reply to resume the reviewer with what it needs.',
+        ].join('\n'),
+        retryable: false,
+        runId: run.id,
+      });
+      return finish(snapshot, `Review blocked task ${task.taskId}.`);
+    }
+    default: {
+      const _exhaustive: never = result.verdict;
+      return _exhaustive;
+    }
+  }
+}
+
+function correctReview(
+  snapshot: FactorySnapshot,
+  session: SessionRecord,
+  task: TaskRecord,
+  parent: RunRecord,
+  failures: Array<string>,
+  ids: IdSource,
+): Reduction {
+  // Malformed results are budgeted per round and never consume the round.
+  const count = snapshot.runs.filter(
+    (item) =>
+      item.sessionId === session.id &&
+      item.purpose === 'validation_correction' &&
+      item.semanticRound === parent.semanticRound,
+  ).length;
+  if (count >= snapshot.execution.policy.limits.reviewCorrections) {
+    task.status = 'blocked';
+    pauseWithNotice(snapshot, {
+      code: 'review_correction_limit',
+      failures,
+      ids,
+      question: [
+        'The review result is still malformed after the correction limit:',
+        ...failures.map((failure) => `- ${failure}`),
+        'Reply to resume the reviewer.',
+      ].join('\n'),
+      retryable: false,
+      runId: parent.id,
+    });
+    return finish(snapshot, 'Review correction limit reached.');
+  }
+  const prompt = reviewCorrectionPrompt(failures);
+  const run = addRun(
+    snapshot,
+    session,
+    parent,
+    'validation_correction',
+    parent.semanticRound,
+    ids,
+    prompt,
+  );
+  run.description = parent.description ?? childDescription(task.title);
+  launchAction(
+    snapshot,
+    run,
+    prompt,
+    session.sessionFile === null ? 'launch' : 'resume',
+    ids,
+    sessionCwd(snapshot, session),
+  );
+  snapshot.execution.status = 'active';
+  return finish(snapshot, 'Review result is malformed. Resuming the reviewer.');
+}
+
+function latestWorkRun(snapshot: FactorySnapshot, taskId: TaskId): RunRecord | null {
+  const workSession =
+    snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === taskId) ?? null;
+  if (workSession === null) {
+    return null;
+  }
+  return (
+    [...snapshot.runs]
+      .reverse()
+      .find((item) => item.sessionId === workSession.id && item.terminalKind === 'subagent_done') ??
+    null
+  );
+}
+
+// Stale reviews earlier in this round. Each one enqueued a validation keyed
+// `validate:<work run>:stale:<review run>`.
+function staleReviews(snapshot: FactorySnapshot, review: RunRecord): number {
+  return snapshot.actions.filter((action) => {
+    if (action.kind !== 'validate_run') {
+      return false;
+    }
+    const match = /:stale:(.+)$/.exec(action.idempotencyKey);
+    const earlier = snapshot.runs.find((run) => run.id === match?.[1]);
+    return (
+      earlier !== undefined &&
+      earlier.sessionId === review.sessionId &&
+      earlier.semanticRound === review.semanticRound
+    );
+  }).length;
+}
+
+// The worktree changed after the reviewer received its diff. Validate the
+// worker's latest attempt again so the next reviewer gets a checked diff.
+// A second change in the same round pauses: something keeps writing to the
+// worktree, and another review would only spend tokens.
+function revalidateWork(
+  snapshot: FactorySnapshot,
+  existing: FactorySnapshot,
+  task: TaskRecord,
+  review: RunRecord,
+  ids: IdSource,
+): Reduction {
+  const workRun = latestWorkRun(snapshot, task.taskId);
+  if (workRun === null) {
+    return reject(existing, 'No finished work run can be validated again.');
+  }
+  if (staleReviews(snapshot, review) >= 1) {
+    const worktree = snapshot.execution.worktreePath ?? 'the worktree';
+    const failure = `The worktree changed again while review round ${review.semanticRound} of task ${task.taskId} ran.`;
+    task.status = 'blocked';
+    pauseWithNotice(snapshot, {
+      code: 'review_diff_changed',
+      failures: [failure],
+      ids,
+      question: [
+        failure,
+        `Something keeps writing files the diff includes. Check git status in ${worktree} and ignore generated files.`,
+        `Then run /factory retry ${snapshot.ticket.commandRef} to validate the work and review it again.`,
+      ].join('\n'),
+      retryable: true,
+      runId: review.id,
+    });
+    return finish(snapshot, 'The worktree keeps changing during review.');
+  }
+  task.status = 'working';
+  snapshot.execution.stage = 'work';
+  snapshot.execution.status = 'active';
+  enqueueValidation(snapshot, workRun, `validate:${workRun.id}:stale:${review.id}`, ids);
+  return finish(snapshot, 'The worktree changed during review. Validating the work again.');
+}
+
+function finishReviewValidation(
+  snapshot: FactorySnapshot,
+  existing: FactorySnapshot,
+  run: RunRecord,
+  action: Extract<ActionRecord, { kind: 'validate_run' }>,
+  outcome: ReviewValidationOutcome,
+  ids: IdSource,
+): Reduction {
+  const session = sessionFor(snapshot, run.sessionId);
+  const task =
+    session?.taskId === null || session === null ? null : taskById(snapshot, session.taskId);
+  if (session === null || session.stage !== 'review' || task === null) {
+    return reject(existing, 'Review session is missing.');
+  }
+  if (outcome.kind === 'error') {
+    return retryValidation(snapshot, run, action, outcome.message, ids);
+  }
+  action.status = 'succeeded';
+  switch (outcome.kind) {
+    case 'unsafe': {
+      task.status = 'blocked';
+      pauseWithNotice(snapshot, {
+        code: 'review_isolation',
+        failures: outcome.failures,
+        ids,
+        question: [
+          'The reviewer was not isolated from the worker:',
+          ...outcome.failures.map((failure) => `- ${failure}`),
+        ].join('\n'),
+        retryable: false,
+      });
+      return finish(snapshot, 'Review isolation failed.');
+    }
+    case 'stale':
+      return revalidateWork(snapshot, existing, task, run, ids);
+    case 'malformed':
+      return correctReview(snapshot, session, task, run, outcome.failures, ids);
+    case 'passed': {
+      const parsed = parseReview(rawOutput(run), run.semanticRound);
+      if (parsed.kind === 'invalid') {
+        return correctReview(snapshot, session, task, run, parsed.failures, ids);
+      }
+      return applyVerdict(snapshot, task, run, parsed.result, ids);
+    }
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
 }
 
 export function reduce(input: {
@@ -750,6 +1158,9 @@ export function reduce(input: {
       if (event.stage === 'work') {
         return finishWorkValidation(snapshot, existing, run, action, event.outcome, ids);
       }
+      if (event.stage === 'review') {
+        return finishReviewValidation(snapshot, existing, run, action, event.outcome, ids);
+      }
       if (run.resultStatus !== 'valid' || run.resultHash === null) {
         return reject(existing, 'Validation requires a valid plan result.');
       }
@@ -764,7 +1175,11 @@ export function reduce(input: {
       }
       snapshot.tasks = event.outcome.tasks.map((task) => ({
         blockedBy: task.blockedBy,
+        blockingCount: null,
+        findingCount: null,
         ordinal: task.ordinal,
+        reviewRound: 0,
+        reviewVerdict: null,
         specHash: task.specHash,
         status: 'pending',
         taskFile: task.taskFile,
@@ -884,8 +1299,11 @@ export function reduce(input: {
       if (session === null) {
         return reject(existing, 'Work session is missing.');
       }
-      if (action.purpose === 'validation_correction') {
-        const prompt = workCorrectionPrompt(action.failures);
+      if (action.purpose === 'validation_correction' || action.purpose === 'review_changes') {
+        const review = action.purpose === 'review_changes';
+        const prompt = review
+          ? reviewChangesPrompt(task.reviewRound, action.failures)
+          : workCorrectionPrompt(action.failures);
         const parent =
           [...snapshot.runs]
             .reverse()
@@ -897,8 +1315,8 @@ export function reduce(input: {
           snapshot,
           session,
           parent,
-          'validation_correction',
-          count + 1,
+          action.purpose,
+          review ? task.reviewRound : count + 1,
           ids,
           prompt,
         );
@@ -912,7 +1330,12 @@ export function reduce(input: {
           worktree,
         );
         snapshot.execution.status = 'active';
-        return finish(snapshot, `Work correction queued for task ${task.taskId}.`);
+        return finish(
+          snapshot,
+          review
+            ? `Review changes queued for task ${task.taskId}.`
+            : `Work correction queued for task ${task.taskId}.`,
+        );
       }
       const attention =
         snapshot.attention.find(
@@ -1042,7 +1465,10 @@ export function reduce(input: {
       ) {
         return reject(existing, 'This ticket is not waiting for a reply.');
       }
-      if (snapshot.execution.statusReasonCode === 'work_input_invalid') {
+      if (
+        snapshot.execution.statusReasonCode === 'work_input_invalid' ||
+        snapshot.execution.statusReasonCode === 'review_diff_changed'
+      ) {
         return reject(existing, `Retry with /factory retry ${snapshot.ticket.commandRef}.`);
       }
       const attention =
@@ -1154,6 +1580,35 @@ export function reduce(input: {
         return finish(snapshot, 'Retrying work input preparation.');
       }
       if (
+        snapshot.execution.status === 'paused' &&
+        snapshot.execution.statusReasonCode === 'review_diff_changed'
+      ) {
+        const attention = snapshot.attention.find((item) => item.status === 'open') ?? null;
+        const review =
+          attention?.runId === null || attention === null
+            ? null
+            : runFor(snapshot, attention.runId);
+        const session = review === null ? null : sessionFor(snapshot, review.sessionId);
+        const task =
+          session === null || session.taskId === null ? null : taskById(snapshot, session.taskId);
+        const workRun = task === null ? null : latestWorkRun(snapshot, task.taskId);
+        if (task === null || workRun === null) {
+          return reject(existing, 'No finished work run can be validated again.');
+        }
+        resolveOpen(snapshot);
+        task.status = 'working';
+        snapshot.execution.stage = 'work';
+        snapshot.execution.status = 'active';
+        snapshot.execution.retryable = false;
+        enqueueValidation(
+          snapshot,
+          workRun,
+          `validate:${workRun.id}:retry:${event.idempotencyKey}`,
+          ids,
+        );
+        return finish(snapshot, 'Validating the work again.');
+      }
+      if (
         snapshot.execution.status === 'failed' &&
         snapshot.execution.retryable &&
         snapshot.execution.statusReasonCode === 'validator_error'
@@ -1179,7 +1634,7 @@ export function reduce(input: {
         });
         snapshot.execution.status = 'active';
         snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying work validation.');
+        return finish(snapshot, 'Retrying validation.');
       }
       if (snapshot.execution.status === 'resume_failed') {
         const reply = snapshot.replies.find((item) => item.isCurrent) ?? null;
@@ -1255,8 +1710,8 @@ export function reduce(input: {
           snapshot.execution.worktreeStatus = 'preparing';
           return finish(snapshot, 'Retrying worktree preparation.');
         }
-        const session = snapshot.sessions.at(-1) ?? null;
         const parent = snapshot.runs.at(-1) ?? null;
+        const session = parent === null ? null : sessionFor(snapshot, parent.sessionId);
         if (session === null || parent === null) {
           return reject(existing, 'Nothing failed that can be retried.');
         }

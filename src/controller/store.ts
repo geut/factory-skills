@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { InternalLabel } from '../config.ts';
+import { DEFAULT_LIMITS, type InternalLabel } from '../config.ts';
 import {
   actionId,
   attentionId,
@@ -21,6 +21,7 @@ import {
   type IdSource,
   type Policy,
   type ReplyRecord,
+  type ReviewVerdict,
   type RunId,
   type RunRecord,
   type SessionRecord,
@@ -160,6 +161,15 @@ function parsePolicy(raw: string): Policy {
     limits: {
       infrastructureRetries: limits['infrastructureRetries'],
       planCorrections: limits['planCorrections'],
+      // Executions started before the review limits existed keep the defaults.
+      reviewCorrections:
+        typeof limits['reviewCorrections'] === 'number'
+          ? limits['reviewCorrections']
+          : DEFAULT_LIMITS.reviewCorrections,
+      reviewRounds:
+        typeof limits['reviewRounds'] === 'number'
+          ? limits['reviewRounds']
+          : DEFAULT_LIMITS.reviewRounds,
       workCorrections: limits['workCorrections'],
     },
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
@@ -219,6 +229,7 @@ const taskStatuses = [
   'blocked',
   'cancelled',
 ] as const;
+const reviewVerdicts: ReadonlyArray<ReviewVerdict> = ['approve', 'changes_requested', 'blocked'];
 const sessionStatuses = ['prepared', 'open', 'completed', 'abandoned'] as const;
 const runPurposes = [
   'initial',
@@ -415,9 +426,19 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
         'SELECT depends_on_task_id FROM task_dependencies WHERE execution_id = ? AND task_id = ? ORDER BY depends_on_task_id',
       )
       .all(execution, id);
+    const findings = record['finding_count'];
+    const blocking = record['blocking_count'];
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
+      blockingCount: typeof blocking === 'number' ? blocking : null,
+      findingCount: typeof findings === 'number' ? findings : null,
       ordinal: integer(record, 'ordinal'),
+      reviewRound: integer(record, 'review_round'),
+      reviewVerdict: optionalOneOf(
+        nullableText(record, 'review_verdict'),
+        reviewVerdicts,
+        'review verdict',
+      ),
       specHash: nullableText(record, 'spec_hash'),
       status: oneOf(text(record, 'status'), taskStatuses, 'task status'),
       taskFile: text(record, 'task_file'),
@@ -466,6 +487,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
       const parent = nullableText(record, 'parent_run_id');
       return {
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
+        diffHash: nullableText(record, 'diff_hash'),
         endedAt: nullableText(record, 'ended_at'),
         id: runId(text(record, 'id')),
         inputHash: nullableText(record, 'input_hash'),
@@ -609,7 +631,8 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
     typeof payload['taskId'] === 'string' &&
     (payload['purpose'] === 'initial' ||
       payload['purpose'] === 'validation_correction' ||
-      payload['purpose'] === 'human_reply') &&
+      payload['purpose'] === 'human_reply' ||
+      payload['purpose'] === 'review_changes') &&
     Array.isArray(payload['failures']) &&
     payload['failures'].every((item) => typeof item === 'string')
   ) {
@@ -851,9 +874,10 @@ function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now
   db.prepare(
     `INSERT INTO agent_runs
       (id, execution_id, session_id, sequence, parent_run_id, purpose, semantic_round, status,
-       terminal_kind, subagent_id, pane_id, pane_name, input_hash, result_contract, result_status,
-       result_json, result_hash, result_error, lifecycle_json, created_at, started_at, updated_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       terminal_kind, subagent_id, pane_id, pane_name, input_hash, diff_hash, result_contract,
+       result_status, result_json, result_hash, result_error, lifecycle_json, created_at, started_at,
+       updated_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     run.id,
     execution,
@@ -868,6 +892,7 @@ function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now
     run.paneId,
     run.paneName,
     run.inputHash,
+    run.diffHash,
     run.resultContract,
     run.resultStatus,
     run.resultJson,
@@ -1069,10 +1094,22 @@ function persist(
     const previous = before?.tasks.find((item) => item.taskId === task.taskId) ?? null;
     if (previous === null) {
       insertTask(db, after.execution.id, task, now);
-    } else if (previous.status !== task.status) {
+    } else if (!same(previous, task)) {
       db.prepare(
-        'UPDATE tasks SET status = ?, updated_at = ? WHERE execution_id = ? AND task_id = ?',
-      ).run(task.status, now, after.execution.id, task.taskId);
+        `UPDATE tasks
+         SET status = ?, review_round = ?, review_verdict = ?, finding_count = ?,
+             blocking_count = ?, version = version + 1, updated_at = ?
+         WHERE execution_id = ? AND task_id = ?`,
+      ).run(
+        task.status,
+        task.reviewRound,
+        task.reviewVerdict,
+        task.findingCount,
+        task.blockingCount,
+        now,
+        after.execution.id,
+        task.taskId,
+      );
     }
   }
   for (const session of after.sessions) {

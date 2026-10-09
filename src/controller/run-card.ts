@@ -8,6 +8,9 @@ export function purposeSegment(run: Pick<RunRecord, 'purpose' | 'semanticRound'>
     return null;
   }
   const label = runStatusLabel(run.purpose);
+  if (run.purpose === 'review_changes') {
+    return `round ${run.semanticRound}`;
+  }
   if (run.purpose === 'validation_correction') {
     return `${label} ${run.semanticRound}`;
   }
@@ -50,7 +53,9 @@ export function limitPaused(snapshot: FactorySnapshot, run: RunRecord): boolean 
   const code = snapshot.execution.statusReasonCode;
   if (
     snapshot.execution.status !== 'paused' ||
-    (code !== 'plan_correction_limit' && code !== 'work_correction_limit')
+    (code !== 'plan_correction_limit' &&
+      code !== 'work_correction_limit' &&
+      code !== 'review_correction_limit')
   ) {
     return false;
   }

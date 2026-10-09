@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { InternalLabel, WorkCommand } from './config.ts';
+import type { InternalLabel, Limits, WorkCommand } from './config.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -137,12 +137,18 @@ export type AttentionKind = 'agent_question' | 'policy_limit' | 'manual_approval
 export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'cancelled';
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
-export type WorkInputPurpose = 'initial' | 'validation_correction' | 'human_reply';
+export type WorkInputPurpose =
+  | 'initial'
+  | 'validation_correction'
+  | 'human_reply'
+  | 'review_changes';
+export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
+export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
 export type Policy = {
   codeRoot: string;
   labels: { map: Record<string, InternalLabel> };
-  limits: { infrastructureRetries: number; planCorrections: number; workCorrections: number };
+  limits: Limits;
   models: { plan: string; review: string; work: string };
   validation: { work: { commands: Array<WorkCommand> } };
 };
@@ -211,6 +217,39 @@ export type WorkValidationOutcome =
   | { checks: Array<WorkCheck>; failures: Array<string>; kind: 'failed' }
   | { kind: 'error'; message: string };
 
+export type ReviewFinding = {
+  blocking: boolean;
+  evidence: string;
+  finding: string;
+  id: string;
+  location: string | null;
+  number: number;
+  severity: ReviewSeverity;
+  suggestion: string | null;
+  title: string;
+};
+
+export type ReviewResult = {
+  findings: Array<ReviewFinding>;
+  round: number;
+  summary: string;
+  verdict: ReviewVerdict;
+};
+
+export type ReviewCheck = {
+  details: string;
+  kind: 'schema' | 'policy' | 'diff';
+  name: string;
+  status: 'passed' | 'failed';
+};
+
+// `malformed` resumes the reviewer, `stale` re-validates the worker's diff,
+// and `unsafe` pauses: the reviewer was not isolated from the worker.
+export type ReviewValidationOutcome =
+  | { checks: Array<ReviewCheck>; kind: 'passed' }
+  | { checks: Array<ReviewCheck>; failures: Array<string>; kind: 'malformed' | 'stale' | 'unsafe' }
+  | { kind: 'error'; message: string };
+
 export type ReconcileObservation =
   | {
       kind: 'still_running';
@@ -237,6 +276,13 @@ export type ControllerEvent =
       outcome: WorkValidationOutcome;
       runId: RunId;
       stage: 'work';
+    }
+  | {
+      actionId: ActionId;
+      kind: 'validation_finished';
+      outcome: ReviewValidationOutcome;
+      runId: RunId;
+      stage: 'review';
     }
   | {
       actionId: ActionId;
@@ -319,7 +365,11 @@ export type ExecutionRecord = {
 
 export type TaskRecord = {
   blockedBy: Array<TaskId>;
+  blockingCount: number | null;
+  findingCount: number | null;
   ordinal: number;
+  reviewRound: number;
+  reviewVerdict: ReviewVerdict | null;
   specHash: string | null;
   status: TaskStatus;
   taskFile: string;
@@ -341,6 +391,7 @@ export type SessionRecord = {
 
 export type RunRecord = {
   description: string | null;
+  diffHash: string | null;
   endedAt: string | null;
   id: RunId;
   inputHash: string | null;

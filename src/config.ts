@@ -11,11 +11,35 @@ export type WorkCommand = {
   timeoutMs: number;
 };
 
+export type Limits = {
+  infrastructureRetries: number;
+  planCorrections: number;
+  reviewCorrections: number;
+  reviewRounds: number;
+  workCorrections: number;
+};
+
+const LIMIT_KEYS = [
+  'infrastructureRetries',
+  'planCorrections',
+  'reviewCorrections',
+  'reviewRounds',
+  'workCorrections',
+] as const;
+
+export const DEFAULT_LIMITS: Limits = {
+  infrastructureRetries: 3,
+  planCorrections: 3,
+  reviewCorrections: 3,
+  reviewRounds: 3,
+  workCorrections: 3,
+};
+
 export type FactoryConfig = {
   github: { host: string; owner: string; repo: string } | null;
   keys: Record<string, { provider: 'github' }>;
   labels: { map: Record<string, InternalLabel> };
-  limits: { infrastructureRetries: number; planCorrections: number; workCorrections: number };
+  limits: Limits;
   models: { plan: string; review: string; work: string };
   validation: { work: { commands: Array<WorkCommand> } };
 };
@@ -146,22 +170,21 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
   }
 
   const limitsValue = value['limits'];
-  let planCorrections = 3;
-  let workCorrections = 3;
-  let infrastructureRetries = 3;
+  const limits: Limits = { ...DEFAULT_LIMITS };
   if (limitsValue !== undefined) {
     if (!isRecord(limitsValue)) {
       return { kind: 'error', message: 'FACTORY.json limits must be an object.' };
     }
-    const planLimit = readLimit(limitsValue, 'planCorrections', 3);
-    const workLimit = readLimit(limitsValue, 'workCorrections', 3);
-    const retries = readLimit(limitsValue, 'infrastructureRetries', 3);
-    if (planLimit === null || workLimit === null || retries === null) {
-      return { kind: 'error', message: 'FACTORY.json limits must be non-negative integers.' };
+    for (const key of LIMIT_KEYS) {
+      const limit = readLimit(limitsValue, key, DEFAULT_LIMITS[key]);
+      if (limit === null) {
+        return { kind: 'error', message: 'FACTORY.json limits must be non-negative integers.' };
+      }
+      limits[key] = limit;
     }
-    planCorrections = planLimit;
-    workCorrections = workLimit;
-    infrastructureRetries = retries;
+    if (limits.reviewRounds < 1) {
+      return { kind: 'error', message: 'FACTORY.json limits.reviewRounds must be at least 1.' };
+    }
   }
 
   const labels = readLabelMap(value['labels']);
@@ -214,7 +237,7 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       github,
       keys,
       labels,
-      limits: { infrastructureRetries, planCorrections, workCorrections },
+      limits,
       models: { plan, review, work },
       validation: { work: { commands } },
     },

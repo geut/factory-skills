@@ -17,7 +17,7 @@ export type LaunchSpec = {
   runId: RunId;
   sessionFile: string;
   sessionId: SessionId;
-  stage: 'plan' | 'work' | 'review';
+  stage: 'plan' | 'work' | 'review' | 'wrapup';
   taskLabel: string | null;
   thinking: string;
   tools: string;

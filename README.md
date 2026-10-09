@@ -1,6 +1,6 @@
 # Factory Skills
 
-A [Pi](https://pi.dev) package that runs one ticket from planning through the first work agent. Coordination lives in a TypeScript controller. Skills describe specialist behavior only.
+A [Pi](https://pi.dev) package that runs one ticket from planning through work, review, and the wrap-up launch. Coordination lives in a TypeScript controller. Skills describe specialist behavior only.
 
 ## Commands
 
@@ -18,7 +18,17 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 
 `caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
 
-This slice stops once the work agent is launched. It does not validate work, review, wrap up, open a pull request, or implement `/factory rerun`.
+When a worker finishes, the controller inspects the worktree diff and runs the trusted `validation.work.commands`. A failure resumes the same worker with the exact failures. A pass launches a read-only reviewer on `models.review` with the diff that was checked.
+
+The reviewer returns the `factory.review.v4` template. The controller parses the verdict and its findings, then checks that the reviewer was isolated and that the worktree diff has not changed since the reviewer received it.
+
+- `approve` marks the task done and starts the next dependency-ready task. After the last task, the controller launches wrap-up.
+- `changes_requested` resumes the same worker with only the blocking findings. Work validation runs again, then the same reviewer session reviews round 2. `limits.reviewRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the reviewer with your decision.
+- `blocked` pauses the ticket. `reply` resumes the reviewer.
+- A result the controller cannot parse resumes the reviewer with the parse errors. That does not spend a round. `limits.reviewCorrections` (default 3) bounds it per round.
+- A diff that changed during review is validated again before another review in the same round. The reviewer gets the worktree as it stands after the validation commands. A second change in the same round pauses the ticket, because something keeps writing to the worktree; ignore the generated files, then `retry` validates the work and reviews it again.
+
+Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round. This slice launches wrap-up but does not validate it. It does not open a pull request or implement `/factory rerun`.
 
 ## Layout
 
@@ -27,7 +37,7 @@ src/extension/     Pi /factory command
 src/controller/    commands, pure reducer, SQLite persistence
 src/actions/       leased dispatcher, worktree preparation
 src/runtime/       FactorySubagentRuntime, fake, pi-herdr adapter
-src/validation/    factory.plan.v3 checks
+src/validation/    plan, work, and review checks
 src/state/         schema and database opener
 skills/            specialist procedures and output templates
 tests/             recovery tests against real SQLite
@@ -65,7 +75,11 @@ Child sessions follow the named skill, return only the versioned template in tha
 {
   "models": { "work": "work-model", "review": "review-model" },
   "github": { "owner": "geut", "repo": "factory-skills" },
-  "keys": { "PROJ": { "provider": "github" } }
+  "keys": { "PROJ": { "provider": "github" } },
+  "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
+  "validation": {
+    "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] }
+  }
 }
 ```
 

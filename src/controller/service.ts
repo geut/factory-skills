@@ -22,6 +22,7 @@ import {
   type GithubClient,
   type TicketSource,
 } from '../tickets.ts';
+import { parseReview } from '../validation/review.ts';
 import { parseFactoryCommand } from './parse.ts';
 import {
   finishedRunCard,
@@ -29,6 +30,7 @@ import {
   runListLabel,
   runOutcome,
   runsInStartOrder,
+  runStage,
   type RunOutcome,
 } from './run-card.ts';
 import {
@@ -410,6 +412,13 @@ function terminalSummary(
   }
   if (terminal.kind === 'caller_ping') {
     return terminal.question;
+  }
+  if (terminal.kind === 'subagent_done' && runStage(snapshot, run) === 'review') {
+    const parsed = parseReview(terminal.output, run.semanticRound);
+    if (parsed.kind === 'valid') {
+      return `${parsed.result.verdict}: ${parsed.result.summary}`;
+    }
+    return run.resultError?.split('\n')[0] ?? 'The review result is malformed.';
   }
   if (runOutcome(snapshot, run) === 'checks failed') {
     const prefix = `work-input:${runId}:correction:`;

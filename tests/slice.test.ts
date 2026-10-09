@@ -257,7 +257,13 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
   const policy: Policy = {
     codeRoot,
     labels: { map: {} },
-    limits: { infrastructureRetries: 3, planCorrections: 3, workCorrections: 3 },
+    limits: {
+      infrastructureRetries: 3,
+      planCorrections: 3,
+      reviewCorrections: 3,
+      reviewRounds: 3,
+      workCorrections: 3,
+    },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     validation: { work: { commands: [] } },
   };
@@ -569,4 +575,462 @@ test('two tickets can validate at the same time', async () => {
   const started = Date.now();
   await waitFor(() => runtime.launches.filter((launch) => launch.stage === 'review').length === 2);
   assert.ok(Date.now() - started < 3500);
+});
+
+const blockingFinding = `### 1. [Major] Filter resets on reload
+
+**Location:** src/filter.ts:10
+**Finding:** The filter is never stored.
+**Evidence:** No storage call exists on the change path.
+**Suggestion:** Persist the filter before navigation.`;
+
+const minorFinding = `### 2. [Minor] Unclear name
+
+**Location:** src/filter.ts:4
+**Finding:** The variable f hides what it holds.
+**Evidence:** It is read in three places.`;
+
+function reviewOutput(verdict: string, findings = 'none', summary = 'Checked the diff.'): string {
+  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Findings\n\n${findings}\n`;
+}
+
+type ReviewHarness = {
+  db: ReturnType<typeof openStateDatabase>;
+  notified: Array<string>;
+  review: FakeRuntime['launches'][number];
+  runtime: FakeRuntime;
+  service: ReturnType<typeof createFactoryService>;
+  work: FakeRuntime['launches'][number];
+};
+
+async function reachReview(
+  config: Record<string, unknown> = {},
+  taskCount = 1,
+): Promise<ReviewHarness> {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, ...config })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    db,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  if (taskCount > 1) {
+    writeFileSync(
+      path.join(directory, '02-task-show-filter.md'),
+      '# Show the filter\n\nType: feature\nBlocked by: 01\n\n## Acceptance criteria\n- [ ] The filter is visible.\n',
+    );
+  }
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(
+    () =>
+      runtime.launches.some((launch) => launch.stage === 'work') &&
+      service.status('proj-123').includes('Launched'),
+  );
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor(
+    () =>
+      runtime.launches.some((launch) => launch.stage === 'review') &&
+      service.status('proj-123').includes('Launched'),
+  );
+  const review = runtime.launches.find((launch) => launch.stage === 'review');
+  if (review === undefined) {
+    throw new Error('missing review run');
+  }
+  return { db, notified, review, runtime, service, work };
+}
+
+// The service finishes run cards in the background; close after it settles.
+async function closeWhenIdle(db: ReviewHarness['db']): Promise<void> {
+  await waitFor(() => {
+    const open: unknown = db
+      .prepare("SELECT count(*) AS n FROM actions WHERE status IN ('pending', 'leased')")
+      .get();
+    return typeof open === 'object' && open !== null && 'n' in open && open.n === 0;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  db.close();
+}
+
+function launchesOf(runtime: FakeRuntime, stage: string): FakeRuntime['launches'] {
+  return runtime.launches.filter((launch) => launch.stage === stage);
+}
+
+function taskRow(db: ReviewHarness['db'], task = '01'): Record<string, unknown> {
+  const found: unknown = db
+    .prepare(
+      `SELECT status, review_round, review_verdict, finding_count, blocking_count
+       FROM tasks WHERE task_id = ?`,
+    )
+    .get(task);
+  if (typeof found !== 'object' || found === null) {
+    throw new Error(`missing task ${task}`);
+  }
+  return { ...found };
+}
+
+function semanticRounds(db: ReviewHarness['db'], sessionId: string): Array<unknown> {
+  return db
+    .prepare('SELECT semantic_round FROM agent_runs WHERE session_id = ? ORDER BY sequence')
+    .all(sessionId)
+    .map((item) => (typeof item === 'object' && item !== null ? item.semantic_round : null));
+}
+
+test('an approving review marks the task done and launches one wrap-up run', async () => {
+  const { db, review, runtime, service, work } = await reachReview();
+  const approval = reviewOutput('approve', minorFinding);
+  runtime.emit(review.runId, { kind: 'subagent_done', output: approval, usage: sampleUsage() });
+  runtime.emit(review.runId, { kind: 'subagent_done', output: approval, usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('stage: wrapup'));
+  await waitFor(() => launchesOf(runtime, 'wrapup').length > 0);
+  const wrapups = launchesOf(runtime, 'wrapup');
+  assert.equal(wrapups.length, 1);
+  assert.equal(wrapups[0]?.model, 'work-model');
+  assert.equal(wrapups[0]?.cwd, work.cwd);
+  assert.match(wrapups[0]?.prompt ?? '', /factory-wrapup/);
+  assert.match(wrapups[0]?.prompt ?? '', /Task 01 R1-2 \[minor\] Unclear name/);
+  assert.deepEqual(taskRow(db), {
+    blocking_count: 0,
+    finding_count: 1,
+    review_round: 1,
+    review_verdict: 'approve',
+    status: 'done',
+  });
+  const validation: unknown = db
+    .prepare('SELECT status, validator_version FROM validation_runs WHERE run_id = ?')
+    .get(review.runId);
+  assert.deepEqual({ ...(validation ?? {}) }, { status: 'passed', validator_version: 'review.v1' });
+  await closeWhenIdle(db);
+});
+
+test('changes requested resume the same worker, then round 2 resumes the same reviewer', async () => {
+  const { db, review, runtime, service, work } = await reachReview();
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('changes_requested', `${blockingFinding}\n\n${minorFinding}`),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const fix = launchesOf(runtime, 'work')[1];
+  assert.equal(fix?.sessionId, work.sessionId);
+  assert.equal(fix?.mode, 'resume');
+  assert.equal(fix?.purpose, 'review_changes');
+  assert.equal(fix?.cwd, work.cwd);
+  assert.match(fix?.prompt ?? '', /R1-1 \[major\] Filter resets on reload/);
+  assert.doesNotMatch(fix?.prompt ?? '', /R1-2/);
+  assert.match(service.status('proj-123'), /stage: work/);
+  assert.equal(taskRow(db)['review_verdict'], 'changes_requested');
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'stored\n');
+  runtime.emit(fix?.runId ?? work.runId, {
+    kind: 'subagent_done',
+    output: 'stored the filter',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const second = launchesOf(runtime, 'review')[1];
+  assert.equal(second?.sessionId, review.sessionId);
+  assert.equal(second?.mode, 'resume');
+  assert.match(second?.prompt ?? '', /Review round: 2/);
+  assert.match(second?.prompt ?? '', /\+stored/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+
+  runtime.emit(second?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.equal(taskRow(db)['review_round'], 2);
+  await closeWhenIdle(db);
+});
+
+test('the review round limit pauses with the blockers and a reply resumes the reviewer', async () => {
+  const { db, notified, review, runtime, service } = await reachReview({
+    limits: { reviewRounds: 1 },
+  });
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('changes_requested', blockingFinding),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  const status = service.status('proj-123');
+  assert.match(status, /stage: review/);
+  assert.match(status, /Review round 1 of 1/);
+  assert.match(status, /R1-1 \[major\]/);
+  await waitFor(() => notified.some((message) => message.includes('Review round 1 of 1')));
+  assert.equal(launchesOf(runtime, 'work').length, 1);
+  assert.equal(taskRow(db)['status'], 'blocked');
+
+  await service.command('reply proj-123 "Resetting is acceptable for this ticket."');
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const resumed = launchesOf(runtime, 'review')[1];
+  assert.equal(resumed?.sessionId, review.sessionId);
+  assert.equal(resumed?.mode, 'resume');
+  assert.match(resumed?.prompt ?? '', /Resetting is acceptable/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  assert.equal(taskRow(db)['status'], 'reviewing');
+  runtime.emit(resumed?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  await closeWhenIdle(db);
+});
+
+test('a malformed review resumes the reviewer without spending a round', async () => {
+  const { db, review, runtime, service } = await reachReview({ limits: { reviewRounds: 1 } });
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: 'Looks good to me.',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const correction = launchesOf(runtime, 'review')[1];
+  assert.equal(correction?.sessionId, review.sessionId);
+  assert.equal(correction?.purpose, 'validation_correction');
+  assert.match(correction?.prompt ?? '', /## Verdict is missing/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(correction?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.deepEqual(semanticRounds(db, review.sessionId), [1, 1]);
+  assert.equal(taskRow(db)['review_round'], 1);
+  await closeWhenIdle(db);
+});
+
+test('the review correction limit pauses instead of resuming the reviewer again', async () => {
+  const { db, review, runtime, service } = await reachReview({
+    limits: { reviewCorrections: 1 },
+  });
+  runtime.emit(review.runId, { kind: 'subagent_done', output: 'fine', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  const correction = launchesOf(runtime, 'review')[1];
+  runtime.emit(correction?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: 'still fine',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  assert.match(service.status('proj-123'), /still malformed after the correction limit/);
+  assert.equal(launchesOf(runtime, 'review').length, 2);
+  assert.equal(launchesOf(runtime, 'work').length, 1);
+  await closeWhenIdle(db);
+});
+
+test('a crashed reviewer relaunches without spending a round', async () => {
+  const { db, review, runtime, service } = await reachReview({ limits: { reviewRounds: 1 } });
+  runtime.emit(review.runId, { kind: 'crashed', message: 'pane died' });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const retry = launchesOf(runtime, 'review')[1];
+  assert.equal(retry?.purpose, 'infrastructure_retry');
+  assert.equal(retry?.sessionId, review.sessionId);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(retry?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('changes_requested', blockingFinding),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  assert.deepEqual(semanticRounds(db, review.sessionId), [1, 1]);
+  assert.equal(taskRow(db)['review_round'], 1);
+  await closeWhenIdle(db);
+});
+
+test('a blocked verdict pauses the ticket and notifies the user', async () => {
+  const { db, notified, review, runtime, service } = await reachReview();
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('blocked', 'none', 'The task file was not readable.'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  assert.match(service.status('proj-123'), /The task file was not readable/);
+  await waitFor(() => notified.some((message) => message.includes('The reviewer blocked task 01')));
+  assert.equal(taskRow(db)['status'], 'blocked');
+  assert.equal(taskRow(db)['review_verdict'], 'blocked');
+  assert.equal(launchesOf(runtime, 'work').length, 1);
+  assert.equal(launchesOf(runtime, 'wrapup').length, 0);
+  await closeWhenIdle(db);
+});
+
+test('a reviewer caller_ping waits for the user and reply resumes the reviewer', async () => {
+  const { db, review, runtime, service } = await reachReview();
+  runtime.emit(review.runId, {
+    kind: 'caller_ping',
+    question: 'Is a reset on logout expected?',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('waiting_for_user'));
+  assert.match(service.status('proj-123'), /stage: review/);
+  assert.equal(taskRow(db)['status'], 'blocked');
+  await service.command('reply proj-123 "Yes, logout clears it."');
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const resumed = launchesOf(runtime, 'review')[1];
+  assert.equal(resumed?.sessionId, review.sessionId);
+  assert.match(resumed?.prompt ?? '', /logout clears it/);
+  assert.match(resumed?.prompt ?? '', /factory-review/);
+  await waitFor(() => taskRow(db)['status'] === 'reviewing');
+  await closeWhenIdle(db);
+});
+
+test('approving the first of two tasks starts the next ready task, then wrap-up', async () => {
+  const { db, review, runtime, service, work } = await reachReview({}, 2);
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const next = launchesOf(runtime, 'work')[1];
+  assert.notEqual(next?.sessionId, work.sessionId);
+  assert.equal(next?.mode, 'launch');
+  assert.match(next?.prompt ?? '', /Task: 02 Show the filter/);
+  assert.match(service.status('proj-123'), /stage: work/);
+  assert.equal(launchesOf(runtime, 'wrapup').length, 0);
+  assert.equal(taskRow(db, '01')['status'], 'done');
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+
+  writeFileSync(path.join(work.cwd, 'show.txt'), 'visible\n');
+  runtime.emit(next?.runId ?? work.runId, {
+    kind: 'subagent_done',
+    output: 'shown',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const secondReview = launchesOf(runtime, 'review')[1];
+  assert.notEqual(secondReview?.sessionId, review.sessionId);
+  assert.match(secondReview?.prompt ?? '', /Review round: 1/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(secondReview?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.equal(taskRow(db, '02')['status'], 'done');
+  await closeWhenIdle(db);
+});
+
+test('a diff change during review validates the work again before another review', async () => {
+  const { db, review, runtime, service, work } = await reachReview();
+  writeFileSync(path.join(work.cwd, 'late.txt'), 'late edit\n');
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const fresh = launchesOf(runtime, 'review')[1];
+  assert.equal(fresh?.sessionId, review.sessionId);
+  assert.match(fresh?.prompt ?? '', /Review round: 1/);
+  assert.match(fresh?.prompt ?? '', /late edit/);
+  assert.equal(launchesOf(runtime, 'wrapup').length, 0);
+  assert.equal(taskRow(db)['review_verdict'], null);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  await closeWhenIdle(db);
+});
+
+test('a second diff change in one review round pauses until retry', async () => {
+  const { db, notified, review, runtime, service, work } = await reachReview();
+  writeFileSync(path.join(work.cwd, 'late.txt'), 'late edit\n');
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  const fresh = launchesOf(runtime, 'review')[1];
+
+  writeFileSync(path.join(work.cwd, 'late.txt'), 'later edit\n');
+  runtime.emit(fresh?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  const status = service.status('proj-123');
+  assert.match(status, /worktree changed again while review round 1 of task 01/);
+  await waitFor(() => notified.some((message) => message.includes('/factory retry')));
+  assert.equal(launchesOf(runtime, 'review').length, 2);
+  assert.equal(taskRow(db)['status'], 'blocked');
+  assert.equal(taskRow(db)['review_verdict'], null);
+
+  const reply = await service.command('reply proj-123 "go on"');
+  assert.match(reply, /Retry with \/factory retry/);
+  await service.command('retry proj-123');
+  await waitFor(() => launchesOf(runtime, 'review').length === 3);
+  const third = launchesOf(runtime, 'review')[2];
+  assert.equal(third?.sessionId, review.sessionId);
+  assert.match(third?.prompt ?? '', /Review round: 1/);
+  assert.match(third?.prompt ?? '', /later edit/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(third?.runId ?? review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.equal(taskRow(db)['review_round'], 1);
+  await closeWhenIdle(db);
+});
+
+test('restart after a finished review records one verdict and launches one wrap-up', async () => {
+  const { db, review, runtime, service } = await reachReview();
+  const terminal = {
+    kind: 'subagent_done' as const,
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  };
+  applyControllerEvent(db, {
+    dedupeKey: `runtime:${review.runId}:terminal`,
+    event: { kind: 'runtime_terminal', runId: review.runId, terminal },
+    ids: randomIds(),
+    now: '2026-10-08T00:00:00.000Z',
+    source: 'runtime',
+  });
+  applyControllerEvent(db, {
+    dedupeKey: `runtime:${review.runId}:terminal`,
+    event: { kind: 'runtime_terminal', runId: review.runId, terminal },
+    ids: randomIds(),
+    now: '2026-10-08T00:00:01.000Z',
+    source: 'runtime',
+  });
+  await service.recover();
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  await service.recover();
+  assert.equal(launchesOf(runtime, 'wrapup').length, 1);
+  assert.equal(taskRow(db)['status'], 'done');
+  await closeWhenIdle(db);
 });

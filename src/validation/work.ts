@@ -260,5 +260,12 @@ export async function validateWork(input: {
   if (failures.length > 0) {
     return { checks, failures, kind: 'failed' };
   }
-  return { checks, diff: collected.diff, kind: 'passed' };
+  // Commands can write files (test reports, caches). The reviewer gets the
+  // worktree as it stands after them, so review validation compares like
+  // with like.
+  const final = collectWorkDiff(input.cwd);
+  if ('message' in final) {
+    return { kind: 'error', message: final.message };
+  }
+  return { checks, diff: final.diff, kind: 'passed' };
 }
