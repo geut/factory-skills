@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { InternalLabel, Limits, WorkCommand } from './config.ts';
+import type { InternalLabel, Limits, Validation } from './config.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -137,6 +137,8 @@ export type AttentionKind = 'agent_question' | 'policy_limit' | 'manual_approval
 export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'cancelled';
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
+export type WrapupInputPurpose = 'initial' | 'validation_correction' | 'human_reply';
+
 export type WorkInputPurpose =
   | 'initial'
   | 'validation_correction'
@@ -150,7 +152,9 @@ export type Policy = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
-  validation: { work: { commands: Array<WorkCommand> } };
+  // `github.pullRequests`: wrap-up may push the branch and open a pull request.
+  pullRequests: boolean;
+  validation: Validation;
 };
 
 export type UsageTotals = {
@@ -250,6 +254,29 @@ export type ReviewValidationOutcome =
   | { checks: Array<ReviewCheck>; failures: Array<string>; kind: 'malformed' | 'stale' | 'unsafe' }
   | { kind: 'error'; message: string };
 
+export type WrapupCheck = {
+  details: string;
+  kind: 'artifact' | 'diff' | 'policy' | 'schema';
+  name: string;
+  status: 'failed' | 'passed';
+};
+
+export type WrapupValidationOutcome =
+  | { checks: Array<WrapupCheck>; kind: 'passed' }
+  | { checks: Array<WrapupCheck>; failures: Array<string>; kind: 'failed' }
+  | { kind: 'error'; message: string };
+
+// What wrap-up validation compares against: taken when the first wrap-up
+// input is prepared, before the agent runs.
+export type WrapupBaseline = {
+  baseHead: string | null;
+  branch: string;
+  factory: Record<string, string>;
+  head: string;
+  remotes: Record<string, string>;
+  worktree: Record<string, string>;
+};
+
 export type ReconcileObservation =
   | {
       kind: 'still_running';
@@ -292,6 +319,29 @@ export type ControllerEvent =
       taskType: string | null;
     }
   | { actionId: ActionId; kind: 'work_input_failed'; message: string }
+  | {
+      actionId: ActionId;
+      adrPath: string | null;
+      // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
+      baseline: string;
+      contextPath: string | null;
+      kind: 'wrapup_input_ready';
+      // The all-stage usage table so far, excluding wrap-up.
+      usage: string;
+      // One line per passing work-validation check, per task.
+      verification: Array<string>;
+    }
+  | { actionId: ActionId; kind: 'wrapup_input_failed'; message: string }
+  | {
+      actionId: ActionId;
+      kind: 'validation_finished';
+      outcome: WrapupValidationOutcome;
+      runId: RunId;
+      stage: 'wrapup';
+      // The all-stage usage table, including the finished wrap-up run.
+      usage: string;
+    }
+  | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
   | {
       actionId: ActionId;
       baseBranch: string;
@@ -395,6 +445,8 @@ export type SessionRecord = {
 };
 
 export type RunRecord = {
+  // Wrap-up runs: the state before wrap-up started (WrapupBaseline JSON).
+  baseline: string | null;
   description: string | null;
   diffHash: string | null;
   endedAt: string | null;
@@ -478,6 +530,30 @@ export type ActionRecord =
       purpose: WorkInputPurpose;
       runId: null;
       taskId: TaskId;
+    })
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      failures: Array<string>;
+      kind: 'prepare_wrapup_input';
+      purpose: WrapupInputPurpose;
+      runId: null;
+    })
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      // Reopens the finished wrap-up session for the human, without a model turn.
+      kind: 'open_pane';
+      name: string;
+      runId: RunId;
+    })
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      cwd: string;
+      kind: 'open_diff';
+      name: string;
+      runId: RunId;
     })
   | (ActionBase & {
       attentionReplyId: null;

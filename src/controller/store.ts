@@ -31,6 +31,7 @@ import {
   type UsageTotals,
   type UsageWrite,
   type WorkInputPurpose,
+  type WrapupInputPurpose,
   type WorktreeStatus,
 } from '../domain.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
@@ -104,7 +105,15 @@ function parseLabelMap(value: unknown): Policy['labels'] {
   return { map };
 }
 
-function parseCommands(value: unknown): Policy['validation'] {
+function parseGenerated(value: unknown): Array<string> {
+  // Executions started before wrap-up validation have no generated paths.
+  if (!isRecord(value) || !Array.isArray(value['generated'])) {
+    return [];
+  }
+  return value['generated'].filter((item): item is string => typeof item === 'string');
+}
+
+function parseCommands(value: unknown): Policy['validation']['work']['commands'] {
   if (!Array.isArray(value)) {
     throw new FactoryDatabaseError('execution policy is invalid');
   }
@@ -125,7 +134,7 @@ function parseCommands(value: unknown): Policy['validation'] {
       timeoutMs: item['timeoutMs'],
     });
   }
-  return { work: { commands } };
+  return commands;
 }
 
 function parsePolicy(raw: string): Policy {
@@ -174,7 +183,11 @@ function parsePolicy(raw: string): Policy {
       workCorrections: limits['workCorrections'],
     },
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
-    validation: parseCommands(validation['work']['commands']),
+    pullRequests: value['pullRequests'] === true,
+    validation: {
+      work: { commands: parseCommands(validation['work']['commands']) },
+      wrapup: { generated: parseGenerated(validation['wrapup']) },
+    },
   };
 }
 
@@ -487,6 +500,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
       const record = row(item);
       const parent = nullableText(record, 'parent_run_id');
       return {
+        baseline: baselineFromLifecycle(nullableText(record, 'lifecycle_json')),
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
         diffHash: nullableText(record, 'diff_hash'),
         endedAt: nullableText(record, 'ended_at'),
@@ -649,6 +663,51 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       taskId: taskId(payload['taskId']),
     };
   }
+  if (
+    kind === 'prepare_wrapup_input' &&
+    (payload['purpose'] === 'initial' ||
+      payload['purpose'] === 'validation_correction' ||
+      payload['purpose'] === 'human_reply') &&
+    Array.isArray(payload['failures']) &&
+    payload['failures'].every((item) => typeof item === 'string')
+  ) {
+    const purpose: WrapupInputPurpose = payload['purpose'];
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      failures: payload['failures'],
+      kind,
+      purpose,
+      runId: null,
+    };
+  }
+  if (kind === 'open_pane' && run !== null && typeof payload['name'] === 'string') {
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      kind,
+      name: payload['name'],
+      runId: runId(run),
+    };
+  }
+  if (
+    kind === 'open_diff' &&
+    run !== null &&
+    typeof payload['name'] === 'string' &&
+    typeof payload['cwd'] === 'string'
+  ) {
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      cwd: payload['cwd'],
+      kind,
+      name: payload['name'],
+      runId: runId(run),
+    };
+  }
   if (kind === 'prepare_worktree' && typeof payload['slug'] === 'string') {
     return {
       ...base,
@@ -686,6 +745,12 @@ function payloadJson(action: ActionRecord): string {
         purpose: action.purpose,
         taskId: action.taskId,
       });
+    case 'prepare_wrapup_input':
+      return jsonText({ failures: action.failures, purpose: action.purpose });
+    case 'open_pane':
+      return jsonText({ name: action.name });
+    case 'open_diff':
+      return jsonText({ cwd: action.cwd, name: action.name });
     case 'prepare_worktree':
       return jsonText({ slug: action.slug });
     case 'notify_attention':
@@ -773,7 +838,11 @@ function updateExecution(
        SET stage = ?, status = ?, version = ?, status_reason_code = ?, status_reason = ?,
            retryable = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
            worktree_base_branch = ?, worktree_status = ?, worktree_base_sha = ?,
-           message = ?, message_at = ?, updated_at = ?
+           message = ?, message_at = ?, updated_at = ?,
+           finished_at = CASE
+             WHEN ? IN ('complete', 'cancelled') THEN coalesce(finished_at, ?)
+             ELSE NULL
+           END
        WHERE id = ? AND version = ?`,
     )
     .run(
@@ -791,6 +860,8 @@ function updateExecution(
       after.worktreeBaseSha,
       after.message,
       now,
+      now,
+      after.status,
       now,
       after.id,
       before.version,
@@ -849,11 +920,26 @@ function insertSession(
   );
 }
 
-function lifecycleJson(description: string | null): string | null {
-  if (description === null) {
+function lifecycleJson(run: Pick<RunRecord, 'baseline' | 'description'>): string | null {
+  if (run.description === null && run.baseline === null) {
     return null;
   }
-  return JSON.stringify({ description });
+  return JSON.stringify({ baseline: run.baseline, description: run.description });
+}
+
+function baselineFromLifecycle(raw: string | null): string | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed) && typeof parsed['baseline'] === 'string') {
+      return parsed['baseline'];
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function descriptionFromLifecycle(raw: string | null): string | null {
@@ -899,7 +985,7 @@ function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now
     run.resultJson,
     run.resultHash,
     run.resultError,
-    lifecycleJson(run.description),
+    lifecycleJson(run),
     now,
     run.startedAt,
     now,
@@ -926,7 +1012,7 @@ function updateRun(db: DatabaseSync, run: RunRecord, now: string): void {
     run.resultJson,
     run.resultHash,
     run.resultError,
-    lifecycleJson(run.description),
+    lifecycleJson(run),
     run.startedAt,
     now,
     run.id,
@@ -1175,6 +1261,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
       return loadCurrentByTicketKey(db, event.ticket.id);
     case 'reply':
     case 'retry':
+    case 'complete':
       return loadCurrentByTicketKey(db, event.ticketId);
     case 'runtime_terminal':
     case 'validation_finished':
@@ -1186,6 +1273,8 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'worktree_failed':
     case 'work_input_ready':
     case 'work_input_failed':
+    case 'wrapup_input_ready':
+    case 'wrapup_input_failed':
       return loadByAction(db, event.actionId);
     default: {
       const _exhaustive: never = event;
@@ -1225,6 +1314,9 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'worktree_failed':
     case 'work_input_ready':
     case 'work_input_failed':
+    case 'wrapup_input_ready':
+    case 'wrapup_input_failed':
+    case 'complete':
       return null;
     default: {
       const _exhaustive: never = event;
@@ -1550,4 +1642,47 @@ export function formatStatus(response: ControllerResponse): string {
       tone: response.status === 'failed' ? 'failed' : waiting ? 'attention' : 'progress',
     }),
   );
+}
+
+// Each task's latest passing work validation, one line per check:
+// `Task 01 · test: passed (npm test)`.
+export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Array<string> {
+  return db
+    .prepare(
+      `SELECT s.task_id AS task_id, c.name AS name, c.status AS status, c.command AS command
+       FROM agent_sessions AS s
+       JOIN validation_runs AS v ON v.id = (
+         SELECT v2.id
+         FROM validation_runs AS v2
+         JOIN agent_runs AS r2 ON r2.id = v2.run_id
+         WHERE r2.session_id = s.id AND v2.validator_version = 'work.v1' AND v2.status = 'passed'
+         ORDER BY v2.completed_at DESC, v2.rowid DESC
+         LIMIT 1
+       )
+       JOIN validation_checks AS c ON c.validation_id = v.id
+       WHERE s.execution_id = ? AND s.stage = 'work'
+       ORDER BY s.task_id, c.ordinal`,
+    )
+    .all(execution)
+    .map((item) => {
+      const record = row(item);
+      const command = nullableText(record, 'command');
+      return `Task ${text(record, 'task_id')} · ${text(record, 'name')}: ${text(record, 'status')}${command === null ? '' : ` (${command})`}`;
+    });
+}
+
+// A pane action leased by a controller that died never ran to the end. On
+// restart it goes back to pending; the pane might open twice, never zero times.
+export function requeueOrphanedPanes(db: DatabaseSync, now: string): void {
+  immediateTransaction(db, () => {
+    db.prepare(
+      `UPDATE actions
+       SET status = CASE WHEN attempts + 1 > max_attempts THEN 'failed' ELSE 'pending' END,
+           attempts = min(attempts + 1, max_attempts),
+           last_error = CASE WHEN attempts + 1 > max_attempts THEN 'Pane lease expired.' ELSE last_error END,
+           completed_at = CASE WHEN attempts + 1 > max_attempts THEN ? ELSE NULL END,
+           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+       WHERE kind IN ('open_pane', 'open_diff') AND status = 'leased'`,
+    ).run(now, now);
+  });
 }

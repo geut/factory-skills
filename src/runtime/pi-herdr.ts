@@ -11,7 +11,7 @@ import {
 } from '../domain.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { runStatusLabel } from './policy.ts';
-import type { FactorySubagentRuntime, LaunchSpec, RunStarted } from './runtime.ts';
+import type { FactorySubagentRuntime, LaunchSpec, PaneSpec, RunStarted } from './runtime.ts';
 import { lastAssistantText } from './session-activity.ts';
 
 export type ClassifiedChild =
@@ -228,6 +228,26 @@ ${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakeP
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
+`;
+}
+
+// The script behind a handoff pane. It execs the TUI so the pane closes with
+// it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi.
+export function renderPaneScript(input: {
+  cwd: string;
+  freshBin: string;
+  piBin: string;
+  target: PaneSpec['target'];
+}): string {
+  const command =
+    input.target.kind === 'session'
+      ? `${shellQuote(input.piBin)} --session ${shellQuote(input.target.sessionFile)}`
+      : `${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
+  return `#!/usr/bin/env bash
+trap '' TSTP
+export FACTORY_CHILD=1
+cd ${shellQuote(input.cwd)} || exit 1
+exec ${command}
 `;
 }
 
@@ -503,6 +523,7 @@ function noop(): void {
 
 export function createPiHerdrRuntime(options?: {
   events?: PaneExitSource | null;
+  freshBin?: string;
   piBin?: string;
   pollMs?: number;
   run?: CommandRunner;
@@ -511,6 +532,7 @@ export function createPiHerdrRuntime(options?: {
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
   const piBin = options?.piBin ?? 'pi';
+  const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
   const pollMs = options?.pollMs ?? childPollMs;
   const watchers = new Map<string, () => void>();
@@ -639,6 +661,32 @@ export function createPiHerdrRuntime(options?: {
     return openPane(spec);
   }
 
+  async function openHandoffPane(spec: PaneSpec): Promise<{ paneId: string }> {
+    if (targetPaneId.length === 0) {
+      throw new Error('HERDR_PANE_ID is required to open a factory pane');
+    }
+    writeFileSync(
+      spec.scriptFile,
+      renderPaneScript({ cwd: spec.cwd, freshBin, piBin, target: spec.target }),
+      { mode: 0o755 },
+    );
+    const opened = await run(
+      herdrPaneArgs({ cwd: spec.cwd, launchScript: spec.scriptFile, targetPaneId }),
+    );
+    if (opened.code !== 0) {
+      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
+    }
+    const paneId = parsePaneId(opened.stdout);
+    if (paneId === null) {
+      throw new Error('herdr did not return a pane id');
+    }
+    const renamed = await run(herdrRenameArgs(paneId, spec.name));
+    if (renamed.code !== 0) {
+      throw new Error(renamed.stderr.trim() || `herdr pane rename failed for ${paneId}`);
+    }
+    return { paneId };
+  }
+
   return {
     interrupt: async () => undefined,
     launch: openPane,
@@ -702,6 +750,7 @@ export function createPiHerdrRuntime(options?: {
       watchers.set(active.runId, stop);
       return stop;
     },
+    openPane: openHandoffPane,
     async reconcile(runs) {
       const observations: Array<{ observation: ReconcileObservation; runId: RunId }> = [];
       for (const active of runs) {

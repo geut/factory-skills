@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent } from '../src/controller/store.ts';
+import { usageRows } from '../src/controller/usage.ts';
 import {
+  executionId,
   randomIds,
   ticketId,
   type Policy,
@@ -267,7 +269,8 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
       workCorrections: 3,
     },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
-    validation: { work: { commands: [] } },
+    pullRequests: false,
+    validation: { work: { commands: [] }, wrapup: { generated: [] } },
   };
   applyControllerEvent(db, {
     dedupeKey: `command:start:${canonical}`,
@@ -1040,5 +1043,376 @@ test('restart after a finished review records one verdict and launches one wrap-
   await service.recover();
   assert.equal(launchesOf(runtime, 'wrapup').length, 1);
   assert.equal(taskRow(db)['status'], 'done');
+  await closeWhenIdle(db);
+});
+
+type WrapupHarness = ReviewHarness & { branch: string; wrapup: FakeRuntime['launches'][number] };
+
+async function reachWrapup(config: Record<string, unknown> = {}): Promise<WrapupHarness> {
+  const harness = await reachReview(config);
+  harness.runtime.emit(harness.review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve', minorFinding),
+    usage: sampleUsage(20),
+  });
+  await waitFor(() => launchesOf(harness.runtime, 'wrapup').length === 1);
+  await waitFor(() => harness.service.status('proj-123').includes('Launched'));
+  const wrapup = launchesOf(harness.runtime, 'wrapup')[0];
+  const found: unknown = harness.db
+    .prepare('SELECT worktree_branch FROM ticket_executions WHERE is_current = 1')
+    .get();
+  const branch =
+    typeof found === 'object' && found !== null && 'worktree_branch' in found
+      ? String(found.worktree_branch)
+      : '';
+  if (wrapup === undefined) {
+    throw new Error('missing wrap-up run');
+  }
+  return { ...harness, branch, wrapup };
+}
+
+function handoff(worktree: string, branch: string, files = ['change.txt']): string {
+  return `## Outcome
+
+The catalog keeps its filter.
+
+## PR summary
+
+Persist the filter.
+
+## Files
+
+${files.map((file) => `- \`${file}\``).join('\n')}
+
+## Tests
+
+No validation commands are configured.
+
+## Operations
+
+none
+
+## Limitations
+
+none
+
+## Merge commands
+
+git -C "${worktree}" add -- change.txt
+git -C "${worktree}" commit -m "Persist the filter"
+git merge --ff-only "${branch}"
+`;
+}
+
+function executionRow(db: ReviewHarness['db']): Record<string, unknown> {
+  const found: unknown = db
+    .prepare('SELECT stage, status, finished_at FROM ticket_executions WHERE is_current = 1')
+    .get();
+  return typeof found === 'object' && found !== null ? { ...found } : {};
+}
+
+test('wrap-up launches from checked input with the tasks, findings, verification, and usage', async () => {
+  const { db, wrapup } = await reachWrapup();
+  assert.equal(wrapup.model, 'work-model');
+  assert.equal(wrapup.purpose, 'initial');
+  assert.match(wrapup.prompt, /factory-wrapup/);
+  assert.match(wrapup.prompt, /- 01 Store the filter: done, review approve/);
+  assert.match(wrapup.prompt, /Task 01 R1-2 \[minor\] Unclear name/);
+  assert.match(wrapup.prompt, /Task 01 · diff: passed/);
+  assert.match(wrapup.prompt, /^Review\s+1\s+20\s/m);
+  assert.match(wrapup.prompt, /Models: plan work-model · work work-model · review review-model/);
+  assert.doesNotMatch(wrapup.prompt, /^Wrap-up/m);
+  assert.match(wrapup.prompt, /github\.pullRequests: false/);
+  const prepared: unknown = db
+    .prepare("SELECT status FROM actions WHERE kind = 'prepare_wrapup_input'")
+    .get();
+  assert.deepEqual({ ...(prepared ?? {}) }, { status: 'succeeded' });
+  await closeWhenIdle(db);
+});
+
+test('a valid handoff is ready for handoff, opens both panes, and complete finishes it once', async () => {
+  const { branch, db, notified, runtime, service, wrapup } = await reachWrapup();
+  const terminal = {
+    kind: 'subagent_done' as const,
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  };
+  runtime.emit(wrapup.runId, terminal);
+  runtime.emit(wrapup.runId, terminal);
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await waitFor(() => runtime.panes.length === 2);
+  const [session, diff] = runtime.panes;
+  assert.equal(session?.name, '📦 proj-123');
+  assert.equal(session?.target.kind, 'session');
+  assert.equal(diff?.name, '🔀 proj-123');
+  assert.equal(diff?.cwd, wrapup.cwd);
+  assert.equal(diff?.target.kind, 'diff');
+  if (diff?.target.kind === 'diff') {
+    assert.match(readFileSync(diff.target.file, 'utf8'), /change\.txt/);
+  }
+  await waitFor(() => notified.some((message) => /^Wrap-up\s+1\s/m.test(message)));
+  const notice = notified.find((message) => /^Wrap-up\s+1\s/m.test(message)) ?? '';
+  assert.match(notice, /status: ready for handoff/);
+  assert.match(notice, /next: \/factory complete proj-123\.md/);
+  assert.match(notice, /^Total\s+4\s/m);
+  const validation: unknown = db
+    .prepare('SELECT status, validator_version FROM validation_runs WHERE run_id = ?')
+    .get(wrapup.runId);
+  assert.deepEqual({ ...(validation ?? {}) }, { status: 'passed', validator_version: 'wrapup.v1' });
+  const sessionRow: unknown = db
+    .prepare("SELECT status FROM agent_sessions WHERE stage = 'wrapup'")
+    .get();
+  assert.deepEqual({ ...(sessionRow ?? {}) }, { status: 'open' });
+  assert.equal(launchesOf(runtime, 'wrapup').length, 1);
+
+  assert.match(await service.command('start proj-123.md'), /ready for handoff/);
+  assert.equal(executionRow(db)['status'], 'ready_for_handoff');
+  assert.match(await service.command('complete proj-123.md'), /stage: done\nstatus: complete/);
+  assert.equal(executionRow(db)['stage'], 'done');
+  assert.notEqual(executionRow(db)['finished_at'], null);
+  assert.match(await service.command('complete proj-123.md'), /already complete/);
+  await closeWhenIdle(db);
+});
+
+test('a failed handoff resumes the same wrap-up session with no correction limit', async () => {
+  const { branch, db, runtime, service, wrapup } = await reachWrapup({
+    limits: { infrastructureRetries: 1, workCorrections: 1 },
+  });
+  let current = wrapup;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    runtime.emit(current.runId, {
+      kind: 'subagent_done',
+      output: handoff(wrapup.cwd, branch, ['change.txt', 'ghost.txt']),
+      usage: sampleUsage(10 * attempt),
+    });
+    await waitFor(() => launchesOf(runtime, 'wrapup').length === attempt + 1);
+    const next = launchesOf(runtime, 'wrapup')[attempt];
+    assert.equal(next?.sessionId, wrapup.sessionId);
+    assert.equal(next?.mode, 'resume');
+    assert.equal(next?.purpose, 'validation_correction');
+    assert.equal(next?.cwd, wrapup.cwd);
+    assert.match(next?.prompt ?? '', /## Files lists ghost\.txt, which did not change/);
+    assert.match(service.status('proj-123'), /stage: wrapup/);
+    await waitFor(() => service.status('proj-123').includes('Launched'));
+    current = next ?? current;
+  }
+  runtime.emit(current.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(40),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  // The resumed session reported 10, 20, 30, then 40 cumulative tokens: it
+  // counts once at 40, not 100.
+  const wrapupUsage: unknown = db
+    .prepare(
+      `SELECT sum(u.delta_tokens_input) AS delta FROM usage_snapshots AS u
+       JOIN agent_sessions AS s ON s.id = u.session_id WHERE s.stage = 'wrapup'`,
+    )
+    .get();
+  assert.deepEqual({ ...(wrapupUsage ?? {}) }, { delta: 40 });
+  const execution: unknown = db
+    .prepare('SELECT id FROM ticket_executions WHERE is_current = 1')
+    .get();
+  const rows = usageRows(
+    db,
+    executionId(
+      typeof execution === 'object' && execution !== null && 'id' in execution
+        ? String(execution.id)
+        : '',
+    ),
+    { includeWrapup: true },
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.label, row.sessions, row.input]),
+    [
+      ['Plan', 1, 10],
+      ['Work', 1, 10],
+      ['Review', 1, 20],
+      ['Wrap-up', 1, 40],
+      ['Total', 4, 80],
+    ],
+  );
+  await closeWhenIdle(db);
+});
+
+test('two tickets wrap up at the same time', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' } })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  writeFileSync(path.join(codeRoot, 'proj-456.md'), '# Remember the sort\n');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, db, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  await service.command('start proj-456.md');
+  for (const directory of readdirSync(path.join(factoryRoot, 'tickets'))) {
+    writePlanFiles(path.join(factoryRoot, 'tickets', directory), '01-task-store-filter.md');
+  }
+  const settle = async (
+    stage: string,
+    count: number,
+    finish: (launch: FakeRuntime['launches'][number]) => string,
+  ) => {
+    await waitFor(
+      () =>
+        launchesOf(runtime, stage).length === count &&
+        service.status('proj-123').includes('Launched') &&
+        service.status('proj-456').includes('Launched'),
+    );
+    for (const launch of launchesOf(runtime, stage)) {
+      runtime.emit(launch.runId, {
+        kind: 'subagent_done',
+        output: finish(launch),
+        usage: sampleUsage(),
+      });
+    }
+  };
+  for (const launch of launchesOf(runtime, 'plan')) {
+    runtime.emit(launch.runId, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  }
+  await settle('work', 2, (launch) => {
+    writeFileSync(path.join(launch.cwd, 'change.txt'), 'changed\n');
+    return 'done';
+  });
+  await settle('review', 2, () => reviewOutput('approve'));
+  await settle('wrapup', 2, (launch) => {
+    const found: unknown = db
+      .prepare('SELECT worktree_branch FROM ticket_executions WHERE worktree_path = ?')
+      .get(launch.cwd);
+    const branch =
+      typeof found === 'object' && found !== null && 'worktree_branch' in found
+        ? String(found.worktree_branch)
+        : '';
+    return handoff(launch.cwd, branch);
+  });
+  await waitFor(
+    () =>
+      service.status('proj-123').includes('ready_for_handoff') &&
+      service.status('proj-456').includes('ready_for_handoff'),
+  );
+  await waitFor(() => runtime.panes.length === 4);
+  assert.deepEqual(runtime.panes.map((pane) => pane.name).sort(), [
+    '📦 proj-123',
+    '📦 proj-456',
+    '🔀 proj-123',
+    '🔀 proj-456',
+  ]);
+  await closeWhenIdle(db);
+});
+
+test('a wrap-up question waits; reply resumes wrap-up in the worktree and survives a failed resume', async () => {
+  const { db, runtime, service, wrapup } = await reachWrapup();
+  runtime.emit(wrapup.runId, {
+    kind: 'caller_ping',
+    question: 'Should the handoff mention the migration?',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('waiting_for_user'));
+  assert.match(service.status('proj-123'), /stage: wrapup/);
+  runtime.failuresRemaining = 4;
+  await service.command('reply proj-123 "Yes, mention it"');
+  await waitFor(() => service.status('proj-123').includes('resume_failed'));
+  runtime.failuresRemaining = 0;
+  await service.command('retry proj-123');
+  await waitFor(() =>
+    launchesOf(runtime, 'wrapup').some((launch) => launch.prompt.includes('Yes, mention it')),
+  );
+  const resumed = launchesOf(runtime, 'wrapup').filter((launch) =>
+    launch.prompt.includes('Yes, mention it'),
+  );
+  assert.equal(resumed.at(-1)?.sessionId, wrapup.sessionId);
+  assert.equal(resumed.at(-1)?.cwd, wrapup.cwd);
+  assert.match(resumed.at(-1)?.prompt ?? '', /factory-wrapup/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  await closeWhenIdle(db);
+});
+
+test('a pane that fails to open retries, and the handoff stands either way', async () => {
+  const { branch, db, runtime, service, wrapup } = await reachWrapup();
+  runtime.paneFailures = 1;
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => runtime.panes.length === 2);
+  assert.equal(executionRow(db)['status'], 'ready_for_handoff');
+
+  const second = await reachWrapup();
+  second.runtime.paneFailures = 100;
+  second.runtime.emit(second.wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(second.wrapup.cwd, second.branch),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => second.service.status('proj-123').includes('ready_for_handoff'));
+  await waitFor(() => {
+    const failed: unknown = second.db
+      .prepare(
+        "SELECT count(*) AS n FROM actions WHERE kind IN ('open_pane', 'open_diff') AND status = 'failed'",
+      )
+      .get();
+    return typeof failed === 'object' && failed !== null && 'n' in failed && failed.n === 2;
+  });
+  assert.equal(executionRow(second.db)['status'], 'ready_for_handoff');
+  assert.equal(second.runtime.panes.length, 0);
+  await closeWhenIdle(db);
+  await closeWhenIdle(second.db);
+  assert.ok(service);
+});
+
+test('wrap-up input that fails its checks pauses, and retry prepares it again', async () => {
+  const harness = await reachReview();
+  const plan = path.join(path.dirname(harness.work.cwd), '..', 'tickets');
+  const [ticket] = readdirSync(plan);
+  const planFile = path.join(plan, ticket ?? '', 'plan.md');
+  const saved = readFileSync(planFile, 'utf8');
+  rmSync(planFile);
+  harness.runtime.emit(harness.review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => harness.service.status('proj-123').includes('paused'));
+  assert.match(harness.service.status('proj-123'), /plan\.md is missing/);
+  assert.match(harness.service.status('proj-123'), /next: \/factory retry proj-123\.md/);
+  assert.equal(launchesOf(harness.runtime, 'wrapup').length, 0);
+  writeFileSync(planFile, saved);
+  await harness.service.command('retry proj-123');
+  await waitFor(() => launchesOf(harness.runtime, 'wrapup').length === 1);
+  await waitFor(() => harness.service.status('proj-123').includes('Launched'));
+  await closeWhenIdle(harness.db);
+});
+
+test('restart validates a finished wrap-up once and opens its panes once', async () => {
+  const { branch, db, runtime, service, wrapup } = await reachWrapup();
+  const terminal = {
+    kind: 'subagent_done' as const,
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(),
+  };
+  for (const now of ['2026-10-10T00:00:00.000Z', '2026-10-10T00:00:01.000Z']) {
+    applyControllerEvent(db, {
+      dedupeKey: `runtime:${wrapup.runId}:terminal`,
+      event: { kind: 'runtime_terminal', runId: wrapup.runId, terminal },
+      ids: randomIds(),
+      now,
+      source: 'runtime',
+    });
+  }
+  await service.recover();
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await waitFor(() => runtime.panes.length === 2);
+  await service.recover();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(runtime.panes.length, 2);
+  const validations: unknown = db
+    .prepare('SELECT count(*) AS n FROM validation_runs WHERE run_id = ?')
+    .get(wrapup.runId);
+  assert.deepEqual({ ...(validations ?? {}) }, { n: 1 });
   await closeWhenIdle(db);
 });

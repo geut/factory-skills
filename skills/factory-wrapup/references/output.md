@@ -32,4 +32,6 @@ Known limitations and follow-up that is genuinely out of scope, or none.
 When the pull request was opened or updated, its URL. Otherwise, exact commit and merge commands with real paths; do not execute them.
 ```
 
+In a controller run, the controller validates this handoff against the repository before the ticket is ready for handoff: every heading is present, `## Files` lists every changed path in the worktree and no other, `## Tests` names each configured validation command, and `## Merge commands` holds a pull-request URL or commands with the real worktree path and branch. A failed check comes back to you with the exact failures.
+
 After the template, call `subagent_done` and emit nothing else.

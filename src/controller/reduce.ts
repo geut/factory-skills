@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   type ActionRecord,
   type ControllerEvent,
@@ -18,6 +19,8 @@ import {
   type UsageWrite,
   type WorkInputPurpose,
   type WorkValidationOutcome,
+  type WrapupInputPurpose,
+  type WrapupValidationOutcome,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import {
@@ -28,12 +31,15 @@ import {
   reviewChangesPrompt,
   reviewCorrectionPrompt,
   reviewPrompt,
+  stageEmoji,
   stageLaunchPolicy,
   workCorrectionPrompt,
   workPrompt,
+  wrapupCorrectionPrompt,
   wrapupPrompt,
 } from '../runtime/policy.ts';
 import { formatFinding, parseReview } from '../validation/review.ts';
+import { handoffSections, WRAPUP_HEADINGS } from '../validation/wrapup.ts';
 import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
@@ -141,6 +147,7 @@ function addRun(
     .map((run) => run.sequence);
   const sequence = Math.max(0, ...sequences) + 1;
   const run: RunRecord = {
+    baseline: null,
     description: null,
     // A resumed reviewer still answers for the diff its session was given.
     diffHash: parent !== null && parent.sessionId === session.id ? parent.diffHash : null,
@@ -195,8 +202,13 @@ function launchAction(
   snapshot.actions.push(action);
 }
 
-function resolveOpen(snapshot: FactorySnapshot): void {
+// `keepReply` leaves a question that is being answered in place, so a
+// retry can still find its stored answer.
+function resolveOpen(snapshot: FactorySnapshot, keepReply = false): void {
   for (const attention of snapshot.attention) {
+    if (keepReply && attention.status === 'resuming') {
+      continue;
+    }
     if (
       attention.status === 'open' ||
       attention.status === 'answered' ||
@@ -213,13 +225,14 @@ function pauseWithNotice(
     code: string;
     failures: Array<string>;
     ids: IdSource;
+    keepReply?: boolean;
     question: string;
     retryable: boolean;
     // A reply to this notice resumes the session that owns this run.
     runId?: RunId;
   },
 ): void {
-  resolveOpen(snapshot);
+  resolveOpen(snapshot, input.keepReply === true);
   snapshot.execution.status = 'paused';
   snapshot.execution.retryable = input.retryable;
   snapshot.execution.statusReasonCode = input.code;
@@ -482,7 +495,22 @@ function applyTerminal(
           run.resultError = parsed.failures.join('\n');
         }
       }
-      if (session !== null && session.stage !== 'wrapup') {
+      if (session?.stage === 'wrapup') {
+        // The raw response is the handoff text. Its headings make it complete.
+        const missing = WRAPUP_HEADINGS.filter(
+          (name) => !handoffSections(terminal.output).has(name.toLowerCase()),
+        );
+        run.resultContract = stageLaunchPolicy.wrapup.contract;
+        run.resultJson = JSON.stringify({ output: terminal.output });
+        if (missing.length === 0) {
+          run.resultStatus = 'valid';
+          run.resultHash = sha256(run.resultJson);
+        } else {
+          run.resultStatus = 'invalid';
+          run.resultError = missing.map((name) => `## ${name} is missing.`).join('\n');
+        }
+      }
+      if (session !== null) {
         enqueueValidation(snapshot, run, `validate:${run.id}`, ids);
         snapshot.execution.status = 'active';
       }
@@ -764,41 +792,43 @@ function minorFindings(snapshot: FactorySnapshot): Array<string> {
   return findings;
 }
 
-function queueWrapup(snapshot: FactorySnapshot, ids: IdSource): string | null {
-  const worktree = snapshot.execution.worktreePath;
-  if (worktree === null) {
-    return 'The worktree is missing.';
-  }
-  const session: SessionRecord = {
-    id: ids.session(),
-    logicalKey: 'wrapup',
-    model: snapshot.execution.policy.models.work,
-    piSessionId: null,
-    sessionFile: null,
-    stage: 'wrapup',
-    status: 'prepared',
-    taskId: null,
-    thinking: stageLaunchPolicy.wrapup.thinking,
-  };
-  snapshot.sessions.push(session);
-  const prompt = wrapupPrompt({
-    displayRef: snapshot.ticket.displayRef,
-    minorFindings: minorFindings(snapshot),
-    planPath: snapshot.execution.planPath ?? '',
-    tasks: snapshot.tasks.map((task) => ({
-      taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-      taskId: task.taskId,
-      title: task.title,
-    })),
-    worktree,
-    worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+function enqueueWrapupInput(
+  snapshot: FactorySnapshot,
+  input: {
+    failures: Array<string>;
+    idempotencyKey: string;
+    ids: IdSource;
+    purpose: WrapupInputPurpose;
+  },
+): void {
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    failures: input.failures,
+    id: input.ids.action(),
+    idempotencyKey: input.idempotencyKey,
+    kind: 'prepare_wrapup_input',
+    lastError: null,
+    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    purpose: input.purpose,
+    retryOfActionId: null,
+    runId: null,
+    status: 'pending',
   });
-  const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
-  run.description = childDescription(snapshot.ticket.title);
-  launchAction(snapshot, run, prompt, 'launch', ids, worktree);
+}
+
+// Wrap-up starts with a checked input; the session and run are created when
+// that input is ready.
+function queueWrapup(snapshot: FactorySnapshot, ids: IdSource): void {
   snapshot.execution.stage = 'wrapup';
   snapshot.execution.status = 'active';
-  return null;
+  enqueueWrapupInput(snapshot, {
+    failures: [],
+    idempotencyKey: `wrapup-input:${snapshot.execution.id}:initial`,
+    ids,
+    purpose: 'initial',
+  });
 }
 
 // After an approval, either start the next dependency-ready task or, once
@@ -835,17 +865,7 @@ function advanceAfterApproval(
     });
     return `Task ${approved.taskId} approved. No remaining task is ready.`;
   }
-  const failure = queueWrapup(snapshot, ids);
-  if (failure !== null) {
-    pauseWithNotice(snapshot, {
-      code: 'wrapup_input_invalid',
-      failures: [failure],
-      ids,
-      question: failure,
-      retryable: false,
-    });
-    return failure;
-  }
+  queueWrapup(snapshot, ids);
   return `Task ${approved.taskId} approved. Every task is done; wrap-up queued.`;
 }
 
@@ -1098,6 +1118,233 @@ function finishReviewValidation(
   }
 }
 
+function wrapupSession(snapshot: FactorySnapshot): SessionRecord | null {
+  return snapshot.sessions.find((item) => item.stage === 'wrapup') ?? null;
+}
+
+function wrapupInputReady(
+  snapshot: FactorySnapshot,
+  existing: FactorySnapshot,
+  event: Extract<ControllerEvent, { kind: 'wrapup_input_ready' }>,
+  ids: IdSource,
+): Reduction {
+  const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
+  if (action === null || action.kind !== 'prepare_wrapup_input') {
+    return reject(existing, 'Wrap-up input result does not match an action.');
+  }
+  if (action.status === 'succeeded') {
+    return unchanged(existing, 'Duplicate wrap-up input event ignored.');
+  }
+  const worktree = snapshot.execution.worktreePath;
+  if (snapshot.execution.stage !== 'wrapup' || worktree === null) {
+    return reject(existing, 'The execution is not in wrap-up.');
+  }
+  action.status = 'succeeded';
+  const existingSession = wrapupSession(snapshot);
+  if (action.purpose === 'initial') {
+    if (existingSession !== null) {
+      return unchanged(existing, 'Wrap-up already started.');
+    }
+    const session: SessionRecord = {
+      id: ids.session(),
+      logicalKey: 'wrapup',
+      model: snapshot.execution.policy.models.work,
+      piSessionId: null,
+      sessionFile: null,
+      stage: 'wrapup',
+      status: 'prepared',
+      taskId: null,
+      thinking: stageLaunchPolicy.wrapup.thinking,
+    };
+    snapshot.sessions.push(session);
+    const prompt = wrapupPrompt({
+      adrPath: event.adrPath,
+      baseBranch: snapshot.execution.worktreeBaseBranch,
+      codeRoot: snapshot.execution.policy.codeRoot,
+      contextPath: event.contextPath,
+      displayRef: snapshot.ticket.displayRef,
+      factoryRoot: path.dirname(path.dirname(snapshot.execution.factoryDir)),
+      minorFindings: minorFindings(snapshot),
+      model: session.model,
+      planPath: snapshot.execution.planPath ?? '',
+      pullRequests: snapshot.execution.policy.pullRequests,
+      tasks: snapshot.tasks.map((task) => ({
+        status: task.status,
+        taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+        taskId: task.taskId,
+        title: task.title,
+        verdict: task.reviewVerdict ?? 'none',
+      })),
+      usage: event.usage,
+      verification: event.verification,
+      worktree,
+      worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+    });
+    const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
+    run.description = childDescription(snapshot.ticket.title);
+    run.baseline = event.baseline;
+    launchAction(snapshot, run, prompt, 'launch', ids, worktree);
+    snapshot.execution.status = 'active';
+    return finish(snapshot, 'Wrap-up queued.');
+  }
+  if (existingSession === null) {
+    return reject(existing, 'Wrap-up session is missing.');
+  }
+  const parent =
+    [...snapshot.runs]
+      .reverse()
+      .find((item) => item.sessionId === existingSession.id && item.status === 'terminal') ?? null;
+  if (action.purpose === 'validation_correction') {
+    // Wrap-up corrections are not counted against a limit.
+    const prompt = wrapupCorrectionPrompt(action.failures);
+    const count = snapshot.runs.filter(
+      (item) => item.sessionId === existingSession.id && item.purpose === 'validation_correction',
+    ).length;
+    const run = addRun(
+      snapshot,
+      existingSession,
+      parent,
+      'validation_correction',
+      count + 1,
+      ids,
+      prompt,
+    );
+    run.description = parent?.description ?? childDescription(snapshot.ticket.title);
+    launchAction(
+      snapshot,
+      run,
+      prompt,
+      existingSession.sessionFile === null ? 'launch' : 'resume',
+      ids,
+      worktree,
+    );
+    snapshot.execution.status = 'active';
+    return finish(snapshot, 'Wrap-up correction queued.');
+  }
+  const attention =
+    snapshot.attention.find((item) => item.status === 'resuming' || item.status === 'answered') ??
+    null;
+  const reply =
+    snapshot.replies.find(
+      (item) => item.isCurrent && attention !== null && item.requestId === attention.id,
+    ) ?? null;
+  if (attention === null || reply === null) {
+    return reject(existing, 'Reply was not stored.');
+  }
+  const asked = attention.runId === null ? parent : runFor(snapshot, attention.runId);
+  const prompt = replyPrompt('wrapup', reply.answer);
+  const run = addRun(snapshot, existingSession, asked, 'human_reply', 0, ids, prompt);
+  run.description = asked?.description ?? childDescription(snapshot.ticket.title);
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: reply.id,
+    attentionRequestId: attention.id,
+    cwd: worktree,
+    id: ids.action(),
+    idempotencyKey: `resume:${reply.id}:${run.id}`,
+    kind: 'resume_run',
+    lastError: null,
+    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    prompt,
+    retryOfActionId: null,
+    runId: run.id,
+    status: 'pending',
+  });
+  attention.status = 'resuming';
+  snapshot.execution.status = 'resuming';
+  return finish(snapshot, 'Reply stored. Resuming wrap-up.');
+}
+
+function finishWrapupValidation(
+  snapshot: FactorySnapshot,
+  run: RunRecord,
+  action: Extract<ActionRecord, { kind: 'validate_run' }>,
+  outcome: WrapupValidationOutcome,
+  usage: string,
+  ids: IdSource,
+): Reduction {
+  if (outcome.kind === 'error') {
+    return retryValidation(snapshot, run, action, outcome.message, ids);
+  }
+  action.status = 'succeeded';
+  if (outcome.kind === 'failed') {
+    enqueueWrapupInput(snapshot, {
+      failures: outcome.failures,
+      idempotencyKey: `wrapup-input:${run.id}:correction`,
+      ids,
+      purpose: 'validation_correction',
+    });
+    snapshot.execution.status = 'active';
+    return finish(snapshot, 'Wrap-up validation failed.');
+  }
+  // Passed: the human takes it from here. The session stays open for reading.
+  const ref = snapshot.ticket.displayRef;
+  snapshot.execution.status = 'ready_for_handoff';
+  snapshot.execution.retryable = false;
+  snapshot.execution.statusReasonCode = null;
+  snapshot.execution.statusReason = null;
+  const worktree = snapshot.execution.worktreePath ?? snapshot.execution.policy.codeRoot;
+  const base = {
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    lastError: null,
+    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    retryOfActionId: null,
+    runId: run.id,
+    status: 'pending' as const,
+  };
+  snapshot.actions.push(
+    {
+      ...base,
+      id: ids.action(),
+      idempotencyKey: `pane:session:${run.id}`,
+      kind: 'open_pane',
+      name: `${stageEmoji.wrapup} ${ref}`,
+    },
+    {
+      ...base,
+      cwd: worktree,
+      id: ids.action(),
+      idempotencyKey: `pane:diff:${run.id}`,
+      kind: 'open_diff',
+      name: `🔀 ${ref}`,
+    },
+  );
+  resolveOpen(snapshot);
+  snapshot.attention.push({
+    id: ids.attention(),
+    kind: 'manual_approval',
+    question: [
+      `${ref} is ready for handoff. The wrap-up session and the diff are open in their own panes.`,
+      '',
+      usage,
+      '',
+      `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
+    ].join('\n'),
+    runId: run.id,
+    status: 'open',
+  });
+  const attention = snapshot.attention.at(-1);
+  if (attention !== undefined) {
+    snapshot.actions.push({
+      attempts: 0,
+      attentionReplyId: null,
+      attentionRequestId: attention.id,
+      id: ids.action(),
+      idempotencyKey: `notify:${attention.id}`,
+      kind: 'notify_attention',
+      lastError: null,
+      maxAttempts: 1,
+      message: attention.question,
+      retryOfActionId: null,
+      runId: null,
+      status: 'pending',
+    });
+  }
+  return finish(snapshot, `${ref} is ready for handoff.`);
+}
+
 export function reduce(input: {
   event: ControllerEvent;
   ids: IdSource;
@@ -1144,6 +1391,9 @@ export function reduce(input: {
       }
       if (event.stage === 'review') {
         return finishReviewValidation(snapshot, existing, run, action, event.outcome, ids);
+      }
+      if (event.stage === 'wrapup') {
+        return finishWrapupValidation(snapshot, run, action, event.outcome, event.usage, ids);
       }
       if (run.resultStatus !== 'valid' || run.resultHash === null) {
         return reject(existing, 'Validation requires a valid plan result.');
@@ -1363,6 +1613,51 @@ export function reduce(input: {
       snapshot.execution.status = 'resuming';
       return finish(snapshot, 'Reply stored. Resuming the session.');
     }
+    case 'wrapup_input_ready':
+      return wrapupInputReady(snapshot, existing, event, ids);
+    case 'wrapup_input_failed': {
+      const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
+      if (action === null || action.kind !== 'prepare_wrapup_input') {
+        return reject(existing, 'Wrap-up input failure does not match an action.');
+      }
+      if (action.status === 'failed') {
+        return unchanged(existing, 'Duplicate wrap-up input failure ignored.');
+      }
+      action.status = 'failed';
+      action.lastError = event.message;
+      pauseWithNotice(snapshot, {
+        code: 'wrapup_input_invalid',
+        failures: [event.message],
+        ids,
+        keepReply: action.purpose === 'human_reply',
+        question: `Wrap-up cannot start:\n${event.message}`,
+        retryable: true,
+      });
+      return finish(snapshot, event.message);
+    }
+    case 'complete': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'Complete does not match the current ticket.');
+      }
+      if (snapshot.execution.status === 'complete') {
+        return unchanged(existing, `${snapshot.ticket.displayRef} is already complete.`);
+      }
+      if (snapshot.execution.status !== 'ready_for_handoff') {
+        return reject(
+          existing,
+          `${snapshot.ticket.displayRef} is ${snapshot.execution.stage}/${snapshot.execution.status}, not ready for handoff.`,
+        );
+      }
+      resolveOpen(snapshot);
+      for (const session of snapshot.sessions) {
+        if (session.status === 'open' || session.status === 'prepared') {
+          session.status = 'completed';
+        }
+      }
+      snapshot.execution.stage = 'done';
+      snapshot.execution.status = 'complete';
+      return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
+    }
     case 'work_input_failed': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
       if (action === null || action.kind !== 'prepare_work_input') {
@@ -1451,6 +1746,7 @@ export function reduce(input: {
       }
       if (
         snapshot.execution.statusReasonCode === 'work_input_invalid' ||
+        snapshot.execution.statusReasonCode === 'wrapup_input_invalid' ||
         snapshot.execution.statusReasonCode === 'review_diff_changed'
       ) {
         return reject(existing, `Retry with /factory retry ${snapshot.ticket.commandRef}.`);
@@ -1504,6 +1800,16 @@ export function reduce(input: {
         });
         snapshot.execution.status = 'resuming';
         return finish(snapshot, 'Reply stored. Checking the work input.');
+      }
+      if (session.stage === 'wrapup') {
+        enqueueWrapupInput(snapshot, {
+          failures: [],
+          idempotencyKey: `wrapup-input:${reply.id}`,
+          ids,
+          purpose: 'human_reply',
+        });
+        snapshot.execution.status = 'resuming';
+        return finish(snapshot, 'Reply stored. Checking the wrap-up input.');
       }
       const prompt = replyPrompt(session.stage, event.answer);
       const run = addRun(
@@ -1562,6 +1868,31 @@ export function reduce(input: {
         snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
         snapshot.execution.retryable = false;
         return finish(snapshot, 'Retrying work input preparation.');
+      }
+      if (
+        snapshot.execution.status === 'paused' &&
+        snapshot.execution.statusReasonCode === 'wrapup_input_invalid'
+      ) {
+        const failed = [...snapshot.actions]
+          .reverse()
+          .find(
+            (item): item is Extract<ActionRecord, { kind: 'prepare_wrapup_input' }> =>
+              item.kind === 'prepare_wrapup_input' && item.status === 'failed',
+          );
+        if (failed === undefined) {
+          return reject(existing, 'Nothing failed that can be retried.');
+        }
+        // A failed reply keeps its stored answer, so the retry still carries it.
+        resolveOpen(snapshot, failed.purpose === 'human_reply');
+        enqueueWrapupInput(snapshot, {
+          failures: failed.failures,
+          idempotencyKey: `wrapup-input-retry:${event.idempotencyKey}`,
+          ids,
+          purpose: failed.purpose,
+        });
+        snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
+        snapshot.execution.retryable = false;
+        return finish(snapshot, 'Retrying wrap-up input preparation.');
       }
       if (
         snapshot.execution.status === 'paused' &&

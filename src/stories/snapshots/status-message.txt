@@ -654,6 +654,187 @@
   06/06 Regenerate `verify-factory-dashboard` without `fstate seed` · r1 · 6/6 done
   Checked the diff against the task file.
 
+== wrap-up failed validation; correcting · 40 cols ==
+● dpaez/factory-dashboard#11 · wrapup
+  · correcting
+  6/6 done
+  ## Files does not list changed path s…
+  +1 line · expand to read
+
+== wrap-up failed validation; correcting · 60 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.t…
+  +1 line · expand to read
+
+== wrap-up failed validation; correcting · 80 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.ts.
+
+== wrap-up failed validation; correcting · 120 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.ts.
+
+== wrap-up asks a question · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · waiting for you
+  6/6 done
+  The PR template asks for a migration
+  note. Is a schema v2 note enough?
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2
+  note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2 note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2 note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== handoff passed validation · 40 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup
+  · ready for handoff
+  6/6 done
+  The dashboard reads the factory's sch…
+  +1 line · expand to read
+
+== handoff passed validation · 60 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, rea…
+  +1 line · expand to read
+
+== handoff passed validation · 80 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, read-only.
+
+== handoff passed validation · 120 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, read-only.
+
+== ready for handoff notice · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready
+  for handoff. The wrap-up session and
+  the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache
+  rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900
+  135,000    22,000    163,928  41%
+  0.754
+  Work        6    610  48,000
+  590,000    31,000    669,610  64%
+  6.105
+  Review      6    480  25,200
+  300,000    12,000    337,680  38%
+  5.80
+  Wrap-up     1     20   1,400
+  40,000     1,500     42,920  22%
+  0.178
+  Total      14  1,138  81,500
+  1,065,000    66,500  1,214,138    —
+  12.837
+  Models: plan qwen3.8-max · work
+  qwen3.8-max · review kimi-k3 · wrap-up
+  qwen3.8-max
+  Merge it yourself, then run /factory
+  complete dpaez/factory-dashboard#11.
+  → /factory complete
+    dpaez/factory-dashboard#11
+
+== ready for handoff notice · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The
+  wrap-up session and the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr
+  Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000
+  163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000
+  669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000
+  337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500
+  42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500
+  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review
+  kimi-k3 · wrap-up qwen3.8-max
+  Merge it yourself, then run /factory complete
+  dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== ready for handoff notice · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The wrap-up session and the
+  diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000    163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000    669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000    337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500     42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review kimi-k3 · wrap-up
+  qwen3.8-max
+  Merge it yourself, then run /factory complete dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== ready for handoff notice · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The wrap-up session and the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000    163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000    669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000    337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500     42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review kimi-k3 · wrap-up qwen3.8-max
+  Merge it yourself, then run /factory complete dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== /factory complete · 40 cols ==
+● dpaez/factory-dashboard#11 · done ·
+  complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complet…
+  +1 line · expand to read
+
+== /factory complete · 60 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
+== /factory complete · 80 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
+== /factory complete · 120 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
 == /factory status while reviewing · 40 cols ==
 ● dpaez/factory-dashboard#11 · review
   · active

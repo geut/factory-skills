@@ -30,8 +30,10 @@ import { inspectPlanDir, planChecks } from '../validation/plan.ts';
 import { writePlanValidation, writeValidation } from '../validation/record.ts';
 import { validateReview } from '../validation/review.ts';
 import { validateWork, validationLeaseMs } from '../validation/work.ts';
+import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { inspectWorkInput } from './work-input.ts';
 import { prepareWorktree } from './worktree.ts';
+import { openHandoffPane, prepareWrapupInput, validateWrapupRun } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
   if (
@@ -80,6 +82,7 @@ export async function dispatchPending(input: {
   arm: (runId: RunId) => void;
   db: DatabaseSync;
   factoryRoot: string;
+  findPullRequest: PullRequestLookup;
   ids: IdSource;
   liveValidations: Set<string>;
   notify: (message: string) => void;
@@ -123,6 +126,7 @@ async function perform(
   input: {
     db: DatabaseSync;
     factoryRoot: string;
+    findPullRequest: PullRequestLookup;
     ids: IdSource;
     notify: (message: string) => void;
     now: () => string;
@@ -135,12 +139,23 @@ async function perform(
     case 'launch_run':
     case 'resume_run':
       return launch(input, action, snapshot);
-    case 'validate_run':
-      return runStage(snapshot, action.runId) === 'review'
-        ? validateReviewRun(input, action, snapshot)
-        : validate(input, action, snapshot);
+    case 'validate_run': {
+      const stage = runStage(snapshot, action.runId);
+      if (stage === 'review') {
+        return validateReviewRun(input, action, snapshot);
+      }
+      if (stage === 'wrapup') {
+        return validateWrapupRun(input, action, snapshot);
+      }
+      return validate(input, action, snapshot);
+    }
     case 'prepare_work_input':
       return prepareInput(input, action, snapshot);
+    case 'prepare_wrapup_input':
+      return prepareWrapupInput(input, action, snapshot);
+    case 'open_pane':
+    case 'open_diff':
+      return openHandoffPane(input, action, snapshot);
     case 'prepare_worktree':
       return worktree(input, action, snapshot);
     case 'notify_attention':

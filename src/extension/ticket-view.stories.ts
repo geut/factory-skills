@@ -1,6 +1,7 @@
 import { ticketDetailOf, type TicketDetail } from '../controller/service.ts';
 import {
   askingUser,
+  handoffReady,
   planRunning,
   readyForReview,
   roundLimit,
@@ -64,6 +65,13 @@ export const component: Component = {
       askingUser,
       'Should the overview hide done tickets?',
       6,
+    ),
+    view(
+      'ready for handoff',
+      'Every task approved and the handoff validated; the last run reads ready for handoff.',
+      handoffReady,
+      '## Outcome\n\nThe dashboard reads the factory schema v2 database, read-only.',
+      13,
     ),
     view(
       'plan running',

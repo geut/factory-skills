@@ -1,6 +1,6 @@
 # Factory Skills
 
-A [Pi](https://pi.dev) package that runs one ticket from planning through work, review, and the wrap-up launch. Coordination lives in a TypeScript controller. Skills describe specialist behavior only.
+A [Pi](https://pi.dev) package that runs one ticket from planning through work, review, and wrap-up to a human handoff. Coordination lives in a TypeScript controller. Skills describe specialist behavior only.
 
 ## Commands
 
@@ -11,6 +11,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory start --text <id> <ticket text>
 /factory reply <ticket> "answer"
 /factory retry <ticket>
+/factory complete <ticket>
 /factory status <ticket>
 ```
 
@@ -28,7 +29,19 @@ The reviewer returns the `factory.review.v4` template. The controller parses the
 - A result the controller cannot parse resumes the reviewer with the parse errors. That does not spend a round. `limits.reviewCorrections` (default 3) bounds it per round.
 - A diff that changed during review is validated again before another review in the same round. The reviewer gets the worktree as it stands after the validation commands. A second change in the same round pauses the ticket, because something keeps writing to the worktree; ignore the generated files, then `retry` validates the work and reviews it again.
 
-Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round. This slice launches wrap-up but does not validate it. It does not open a pull request or implement `/factory rerun`.
+Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round.
+
+After the last approval, the controller checks the wrap-up input in code: every task is done with an approving review, the plan and task files exist, the worktree is ready on its branch, and no other child runs. It records the worktree, refs, and factory files as a baseline, then launches the `factory-wrapup` agent on `models.work` in the worktree. A failed check pauses the ticket; `retry` checks again.
+
+The wrap-up agent returns the `factory.wrapup.v1` handoff. The controller keeps it as written and validates it against the repository:
+
+- every heading is present; `## Files` lists every changed path and no other; `## Tests` names the `validation.work.commands`; `## Merge commands` holds a pull-request URL or commands with the real worktree and branch;
+- wrap-up changed no product code: a change it makes must be documentation, or a generated artifact listed in `validation.wrapup.generated`, and must be named in `## Files`;
+- in the factory root only `CONTEXT.md`, `PRD.md`, and `learnings/` may change; no `wrapup.md` or `visuals/`;
+- nothing was committed or merged, and the branch still exists;
+- `github.pullRequests` decides whether a push and a pull request are allowed: never when it is off or the worktree has uncommitted changes; with a clean worktree, the pull request must exist for the branch.
+
+A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `github.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
 
 ## What you see
 
@@ -56,7 +69,7 @@ src/extension/     Pi /factory command
 src/controller/    commands, pure reducer, SQLite persistence
 src/actions/       leased dispatcher, worktree preparation
 src/runtime/       FactorySubagentRuntime, fake, pi-herdr adapter
-src/validation/    plan, work, and review checks
+src/validation/    plan, work, review, and wrap-up checks
 src/stories/       component gallery: fixtures, scenarios, server, snapshots
 src/state/         schema and database opener
 skills/            specialist procedures and output templates
@@ -94,11 +107,12 @@ Child sessions follow the named skill, return only the versioned template in tha
 ```json
 {
   "models": { "work": "work-model", "review": "review-model" },
-  "github": { "owner": "geut", "repo": "factory-skills" },
+  "github": { "owner": "geut", "repo": "factory-skills", "pullRequests": false },
   "keys": { "PROJ": { "provider": "github" } },
   "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
   "validation": {
-    "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] }
+    "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] },
+    "wrapup": { "generated": ["docs/api/", "*.snap"] }
   }
 }
 ```

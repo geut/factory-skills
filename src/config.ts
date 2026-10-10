@@ -36,12 +36,19 @@ export const DEFAULT_LIMITS: Limits = {
 };
 
 export type FactoryConfig = {
-  github: { host: string; owner: string; repo: string } | null;
+  github: { host: string; owner: string; pullRequests: boolean; repo: string } | null;
   keys: Record<string, { provider: 'github' }>;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
-  validation: { work: { commands: Array<WorkCommand> } };
+  validation: Validation;
+};
+
+// `wrapup.generated` lists path prefixes or `*` globs of generated artifacts
+// the wrap-up agent may refresh, such as `docs/api/` or `*.snap`.
+export type Validation = {
+  work: { commands: Array<WorkCommand> };
+  wrapup: { generated: Array<string> };
 };
 
 export type ConfigResult =
@@ -144,6 +151,24 @@ function readCommands(value: unknown): Array<WorkCommand> | null {
   return parsed;
 }
 
+function readGenerated(value: unknown): Array<string> | null {
+  if (value === undefined || !isRecord(value) || value['wrapup'] === undefined) {
+    return [];
+  }
+  const wrapup = value['wrapup'];
+  if (!isRecord(wrapup)) {
+    return null;
+  }
+  const generated = wrapup['generated'] ?? [];
+  if (
+    !Array.isArray(generated) ||
+    generated.some((item) => typeof item !== 'string' || item.trim().length === 0)
+  ) {
+    return null;
+  }
+  return generated.map((item: string) => item.trim());
+}
+
 export function allowsEmptyDiff(
   labels: Array<string>,
   map: Record<string, InternalLabel>,
@@ -203,6 +228,14 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     };
   }
 
+  const generated = readGenerated(value['validation']);
+  if (generated === null) {
+    return {
+      kind: 'error',
+      message: 'FACTORY.json validation.wrapup.generated must be an array of paths.',
+    };
+  }
+
   let github: FactoryConfig['github'] = null;
   if (value['github'] !== undefined) {
     const githubValue = value['github'];
@@ -215,7 +248,11 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     if (owner === null || repo === null) {
       return { kind: 'error', message: 'FACTORY.json github needs owner and repo.' };
     }
-    github = { host, owner, repo };
+    const pullRequests = githubValue['pullRequests'] ?? false;
+    if (typeof pullRequests !== 'boolean') {
+      return { kind: 'error', message: 'FACTORY.json github.pullRequests must be true or false.' };
+    }
+    github = { host, owner, pullRequests, repo };
   }
 
   const keys: FactoryConfig['keys'] = {};
@@ -239,7 +276,7 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       labels,
       limits,
       models: { plan, review, work },
-      validation: { work: { commands } },
+      validation: { work: { commands }, wrapup: { generated } },
     },
     kind: 'ok',
   };

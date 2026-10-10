@@ -5,7 +5,13 @@ import {
   type TerminalOutcome,
   type UsageTotals,
 } from '../domain.ts';
-import type { ActiveWatch, FactorySubagentRuntime, LaunchSpec, RunStarted } from './runtime.ts';
+import type {
+  ActiveWatch,
+  FactorySubagentRuntime,
+  LaunchSpec,
+  PaneSpec,
+  RunStarted,
+} from './runtime.ts';
 
 type Tracked = {
   alive: boolean;
@@ -16,7 +22,9 @@ type Tracked = {
 
 export class FakeRuntime implements FactorySubagentRuntime {
   readonly launches: Array<LaunchSpec> = [];
+  readonly panes: Array<PaneSpec> = [];
   failNext = false;
+  paneFailures = 0;
   failuresRemaining = 0;
   private readonly tracked = new Map<string, Tracked>();
   private readonly watchers = new Map<string, (event: TerminalOutcome) => void>();
@@ -27,6 +35,15 @@ export class FakeRuntime implements FactorySubagentRuntime {
 
   async resume(spec: LaunchSpec): Promise<RunStarted> {
     return this.start(spec);
+  }
+
+  async openPane(spec: PaneSpec): Promise<{ paneId: string }> {
+    if (this.paneFailures > 0) {
+      this.paneFailures -= 1;
+      throw new Error('herdr pane open failed');
+    }
+    this.panes.push(spec);
+    return { paneId: `pane-${spec.name}` };
   }
 
   async interrupt(): Promise<void> {

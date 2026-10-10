@@ -262,10 +262,25 @@ export function reviewChangesPrompt(round: number, findings: Array<string>): str
 }
 
 export function wrapupPrompt(input: {
+  adrPath: string | null;
+  baseBranch: string | null;
+  codeRoot: string;
+  contextPath: string | null;
   displayRef: string;
+  factoryRoot: string;
   minorFindings: Array<string>;
+  model: string;
   planPath: string;
-  tasks: Array<{ taskFile: string; taskId: string; title: string }>;
+  pullRequests: boolean;
+  tasks: Array<{
+    status: string;
+    taskFile: string;
+    taskId: string;
+    title: string;
+    verdict: string;
+  }>;
+  usage: string;
+  verification: Array<string>;
   worktree: string;
   worktreeBranch: string;
 }): string {
@@ -275,14 +290,45 @@ export function wrapupPrompt(input: {
     '',
     `Ticket: ${input.displayRef}`,
     `Plan: ${input.planPath}`,
+    `ADR: ${input.adrPath ?? 'none'}`,
+    `Factory root: ${input.factoryRoot}`,
+    `Factory context: ${input.contextPath ?? 'none'}`,
+    `Code root: ${input.codeRoot}`,
     `Worktree: ${input.worktree}`,
     `Branch: ${input.worktreeBranch}`,
-    'Every task passed work validation and review:',
-    ...input.tasks.map((task) => `- ${task.taskId} ${task.title} (${task.taskFile})`),
+    `Base branch: ${input.baseBranch ?? 'unknown'}`,
+    `Model: ${input.model}. Tools: ${childToolList('wrapup')}.`,
+    `github.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
+    '',
+    'Tasks:',
+    ...input.tasks.map(
+      (task) =>
+        `- ${task.taskId} ${task.title}: ${task.status}, review ${task.verdict} (${task.taskFile})`,
+    ),
+    '',
+    'Final work validation:',
+    ...(input.verification.length === 0
+      ? ['- none recorded']
+      : input.verification.map((line) => `- ${line}`)),
     '',
     'Non-blocking review findings:',
     ...(input.minorFindings.length === 0
       ? ['none']
       : input.minorFindings.map((finding) => `- ${finding}`)),
+    '',
+    'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
+    input.usage,
+    '',
+    'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless github.pullRequests allows it.',
+  ].join('\n');
+}
+
+export function wrapupCorrectionPrompt(failures: Array<string>): string {
+  const policy = stageLaunchPolicy.wrapup;
+  return [
+    childInstructions(policy.skill, policy.contract),
+    '',
+    `Wrap-up validation failed. Fix these exact problems and return the complete ${policy.contract} template again:`,
+    ...failures.map((failure) => `- ${failure}`),
   ].join('\n');
 }

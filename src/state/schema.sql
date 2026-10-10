@@ -315,7 +315,8 @@ CREATE TABLE actions (
     kind IN (
       'fetch_ticket', 'prepare_worktree', 'prepare_work_input', 'launch_run', 'resume_run',
       'interrupt_run', 'validate_run', 'notify_attention',
-      'publish_projection', 'update_ticket_source', 'open_diff'
+      'publish_projection', 'update_ticket_source', 'open_diff',
+      'prepare_wrapup_input', 'open_pane'
     )
   ),
   status               TEXT NOT NULL CHECK (

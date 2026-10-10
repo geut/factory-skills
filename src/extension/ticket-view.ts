@@ -69,7 +69,7 @@ export function renderTicketDetail(input: {
   const room = Math.max(1, bodyBudget - runRows.length - 1);
   const scroll = Math.max(0, Math.min(input.scroll, Math.max(0, messageRows.length - room)));
   const visibleMessage = messageRows.slice(scroll, scroll + room);
-  
+
   const body = [...runRows, fitLine('', width), ...visibleMessage];
   while (body.length < bodyBudget) {
     body.push(fitLine('', width));

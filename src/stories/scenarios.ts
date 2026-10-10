@@ -1,6 +1,9 @@
-import type { FactorySnapshot, RunRecord } from '../domain.ts';
+import { formatUsageTable } from '../controller/usage.ts';
+import { attentionId, type FactorySnapshot, type RunRecord } from '../domain.ts';
 import {
+  action,
   addTasks,
+  at,
   blank,
   majorFinding,
   minorFinding,
@@ -294,4 +297,153 @@ export function otherTicket(): FactorySnapshot {
   run(snapshot, session(snapshot, 'review', '01'), { minutesAgo: 2, round: 1, terminal: null });
   snapshot.execution.stage = 'review';
   return snapshot;
+}
+
+const sampleUsage = formatUsageTable([
+  {
+    cacheRead: 135_000,
+    cacheWrite: 22_000,
+    context: 41.2,
+    costMicros: 754_000,
+    input: 28,
+    label: 'Plan',
+    models: ['qwen3.8-max'],
+    output: 6900,
+    sessions: 1,
+    total: 163_928,
+  },
+  {
+    cacheRead: 590_000,
+    cacheWrite: 31_000,
+    context: 63.5,
+    costMicros: 6_105_000,
+    input: 610,
+    label: 'Work',
+    models: ['qwen3.8-max'],
+    output: 48_000,
+    sessions: 6,
+    total: 669_610,
+  },
+  {
+    cacheRead: 300_000,
+    cacheWrite: 12_000,
+    context: 38,
+    costMicros: 5_800_000,
+    input: 480,
+    label: 'Review',
+    models: ['kimi-k3'],
+    output: 25_200,
+    sessions: 6,
+    total: 337_680,
+  },
+  {
+    cacheRead: 40_000,
+    cacheWrite: 1500,
+    context: 22.4,
+    costMicros: 178_000,
+    input: 20,
+    label: 'Wrap-up',
+    models: ['qwen3.8-max'],
+    output: 1400,
+    sessions: 1,
+    total: 42_920,
+  },
+  {
+    cacheRead: 1_065_000,
+    cacheWrite: 66_500,
+    context: null,
+    costMicros: 12_837_000,
+    input: 1138,
+    label: 'Total',
+    models: [],
+    output: 81_500,
+    sessions: 14,
+    total: 1_214_138,
+  },
+]);
+
+const handoffText = `## Outcome
+
+The dashboard reads the factory's schema v2 database, read-only.
+
+## PR summary
+
+Move every page onto a typed read module over the controller views.
+`;
+
+function wrapupFinished(): Scenario {
+  const scenario = wrapupRunning();
+  const { snapshot } = scenario;
+  const wrapup = snapshot.runs.at(-1);
+  if (wrapup === undefined) {
+    throw new Error('missing wrap-up run');
+  }
+  wrapup.status = 'terminal';
+  wrapup.terminalKind = 'subagent_done';
+  wrapup.endedAt = at(0);
+  wrapup.resultJson = JSON.stringify({ output: handoffText });
+  return { run: wrapup, snapshot };
+}
+
+// Wrap-up validation passed: panes queued, the human is asked to complete.
+export function handoffReady(): Scenario {
+  const scenario = wrapupFinished();
+  const { run, snapshot } = scenario;
+  if (run === null) {
+    return scenario;
+  }
+  action(snapshot, `pane:session:${run.id}`, 'open_pane', run);
+  action(snapshot, `pane:diff:${run.id}`, 'open_diff', run);
+  snapshot.execution.status = 'ready_for_handoff';
+  const question = [
+    `${snapshot.ticket.displayRef} is ready for handoff. The wrap-up session and the diff are open in their own panes.`,
+    '',
+    sampleUsage,
+    '',
+    `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
+  ].join('\n');
+  snapshot.attention.push({
+    id: attentionId('attention-handoff'),
+    kind: 'manual_approval',
+    question,
+    runId: run.id,
+    status: 'open',
+  });
+  return { question, run, snapshot };
+}
+
+// Wrap-up validation failed; the same session is resumed with the failures.
+export function wrapupCorrecting(): Scenario {
+  const scenario = wrapupFinished();
+  const { run, snapshot } = scenario;
+  if (run === null) {
+    return scenario;
+  }
+  action(snapshot, `wrapup-input:${run.id}:correction`, 'prepare_wrapup_input', null, [
+    '## Files does not list changed path src/lib/server/read.ts.',
+    'Wrap-up changed product code: src/routes/+page.svelte. Route code changes back through work and review.',
+  ]);
+  return scenario;
+}
+
+export function wrapupQuestion(): Scenario {
+  const { snapshot } = wrapupRunning();
+  const asked = snapshot.runs.at(-1) ?? null;
+  if (asked !== null) {
+    asked.status = 'terminal';
+    asked.terminalKind = 'caller_ping';
+  }
+  const question = 'The PR template asks for a migration note. Is a schema v2 note enough?';
+  pause(snapshot, { code: 'agent_question', question, runId: asked, waiting: true });
+  return { question, run: asked, snapshot };
+}
+
+export function completed(): Scenario {
+  const scenario = handoffReady();
+  scenario.snapshot.execution.stage = 'done';
+  scenario.snapshot.execution.status = 'complete';
+  for (const attention of scenario.snapshot.attention) {
+    attention.status = 'resolved';
+  }
+  return scenario;
 }

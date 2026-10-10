@@ -122,6 +122,9 @@ export function nextAction(snapshot: FactorySnapshot): string | null {
   if (execution.status === 'waiting_for_user') {
     return `/factory reply ${ref} "answer"`;
   }
+  if (execution.status === 'ready_for_handoff') {
+    return `/factory complete ${ref}`;
+  }
   if (execution.status === 'resume_failed') {
     return `/factory retry ${ref}`;
   }
@@ -145,6 +148,7 @@ export function needsUser(snapshot: FactorySnapshot): boolean {
   const status = snapshot.execution.status;
   return (
     status === 'waiting_for_user' ||
+    status === 'ready_for_handoff' ||
     status === 'paused' ||
     status === 'resume_failed' ||
     status === 'failed'

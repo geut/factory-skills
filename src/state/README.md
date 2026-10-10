@@ -72,4 +72,6 @@ const db = openStateDatabase('/absolute/project/.factory', { create: true });
 db.close();
 ```
 
+Schema 2 gained the `prepare_wrapup_input` and `open_pane` action kinds after it shipped. A writable open of a database created before them rebuilds its `actions` table once, in one transaction, with the same rows, indexes, and triggers; `schema_version` stays 2. A read-only open changes nothing.
+
 The opener enables foreign keys, WAL, and a five-second busy timeout. It publishes SQLite `application_id` `FACT`, `user_version`, and `schema_meta` in one schema transaction. Concurrent creators converge on that transaction. Only an empty SQLite file can be initialized; legacy, partial, and unrelated databases are rejected without modification.

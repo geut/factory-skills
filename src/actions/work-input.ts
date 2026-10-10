@@ -16,7 +16,7 @@ function inside(root: string, target: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function contained(factoryRoot: string, worktreePath: string, target: string): boolean {
+export function contained(factoryRoot: string, worktreePath: string, target: string): boolean {
   return inside(factoryRoot, target) || inside(worktreePath, target);
 }
 
@@ -28,6 +28,22 @@ function taskType(file: string): string | null {
   } catch {
     return null;
   }
+}
+
+// The worktree exists and is on the ticket branch.
+export function worktreeFailures(worktreePath: string, expectedBranch: string): Array<string> {
+  if (!existsSync(worktreePath) || !statSync(worktreePath).isDirectory()) {
+    return ['The worktree path is not a directory.'];
+  }
+  const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd: worktreePath,
+    encoding: 'utf8',
+  });
+  const name = (branch.stdout ?? '').trim();
+  if (branch.status !== 0 || name !== expectedBranch) {
+    return [`The worktree is on ${name || 'an unknown branch'}, expected ${expectedBranch}.`];
+  }
+  return [];
 }
 
 export function inspectWorkInput(input: {
@@ -74,20 +90,7 @@ export function inspectWorkInput(input: {
       failures.push(`Path is outside the factory root or worktree: ${target}`);
     }
   }
-  if (!existsSync(worktreePath) || !statSync(worktreePath).isDirectory()) {
-    failures.push('The worktree path is not a directory.');
-  } else {
-    const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: worktreePath,
-      encoding: 'utf8',
-    });
-    const name = (branch.stdout ?? '').trim();
-    if (branch.status !== 0 || name !== input.expectedBranch) {
-      failures.push(
-        `The worktree is on ${name || 'an unknown branch'}, expected ${input.expectedBranch}.`,
-      );
-    }
-  }
+  failures.push(...worktreeFailures(worktreePath, input.expectedBranch));
   if (failures.length > 0) {
     return { failures, kind: 'failed' };
   }

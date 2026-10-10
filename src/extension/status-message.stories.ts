@@ -9,9 +9,11 @@ import {
   askingUser,
   blockedVerdict,
   changesRequested,
+  completed,
   correctionLimit,
   crashedRetry,
   diffKeepsChanging,
+  handoffReady,
   malformed,
   planReady,
   planRunning,
@@ -19,6 +21,8 @@ import {
   roundLimit,
   staleDiff,
   workChecksFailed,
+  wrapupCorrecting,
+  wrapupQuestion,
   wrapupRunning,
   type Scenario,
 } from '../stories/scenarios.ts';
@@ -145,6 +149,27 @@ export const component: Component = {
       'last task approved; wrap-up running',
       'Task 06 is approved, every task is done, and wrap-up starts.',
       () => finished(wrapupRunning()),
+    ),
+    card(
+      'wrap-up failed validation; correcting',
+      'The handoff missed a changed path and the agent touched product code. The same wrap-up session is resumed with the failures; there is no correction limit.',
+      () => finished(wrapupCorrecting()),
+    ),
+    card(
+      'wrap-up asks a question',
+      'The wrap-up agent called `caller_ping`; `/factory reply` resumes the same session.',
+      () => attention(wrapupQuestion()),
+    ),
+    card('handoff passed validation', 'The run card when wrap-up validation passes.', () =>
+      finished(handoffReady()),
+    ),
+    card(
+      'ready for handoff notice',
+      'The handoff notice: both panes are open, the all-stage usage table, and the command that completes the ticket.',
+      () => attention(handoffReady()),
+    ),
+    card('/factory complete', 'The reply after the human completes the handoff.', () =>
+      formatStatus(detail(completed().snapshot, 'dpaez/factory-dashboard#11 is complete.')),
     ),
     card('/factory status while reviewing', 'The reply to `/factory status` during a review.', () =>
       formatStatus(detail(readyForReview().snapshot, 'Launched 👀 dpaez/factory-dashboard#11.')),

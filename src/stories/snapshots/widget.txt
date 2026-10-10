@@ -214,6 +214,22 @@
      Migrate the dashboard data layer to factory state schema v2
      running npm test…
 
+== ready for handoff · 40 cols ==
+▲ dpaez/factory-dashboard#11 · ■■...
+  ready for handoff · → /factory ...
+
+== ready for handoff · 60 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/facto...
+
+== ready for handoff · 80 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
+== ready for handoff · 120 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
 == two tickets, three children · 40 cols ==
 ● dpaez/factory-dashboard#11 · ■■...
   03/06 Overview page (`/`) on th...

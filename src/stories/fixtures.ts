@@ -67,7 +67,8 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         labels: { map: {} },
         limits: { ...DEFAULT_LIMITS },
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },
-        validation: { work: { commands: [] } },
+        pullRequests: false,
+        validation: { work: { commands: [] }, wrapup: { generated: [] } },
       },
       retryable: false,
       stage: 'plan',
@@ -198,6 +199,7 @@ export function run(
   const parsed =
     owner.stage === 'review' && terminal === 'subagent_done' ? parseReview(output, round) : null;
   const created: RunRecord = {
+    baseline: null,
     description: null,
     diffHash: null,
     endedAt: terminal === null ? null : at((input.minutesAgo ?? 5) - 4),
@@ -380,4 +382,54 @@ export function child(
     toolUses: 12,
     ...overrides,
   };
+}
+
+// A bare action, for the run-card checks that look actions up by key.
+export function action(
+  snapshot: FactorySnapshot,
+  idempotencyKey: string,
+  kind: 'open_diff' | 'open_pane' | 'prepare_wrapup_input',
+  forRun: RunRecord | null,
+  failures: Array<string> = [],
+): void {
+  const base = {
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    id: actionId(`action-${snapshot.actions.length + 1}`),
+    idempotencyKey,
+    lastError: null,
+    maxAttempts: 3,
+    retryOfActionId: null,
+    status: 'pending' as const,
+  };
+  if (kind === 'prepare_wrapup_input') {
+    snapshot.actions.push({
+      ...base,
+      failures,
+      kind,
+      purpose: 'validation_correction',
+      runId: null,
+    });
+    return;
+  }
+  if (forRun === null) {
+    throw new Error('a pane action needs its run');
+  }
+  if (kind === 'open_pane') {
+    snapshot.actions.push({
+      ...base,
+      kind,
+      name: '📦 dpaez/factory-dashboard#11',
+      runId: forRun.id,
+    });
+    return;
+  }
+  snapshot.actions.push({
+    ...base,
+    cwd: snapshot.execution.worktreePath ?? '/repo',
+    kind,
+    name: '🔀 dpaez/factory-dashboard#11',
+    runId: forRun.id,
+  });
 }

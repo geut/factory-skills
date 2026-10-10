@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
+import { ghPullRequest } from '../actions/wrapup.ts';
 import { readFactoryConfig } from '../config.ts';
 import {
   randomIds,
@@ -23,6 +24,7 @@ import {
   type TicketSource,
 } from '../tickets.ts';
 import { parseReview } from '../validation/review.ts';
+import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { ticketProgress, type TicketProgress } from './progress.ts';
 import { detail } from './reduce.ts';
@@ -43,6 +45,7 @@ import {
   listRunningChildren,
   loadCurrentByTicketKey,
   loadSnapshotByRun,
+  requeueOrphanedPanes,
   requeueOrphanedValidations,
   type ApplyResult,
   type RunningChildRow,
@@ -91,6 +94,8 @@ export function createFactoryService(input: {
   codeRoot: string;
   db?: DatabaseSync;
   factoryRoot: string;
+  // Looks up a pull request by URL during wrap-up validation; gh by default.
+  findPullRequest?: PullRequestLookup;
   github?: GithubClient;
   ids?: IdSource;
   notify?: (message: string) => void;
@@ -142,6 +147,7 @@ export function createFactoryService(input: {
           arm,
           db,
           factoryRoot: input.factoryRoot,
+          findPullRequest: input.findPullRequest ?? ghPullRequest,
           ids,
           liveValidations,
           notify,
@@ -219,6 +225,7 @@ export function createFactoryService(input: {
       }
     }
     requeueOrphanedValidations(db, now(), liveValidations);
+    requeueOrphanedPanes(db, now());
     await drain();
     for (const run of listActiveRuns(db)) {
       if (run.paneId !== null) {
@@ -245,6 +252,7 @@ export function createFactoryService(input: {
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,
+      pullRequests: config.config.github?.pullRequests ?? false,
       validation: config.config.validation,
     };
   }
@@ -316,6 +324,25 @@ export function createFactoryService(input: {
     return report(applied, ref);
   }
 
+  // The human marks a ready-for-handoff ticket done. Repeating it is a no-op.
+  async function complete(ref: string): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    const applied = apply(
+      {
+        idempotencyKey: `complete:${snapshot.ticket.id}`,
+        kind: 'complete',
+        ticketId: snapshot.ticket.id,
+      },
+      `complete:${snapshot.ticket.id}:${snapshot.execution.version}`,
+      'command',
+    );
+    await drain();
+    return formatStatus(applied.response);
+  }
+
   function startReply(applied: ApplyResult, ref: string): string {
     if (applied.response.kind === 'rejected') {
       return applied.response.message;
@@ -381,6 +408,8 @@ export function createFactoryService(input: {
           return reply(parsed.ref, parsed.answer);
         case 'retry':
           return retry(parsed.ref);
+        case 'complete':
+          return complete(parsed.ref);
         case 'status':
           return status(parsed.ref);
         case 'agents':
@@ -428,11 +457,16 @@ export function terminalSummary(
   }
   const outcome = runOutcome(snapshot, run);
   if (outcome === 'correcting' || outcome === 'paused') {
-    const prefix = `work-input:${runId}:correction:`;
+    const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
     const queued = snapshot.actions.find(
-      (action) => action.kind === 'prepare_work_input' && action.idempotencyKey.startsWith(prefix),
+      (action) =>
+        (action.kind === 'prepare_work_input' || action.kind === 'prepare_wrapup_input') &&
+        prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
     );
-    const failure = queued?.kind === 'prepare_work_input' ? queued.failures[0] : undefined;
+    const failure =
+      queued?.kind === 'prepare_work_input' || queued?.kind === 'prepare_wrapup_input'
+        ? queued.failures[0]
+        : undefined;
     if (failure !== undefined && failure.length > 0) {
       return failure;
     }
@@ -454,7 +488,11 @@ function runStageMessage(snapshot: FactorySnapshot, runId: RunId): string {
     run === null
       ? null
       : (snapshot.sessions.find((session) => session.id === run.sessionId)?.stage ?? null);
-  return stage === 'work' ? 'Work validation failed.' : 'Plan validation failed.';
+  return stage === 'work'
+    ? 'Work validation failed.'
+    : stage === 'wrapup'
+      ? 'Wrap-up validation failed.'
+      : 'Plan validation failed.';
 }
 
 export function factoryPaths(cwd: string): { codeRoot: string; factoryRoot: string } {

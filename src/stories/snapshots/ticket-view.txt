@@ -310,6 +310,110 @@
  ↑↓ run  pgup/pgdn message  q close
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+== ready for handoff · 40 cols ==
+────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■...
+   ready for handoff · → /factory com...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== ready for handoff · 60 cols ==
+────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== ready for handoff · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== ready for handoff · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
 == plan running · 40 cols ==
 ────────────────────────────────────────
  ● dpaez/factory-dashboard#11 · plan

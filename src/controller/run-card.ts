@@ -34,6 +34,7 @@ export type RunOutcome =
   | 'finished'
   | 'paused'
   | 'planned'
+  | 'ready for handoff'
   | 'ready for review'
   | 'retrying'
   | 'running'
@@ -58,6 +59,8 @@ const verdictOutcomes: Record<ReviewVerdict, RunOutcome> = {
 
 export function classifyRun(input: {
   correctionScheduled: boolean;
+  // A wrap-up run whose handoff passed validation.
+  handoff?: boolean;
   limitPaused: boolean;
   retryScheduled: boolean;
   stage: RunStage;
@@ -92,7 +95,7 @@ export function classifyRun(input: {
     case 'review':
       return input.verdict === null ? 'correcting' : verdictOutcomes[input.verdict];
     case 'wrapup':
-      return 'finished';
+      return input.handoff === true ? 'ready for handoff' : 'finished';
     default: {
       const _exhaustive: never = input.stage;
       return _exhaustive;
@@ -105,6 +108,7 @@ export function outcomeTone(outcome: RunOutcome): CardTone {
     case 'approved':
     case 'finished':
     case 'planned':
+    case 'ready for handoff':
     case 'ready for review':
       return 'done';
     case 'blocked':
@@ -133,8 +137,10 @@ export function correctionScheduled(snapshot: FactorySnapshot, runId: RunId): bo
   if (child) {
     return true;
   }
-  const prefix = `work-input:${runId}:correction:`;
-  return snapshot.actions.some((action) => action.idempotencyKey.startsWith(prefix));
+  const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
+  return snapshot.actions.some((action) =>
+    prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
+  );
 }
 
 const limitCodes = new Set([
@@ -177,6 +183,9 @@ export function runOutcome(snapshot: FactorySnapshot, run: RunRecord): RunOutcom
   const stage = runStage(snapshot, run);
   return classifyRun({
     correctionScheduled: correctionScheduled(snapshot, run.id),
+    handoff:
+      stage === 'wrapup' &&
+      snapshot.actions.some((action) => action.idempotencyKey === `pane:session:${run.id}`),
     limitPaused: limitPaused(snapshot, run),
     retryScheduled: snapshot.runs.some(
       (other) => other.parentRunId === run.id && other.purpose === 'infrastructure_retry',
@@ -220,7 +229,7 @@ function runRound(snapshot: FactorySnapshot, run: RunRecord): number | null {
 export function runListLabel(snapshot: FactorySnapshot, run: RunRecord): string {
   const task = runTask(snapshot, run);
   const round = runRound(snapshot, run);
-  
+
   return [
     runStage(snapshot, run),
     task === null ? null : taskNumber(snapshot, task),

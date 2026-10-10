@@ -7,6 +7,7 @@ import {
   askingUser,
   changesRequested,
   diffKeepsChanging,
+  handoffReady,
   otherTicket,
   planRunning,
   readyForReview,
@@ -118,6 +119,11 @@ export const component: Component = {
       return { children: latest(scenario), tickets: [scenario.snapshot] };
     }),
     widget(
+      'ready for handoff',
+      'Wrap-up passed. The ticket waits for the human to merge and run /factory complete.',
+      () => ({ children: [], tickets: [handoffReady().snapshot] }),
+    ),
+    widget(
       'two tickets, three children',
       'Three tickets and three children: the widget caps both lists and points at /factory agents.',
       () => {
@@ -126,7 +132,10 @@ export const component: Component = {
         const reviewer = other.runs.at(-1);
         const children = running(first);
         if (reviewer !== undefined) {
-          children.push(child(other, reviewer), child(other, reviewer, { paneName: `${stageEmoji.plan} proj-9` }));
+          children.push(
+            child(other, reviewer),
+            child(other, reviewer, { paneName: `${stageEmoji.plan} proj-9` }),
+          );
         }
         return { children, tickets: [first.snapshot, other, planRunning().snapshot] };
       },
