@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WrapupBaseline } from '../domain.ts';
+import { validationContext } from './fixture.ts';
 import {
   captureWrapupState,
   listedPaths,
-  validateWrapup,
+  wrapupValidator,
   type PullRequestLookup,
 } from './wrapup.ts';
 
@@ -128,30 +129,35 @@ function validate(
     pullRequests?: boolean;
   } = {},
 ) {
-  return validateWrapup({
-    baseBranch: 'main',
-    baseline,
-    baseSha: value.baseSha,
-    branch,
-    codeRoot: value.codeRoot,
-    commands,
-    factoryRoot: value.factoryRoot,
-    findPullRequest: options.findPullRequest ?? noPullRequest,
-    generated: options.generated ?? [],
-    output,
-    pullRequests: options.pullRequests ?? false,
-    usage: () => 'usage table',
-    worktree: value.worktree,
-  });
+  return wrapupValidator.validate(
+    validationContext(
+      'wrapup',
+      (snapshot, finished) => {
+        const { execution } = snapshot;
+        execution.factoryDir = path.join(value.factoryRoot, 'tickets/proj-1');
+        execution.policy.codeRoot = value.codeRoot;
+        execution.policy.pullRequests = options.pullRequests ?? false;
+        execution.policy.validation.work.commands = commands;
+        execution.policy.validation.wrapup.generated = options.generated ?? [];
+        execution.worktreeBaseBranch = 'main';
+        execution.worktreeBaseSha = value.baseSha;
+        execution.worktreeBranch = branch;
+        execution.worktreePath = value.worktree;
+        finished.baseline = JSON.stringify(baseline);
+        finished.resultJson = JSON.stringify({ output });
+      },
+      { findPullRequest: options.findPullRequest ?? noPullRequest, usage: () => 'usage table' },
+    ),
+  );
 }
 
-function failures(outcome: ReturnType<typeof validate>): string {
+function failures(outcome: Awaited<ReturnType<typeof validate>>): string {
   return outcome.status === 'failed' ? outcome.failures.join('\n') : '';
 }
 
-test('a complete handoff passes, and prose outside the headings is ignored', () => {
+test('a complete handoff passes, and prose outside the headings is ignored', async () => {
   const value = fixture();
-  const outcome = validate(value, value.baseline(), handoff(value));
+  const outcome = await validate(value, value.baseline(), handoff(value));
   assert.equal(outcome.status, 'passed', failures(outcome));
   if (outcome.status === 'passed') {
     assert.deepEqual(
@@ -170,9 +176,9 @@ test('a complete handoff passes, and prose outside the headings is ignored', () 
   }
 });
 
-test('a missing heading fails', () => {
+test('a missing heading fails', async () => {
   const value = fixture();
-  const outcome = validate(
+  const outcome = await validate(
     value,
     value.baseline(),
     handoff(value).replace('## Operations', '## Ops'),
@@ -180,16 +186,16 @@ test('a missing heading fails', () => {
   assert.match(failures(outcome), /## Operations is missing/);
 });
 
-test('the Files section must list every changed path and nothing else', () => {
+test('the Files section must list every changed path and nothing else', async () => {
   const value = fixture();
   const baseline = value.baseline();
   assert.match(
-    failures(validate(value, baseline, handoff(value, { files: ['src/filter.ts'] }))),
+    failures(await validate(value, baseline, handoff(value, { files: ['src/filter.ts'] }))),
     /does not list changed path src\/store\.ts/,
   );
   assert.match(
     failures(
-      validate(
+      await validate(
         value,
         baseline,
         handoff(value, { files: ['src/filter.ts', 'src/store.ts', 'src/ghost.ts'] }),
@@ -199,20 +205,22 @@ test('the Files section must list every changed path and nothing else', () => {
   );
 });
 
-test('the Tests section must name the recorded validation commands', () => {
+test('the Tests section must name the recorded validation commands', async () => {
   const value = fixture();
   assert.match(
-    failures(validate(value, value.baseline(), handoff(value, { tests: 'Ran the suite.' }))),
+    failures(
+      await validate(value, value.baseline(), handoff(value, { tests: 'Ran the suite.' })),
+    ),
     /does not mention the validation command test/,
   );
 });
 
-test('a product-code change by the wrap-up agent fails; a named doc change passes', () => {
+test('a product-code change by the wrap-up agent fails; a named doc change passes', async () => {
   const value = fixture();
   const baseline = value.baseline();
   writeFileSync(path.join(value.worktree, 'src/filter.ts'), 'export const filter = 3;\n');
   assert.match(
-    failures(validate(value, baseline, handoff(value))),
+    failures(await validate(value, baseline, handoff(value))),
     /Wrap-up changed product code: src\/filter\.ts/,
   );
 
@@ -220,10 +228,10 @@ test('a product-code change by the wrap-up agent fails; a named doc change passe
   const docsBaseline = docs.baseline();
   writeFileSync(path.join(docs.worktree, 'README.md'), '# demo\n\nThe filter persists.\n');
   assert.match(
-    failures(validate(docs, docsBaseline, handoff(docs))),
+    failures(await validate(docs, docsBaseline, handoff(docs))),
     /changed README\.md without naming it/,
   );
-  const named = validate(
+  const named = await validate(
     docs,
     docsBaseline,
     handoff(docs, { files: ['README.md', 'src/filter.ts', 'src/store.ts'] }),
@@ -233,7 +241,7 @@ test('a product-code change by the wrap-up agent fails; a named doc change passe
   const generated = fixture();
   const generatedBaseline = generated.baseline();
   writeFileSync(path.join(generated.worktree, 'src/schema.snap'), 'snapshot\n');
-  const allowed = validate(
+  const allowed = await validate(
     generated,
     generatedBaseline,
     handoff(generated, { files: ['src/filter.ts', 'src/schema.snap', 'src/store.ts'] }),
@@ -242,26 +250,26 @@ test('a product-code change by the wrap-up agent fails; a named doc change passe
   assert.equal(allowed.status, 'passed', failures(allowed));
 });
 
-test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', () => {
+test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', async () => {
   const value = fixture();
   const baseline = value.baseline();
   mkdirSync(path.join(value.factoryRoot, 'learnings'));
   writeFileSync(path.join(value.factoryRoot, 'CONTEXT.md'), '# Context\n');
   writeFileSync(path.join(value.factoryRoot, 'learnings/filters.md'), 'Persist early.\n');
-  assert.equal(validate(value, baseline, handoff(value)).status, 'passed');
+  assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
   writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/plan.md'), '# Edited plan\n');
   writeFileSync(path.join(value.factoryRoot, 'wrapup.md'), 'handoff\n');
-  const text = failures(validate(value, baseline, handoff(value)));
+  const text = failures(await validate(value, baseline, handoff(value)));
   assert.match(text, /changed \.factory\/tickets\/proj-1\/plan\.md/);
   assert.match(text, /changed \.factory\/wrapup\.md/);
 });
 
-test('an unexpected commit fails', () => {
+test('an unexpected commit fails', async () => {
   const value = fixture();
   const baseline = value.baseline();
   git(value.worktree, ['add', '.']);
   git(value.worktree, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'sneaky']);
-  assert.match(failures(validate(value, baseline, handoff(value))), /A commit was made/);
+  assert.match(failures(await validate(value, baseline, handoff(value))), /A commit was made/);
 });
 
 function addRemote(value: Fixture): void {
@@ -271,22 +279,22 @@ function addRemote(value: Fixture): void {
   git(value.codeRoot, ['remote', 'add', 'origin', remote]);
 }
 
-test('with pull requests off, a push fails and commands are required', () => {
+test('with pull requests off, a push fails and commands are required', async () => {
   const value = fixture();
   addRemote(value);
   const baseline = value.baseline();
-  assert.equal(validate(value, baseline, handoff(value)).status, 'passed');
+  assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
   git(value.worktree, ['push', '-u', 'origin', branch]);
   assert.match(
-    failures(validate(value, baseline, handoff(value))),
+    failures(await validate(value, baseline, handoff(value))),
     /pushed, but github\.pullRequests is off/,
   );
 });
 
-test('with pull requests on and uncommitted changes, no push or pull request is allowed', () => {
+test('with pull requests on and uncommitted changes, no push or pull request is allowed', async () => {
   const value = fixture();
   const baseline = value.baseline();
-  const outcome = validate(
+  const outcome = await validate(
     value,
     baseline,
     handoff(value, { merge: 'https://github.com/geut/demo/pull/7' }),
@@ -296,10 +304,13 @@ test('with pull requests on and uncommitted changes, no push or pull request is 
     failures(outcome),
     /pull request was reported while the worktree has uncommitted changes/,
   );
-  assert.equal(validate(value, baseline, handoff(value), { pullRequests: true }).status, 'passed');
+  assert.equal(
+    (await validate(value, baseline, handoff(value), { pullRequests: true })).status,
+    'passed',
+  );
 });
 
-test('with pull requests on and a clean worktree, the handoff needs a real pull request', () => {
+test('with pull requests on and a clean worktree, the handoff needs a real pull request', async () => {
   const value = fixture();
   addRemote(value);
   // A human committed the approved work before wrap-up.
@@ -309,22 +320,27 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   git(value.worktree, ['push', '-u', 'origin', branch]);
   const url = 'https://github.com/geut/demo/pull/7';
   const found: PullRequestLookup = () => ({ headRefName: branch, state: 'OPEN' });
-  const passed = validate(value, baseline, handoff(value, { merge: url }), {
+  const passed = await validate(value, baseline, handoff(value, { merge: url }), {
     findPullRequest: found,
     pullRequests: true,
   });
   assert.equal(passed.status, 'passed', failures(passed));
   assert.match(
-    failures(validate(value, baseline, handoff(value, { merge: url }), { pullRequests: true })),
+    failures(
+      await validate(value, baseline, handoff(value, { merge: url }), { pullRequests: true }),
+    ),
     /No pull request exists at/,
   );
   assert.match(
     failures(
-      validate(value, baseline, handoff(value), { findPullRequest: found, pullRequests: true }),
+      await validate(value, baseline, handoff(value), {
+        findPullRequest: found,
+        pullRequests: true,
+      }),
     ),
     /needs the pull-request URL/,
   );
-  const broken = validate(value, baseline, handoff(value, { merge: url }), {
+  const broken = await validate(value, baseline, handoff(value, { merge: url }), {
     findPullRequest: () => {
       throw new Error('gh: network unreachable');
     },

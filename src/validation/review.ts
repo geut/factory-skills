@@ -190,7 +190,7 @@ export function formatFinding(finding: ReviewFinding): string {
 
 export const REVIEW_VALIDATOR_VERSION = 'review.v1';
 
-export function reviewChecks(input: {
+function reviewChecks(input: {
   currentDiffHash: string;
   resultError: string | null;
   resultStatus: 'pending' | 'valid' | 'invalid';
@@ -260,7 +260,7 @@ export function reviewChecks(input: {
   return passedReport(version, checks, null);
 }
 
-export function validateReview(input: {
+function validateReview(input: {
   cwd: string;
   resultError: string | null;
   resultStatus: 'pending' | 'valid' | 'invalid';

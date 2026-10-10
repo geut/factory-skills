@@ -13,9 +13,9 @@ import {
 export const WORK_VALIDATOR_VERSION = 'work.v1';
 
 export const COMMAND_OUTPUT_LIMIT = 16_384;
-export const VALIDATION_LEASE_MARGIN_MS = 30_000;
+const VALIDATION_LEASE_MARGIN_MS = 30_000;
 
-export function validationLeaseMs(commands: Array<Pick<WorkCommand, 'timeoutMs'>>): number {
+function validationLeaseMs(commands: Array<Pick<WorkCommand, 'timeoutMs'>>): number {
   const budget = commands.reduce((total, command) => total + command.timeoutMs, 0);
   return budget + VALIDATION_LEASE_MARGIN_MS;
 }
@@ -223,7 +223,7 @@ function commandCheck(command: WorkCommand, cwd: string, result: CommandResult):
   };
 }
 
-export async function validateWork(input: {
+async function validateWork(input: {
   allowsEmptyDiff: boolean;
   baseSha: string;
   commands: Array<WorkCommand>;

@@ -29,7 +29,13 @@ export function recordValidation<S extends ValidatedStage>(
   const id = input.ids.event();
   const now = input.now();
   // TypeScript cannot tie a generic `stage` to its `report`; the signature does.
-  const event = { actionId, kind: 'validation_finished', report, runId, stage } as ValidationFinished;
+  const event = {
+    actionId,
+    kind: 'validation_finished',
+    report,
+    runId,
+    stage,
+  } as ValidationFinished;
   applyControllerEvent(input.db, {
     dedupeKey: `validation:${actionId}`,
     event,

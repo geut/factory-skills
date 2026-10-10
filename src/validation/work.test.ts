@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { COMMAND_OUTPUT_LIMIT, validateWork, validationLeaseMs } from './work.ts';
+import type { WorkCommand } from '../config.ts';
+import { validationContext } from './fixture.ts';
+import { COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
 const roots: Array<string> = [];
 const gitEnv = {
@@ -41,14 +43,47 @@ function repo(): { baseSha: string; cwd: string } {
   return { baseSha: git(cwd, ['rev-parse', 'HEAD']), cwd };
 }
 
+function validate(input: {
+  allowsEmptyDiff: boolean;
+  baseSha: string;
+  commands: Array<WorkCommand>;
+  cwd: string;
+}) {
+  return workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreePath = input.cwd;
+      snapshot.execution.worktreeBaseSha = input.baseSha;
+      snapshot.execution.policy.validation.work.commands = input.commands;
+      // An investigation ticket may end with no diff.
+      snapshot.ticket.labels = input.allowsEmptyDiff ? ['investigation'] : [];
+    }),
+  );
+}
+
 test('validation lease covers every command timeout plus the inspection margin', () => {
-  assert.equal(validationLeaseMs([{ timeoutMs: 60_000 }, { timeoutMs: 300_000 }]), 390_000);
+  const { snapshot } = validationContext('work', (value) => {
+    value.execution.policy.validation.work.commands = [
+      { argv: ['true'], name: 'lint', timeoutMs: 60_000 },
+      { argv: ['true'], name: 'test', timeoutMs: 300_000 },
+    ];
+  });
+  assert.equal(workValidator.leaseMs?.(snapshot), 390_000);
+});
+
+test('a work run without a ready worktree is a validator error', async () => {
+  const report = await workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreeBaseSha = null;
+    }),
+  );
+  assert.equal(report.status, 'error');
+  assert.equal(report.summary, 'Worktree is missing.');
 });
 
 test('work validation records the real diff and configured commands', async () => {
   const { baseSha, cwd } = repo();
   writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
-  const passed = await validateWork({
+  const passed = await validate({
     allowsEmptyDiff: false,
     baseSha,
     commands: [{ argv: ['node', '-e', 'process.exit(0)'], name: 'tests', timeoutMs: 5000 }],
@@ -67,7 +102,7 @@ test('work validation records the real diff and configured commands', async () =
   const staged = repo();
   writeFileSync(path.join(staged.cwd, 'staged.txt'), 'staged\n');
   git(staged.cwd, ['add', 'staged.txt']);
-  const stagedResult = await validateWork({
+  const stagedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: staged.baseSha,
     commands: [],
@@ -77,7 +112,7 @@ test('work validation records the real diff and configured commands', async () =
 
   const deleted = repo();
   rmSync(path.join(deleted.cwd, 'README.md'));
-  const deletedResult = await validateWork({
+  const deletedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: deleted.baseSha,
     commands: [],
@@ -90,7 +125,7 @@ test('work validation records the real diff and configured commands', async () =
 
   const untracked = repo();
   writeFileSync(path.join(untracked.cwd, 'new.txt'), 'new\n');
-  const untrackedResult = await validateWork({
+  const untrackedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: untracked.baseSha,
     commands: [],
@@ -105,7 +140,7 @@ test('work validation records the real diff and configured commands', async () =
   // write are part of what the reviewer sees.
   const written = repo();
   writeFileSync(path.join(written.cwd, 'README.md'), '# demo\nchanged\n');
-  const writtenResult = await validateWork({
+  const writtenResult = await validate({
     allowsEmptyDiff: false,
     baseSha: written.baseSha,
     commands: [
@@ -125,7 +160,7 @@ test('work validation records the real diff and configured commands', async () =
 
 test('empty diffs, whitespace, commits, timeouts, and command results are checks', async () => {
   const empty = repo();
-  const emptyResult = await validateWork({
+  const emptyResult = await validate({
     allowsEmptyDiff: false,
     baseSha: empty.baseSha,
     commands: [],
@@ -136,7 +171,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     assert.match(emptyResult.failures.join('\n'), /diff is empty/);
   }
 
-  const investigation = await validateWork({
+  const investigation = await validate({
     allowsEmptyDiff: true,
     baseSha: empty.baseSha,
     commands: [],
@@ -152,7 +187,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
 
   const dirty = repo();
   writeFileSync(path.join(dirty.cwd, 'README.md'), '# demo \n');
-  const whitespace = await validateWork({
+  const whitespace = await validate({
     allowsEmptyDiff: false,
     baseSha: dirty.baseSha,
     commands: [],
@@ -167,7 +202,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
   writeFileSync(path.join(committed.cwd, 'README.md'), '# committed\n');
   git(committed.cwd, ['add', 'README.md']);
   git(committed.cwd, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'worker commit']);
-  const commit = await validateWork({
+  const commit = await validate({
     allowsEmptyDiff: false,
     baseSha: committed.baseSha,
     commands: [],
@@ -180,7 +215,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
 
   const failing = repo();
   writeFileSync(path.join(failing.cwd, 'README.md'), '# demo\nchanged\n');
-  const failedCommand = await validateWork({
+  const failedCommand = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['node', '-e', 'process.exit(2)'], name: 'tests', timeoutMs: 5000 }],
@@ -191,7 +226,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     assert.match(failedCommand.failures.join('\n'), /tests/);
   }
 
-  const timed = await validateWork({
+  const timed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['sleep', '2'], name: 'slow', timeoutMs: 200 }],
@@ -202,7 +237,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     assert.match(timed.failures.join('\n'), /timed out after 200ms/);
   }
 
-  const allowed = await validateWork({
+  const allowed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['sleep', '0.2'], name: 'pause', timeoutMs: 5000 }],
@@ -210,7 +245,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
   });
   assert.equal(allowed.status, 'passed');
 
-  const noisy = await validateWork({
+  const noisy = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [
@@ -229,7 +264,7 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     assert.ok(output.length > 0);
   }
 
-  const crashed = await validateWork({
+  const crashed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['factory-missing-binary'], name: 'missing', timeoutMs: 5000 }],
