@@ -2,39 +2,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import {
-  applyControllerEvent,
-  executionIsCurrent,
-  finishLeasedAction,
-  passedWorkChecks,
-} from '../controller/store.ts';
+import { executionIsCurrent, finishLeasedAction, passedWorkChecks } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
-import type { ActionRecord, ControllerEvent, FactorySnapshot, IdSource, RunId } from '../domain.ts';
+import type { ActionRecord, FactorySnapshot, IdSource, RunId } from '../domain.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
-import { recordValidation } from '../validation/record.ts';
-import { errorReport } from '../validation/report.ts';
 import { collectWorkDiff } from '../validation/work.ts';
-import {
-  captureWrapupState,
-  parseBaseline,
-  validateWrapup,
-  WRAPUP_VALIDATOR_VERSION,
-  type PullRequestLookup,
-} from '../validation/wrapup.ts';
+import { captureWrapupState, type PullRequestLookup } from '../validation/wrapup.ts';
+import { applyActionEvent } from './apply.ts';
 import { inspectWrapupInput } from './wrapup-input.ts';
 
 type Context = { db: DatabaseSync; ids: IdSource; now: () => string };
-
-function apply(
-  input: Context,
-  event: ControllerEvent,
-  dedupeKey: string,
-  source: 'action' | 'validator',
-  prepare?: (db: DatabaseSync) => void,
-): void {
-  const base = { dedupeKey, event, ids: input.ids, now: input.now(), source };
-  applyControllerEvent(input.db, prepare === undefined ? base : { ...base, prepare });
-}
 
 function factoryRootOf(snapshot: FactorySnapshot): string {
   return path.dirname(path.dirname(snapshot.execution.factoryDir));
@@ -60,11 +37,10 @@ export function prepareWrapupInput(
     snapshot,
   });
   const fail = (message: string) =>
-    apply(
+    applyActionEvent(
       input,
       { actionId: action.id, kind: 'wrapup_input_failed', message },
       `wrapup-input-failed:${action.id}`,
-      'action',
     );
   if (inspection.kind === 'failed') {
     fail(inspection.failures.join('\n'));
@@ -94,7 +70,7 @@ export function prepareWrapupInput(
       return Promise.resolve(null);
     }
   }
-  apply(
+  applyActionEvent(
     input,
     {
       actionId: action.id,
@@ -106,7 +82,6 @@ export function prepareWrapupInput(
       verification: passedWorkChecks(input.db, snapshot.execution.id),
     },
     `wrapup-input-ready:${action.id}`,
-    'action',
   );
   return Promise.resolve(null);
 }
@@ -137,68 +112,6 @@ export const ghPullRequest: PullRequestLookup = (url) => {
   }
   throw new Error('gh pr view returned an unexpected shape');
 };
-
-export function validateWrapupRun(
-  input: Context & { findPullRequest: PullRequestLookup },
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  snapshot: FactorySnapshot,
-): Promise<RunId | null> {
-  const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
-  if (run === null) {
-    throw new Error('validate action is missing its wrap-up run');
-  }
-  const baselineText =
-    wrapupRuns(snapshot).find((item) => item.baseline !== null)?.baseline ?? null;
-  const baseline = baselineText === null ? null : parseBaseline(baselineText);
-  const { worktreeBaseSha, worktreeBranch, worktreePath } = snapshot.execution;
-  const output = (() => {
-    try {
-      const parsed: unknown = JSON.parse(run.resultJson ?? '{}');
-      return typeof parsed === 'object' &&
-        parsed !== null &&
-        'output' in parsed &&
-        typeof parsed.output === 'string'
-        ? parsed.output
-        : '';
-    } catch {
-      return '';
-    }
-  })();
-  const usage = () => usageTable(input.db, snapshot.execution.id, { includeWrapup: true });
-  const report =
-    baseline === null ||
-    worktreeBaseSha === null ||
-    worktreeBranch === null ||
-    worktreePath === null
-      ? errorReport(WRAPUP_VALIDATOR_VERSION, 'The wrap-up baseline or worktree is missing.')
-      : validateWrapup({
-          baseBranch: snapshot.execution.worktreeBaseBranch,
-          baseline,
-          baseSha: worktreeBaseSha,
-          branch: worktreeBranch,
-          codeRoot: snapshot.execution.policy.codeRoot,
-          commands: snapshot.execution.policy.validation.work.commands,
-          factoryRoot: factoryRootOf(snapshot),
-          findPullRequest: input.findPullRequest,
-          generated: snapshot.execution.policy.validation.wrapup.generated,
-          output,
-          pullRequests: snapshot.execution.policy.pullRequests,
-          usage,
-          worktree: worktreePath,
-        });
-  recordValidation(input, {
-    event: {
-      actionId: action.id,
-      kind: 'validation_finished',
-      report,
-      runId: run.id,
-      stage: 'wrapup',
-    },
-    executionId: snapshot.execution.id,
-    resultHash: run.resultHash,
-  });
-  return Promise.resolve(null);
-}
 
 // Opens a handoff pane. A failure retries here and never fails the handoff.
 export async function openHandoffPane(

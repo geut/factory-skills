@@ -35,6 +35,7 @@ import {
   type WorktreeStatus,
 } from '../domain.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
+import { WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import { card, encodeCard } from './card.ts';
 import { describeExisting, reduce } from './reduce.ts';
 
@@ -1655,7 +1656,7 @@ export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Arra
          SELECT v2.id
          FROM validation_runs AS v2
          JOIN agent_runs AS r2 ON r2.id = v2.run_id
-         WHERE r2.session_id = s.id AND v2.validator_version = 'work.v1' AND v2.status = 'passed'
+         WHERE r2.session_id = s.id AND v2.validator_version = ? AND v2.status = 'passed'
          ORDER BY v2.completed_at DESC, v2.rowid DESC
          LIMIT 1
        )
@@ -1663,7 +1664,7 @@ export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Arra
        WHERE s.execution_id = ? AND s.stage = 'work'
        ORDER BY s.task_id, c.ordinal`,
     )
-    .all(execution)
+    .all(WORK_VALIDATOR_VERSION, execution)
     .map((item) => {
       const record = row(item);
       const command = nullableText(record, 'command');

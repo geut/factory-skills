@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { taskId, type PlanValidationReport, type PlannedTask } from '../domain.ts';
 import { sha256 } from '../hash.ts';
-import { errorReport, failedReport, passedReport } from './report.ts';
+import { errorReport, failedReport, passedReport, type Validator } from './report.ts';
 
 export type ParsedPlanTask = { blockedBy: Array<string>; id: string; path: string };
 
@@ -278,3 +278,13 @@ export function inspectPlanDir(input: { factoryDir: string }): PlanValidationRep
     { planPath: planFile, tasks },
   );
 }
+
+export const planValidator: Validator<'plan'> = {
+  validate: ({ run, snapshot }) => {
+    if (run.resultJson === null || run.resultHash === null) {
+      throw new Error('validate action is missing a plan result');
+    }
+    return Promise.resolve(inspectPlanDir({ factoryDir: snapshot.execution.factoryDir }));
+  },
+  version: PLAN_VALIDATOR_VERSION,
+};

@@ -1,38 +1,45 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { applyControllerEvent } from '../controller/store.ts';
 import type { ActionId, ControllerEvent, ExecutionId, IdSource, RunId } from '../domain.ts';
-import type { ValidationCheck, ValidationReport } from './report.ts';
+import type {
+  StageValidationReport,
+  ValidatedStage,
+  ValidationCheck,
+  ValidationReport,
+} from './report.ts';
 
-export type ValidationFinished = Extract<ControllerEvent, { kind: 'validation_finished' }>;
+type ValidationFinished = Extract<ControllerEvent, { kind: 'validation_finished' }>;
 
 // The one way a validation result reaches the controller: the report is
 // written to validation_runs/validation_checks and the controller applies it
 // in the same transaction. A result for an action that already finished
 // (a late background validation) is neither written nor applied.
-export function recordValidation(
+export function recordValidation<S extends ValidatedStage>(
   input: { db: DatabaseSync; ids: IdSource; now: () => string },
-  validation: { event: ValidationFinished; executionId: ExecutionId; resultHash: string | null },
+  validation: {
+    actionId: ActionId;
+    executionId: ExecutionId;
+    report: StageValidationReport<S>;
+    resultHash: string | null;
+    runId: RunId;
+    stage: S;
+  },
 ): void {
-  const { event, executionId, resultHash } = validation;
+  const { actionId, executionId, report, resultHash, runId, stage } = validation;
   const id = input.ids.event();
   const now = input.now();
+  // TypeScript cannot tie a generic `stage` to its `report`; the signature does.
+  const event = { actionId, kind: 'validation_finished', report, runId, stage } as ValidationFinished;
   applyControllerEvent(input.db, {
-    dedupeKey: `validation:${event.actionId}`,
+    dedupeKey: `validation:${actionId}`,
     event,
     ids: input.ids,
     now,
     prepare: (db) => {
-      if (actionFinished(db, event.actionId)) {
+      if (actionFinished(db, actionId)) {
         return;
       }
-      writeValidation(db, {
-        executionId,
-        id,
-        now,
-        report: event.report,
-        resultHash,
-        runId: event.runId,
-      });
+      writeValidation(db, { executionId, id, now, report, resultHash, runId });
     },
     source: 'validator',
   });

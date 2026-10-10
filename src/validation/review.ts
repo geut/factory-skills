@@ -6,12 +6,14 @@ import type {
   ReviewVerdict,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import { childToolList } from '../runtime/policy.ts';
 import {
   errorReport,
   failedReport,
   failuresOf,
   passedReport,
   type ValidationCheck,
+  type Validator,
 } from './report.ts';
 import { collectWorkDiff } from './work.ts';
 
@@ -273,3 +275,27 @@ export function validateReview(input: {
   }
   return reviewChecks({ ...input, currentDiffHash: sha256(collected.diff) });
 }
+
+export const reviewValidator: Validator<'review'> = {
+  validate: ({ run, session, snapshot }) => {
+    const worktree = snapshot.execution.worktreePath;
+    if (worktree === null) {
+      return Promise.resolve(errorReport(REVIEW_VALIDATOR_VERSION, 'Worktree is missing.'));
+    }
+    const workSession =
+      snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === session.taskId) ??
+      null;
+    return Promise.resolve(
+      validateReview({
+        cwd: worktree,
+        resultError: run.resultError,
+        resultStatus: run.resultStatus,
+        reviewedDiffHash: run.diffHash,
+        reviewModel: session.model,
+        tools: childToolList('review'),
+        workModel: workSession?.model ?? snapshot.execution.policy.models.work,
+      }),
+    );
+  },
+  version: REVIEW_VALIDATOR_VERSION,
+};

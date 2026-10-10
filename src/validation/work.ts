@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import type { WorkCommand } from '../config.ts';
+import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import {
   errorReport,
@@ -7,6 +7,7 @@ import {
   failuresOf,
   passedReport,
   type ValidationCheck,
+  type Validator,
 } from './report.ts';
 
 export const WORK_VALIDATOR_VERSION = 'work.v1';
@@ -276,3 +277,20 @@ export async function validateWork(input: {
   }
   return passedReport(WORK_VALIDATOR_VERSION, checks, { diff: final.diff });
 }
+
+export const workValidator: Validator<'work'> = {
+  leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
+  validate: ({ snapshot }) => {
+    const { policy, worktreeBaseSha, worktreePath } = snapshot.execution;
+    if (worktreePath === null || worktreeBaseSha === null) {
+      return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
+    }
+    return validateWork({
+      allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
+      baseSha: worktreeBaseSha,
+      commands: policy.validation.work.commands,
+      cwd: worktreePath,
+    });
+  },
+  version: WORK_VALIDATOR_VERSION,
+};

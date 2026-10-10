@@ -4,7 +4,13 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
-import { errorReport, failedReport, passedReport, type ValidationCheck } from './report.ts';
+import {
+  errorReport,
+  failedReport,
+  passedReport,
+  type ValidationCheck,
+  type Validator,
+} from './report.ts';
 
 export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 
@@ -481,3 +487,56 @@ export function validateWrapup(input: {
     ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
     : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
 }
+
+function outputOf(resultJson: string | null): string {
+  try {
+    const parsed: unknown = JSON.parse(resultJson ?? '{}');
+    return typeof parsed === 'object' &&
+      parsed !== null &&
+      'output' in parsed &&
+      typeof parsed.output === 'string'
+      ? parsed.output
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+export const wrapupValidator: Validator<'wrapup'> = {
+  validate: ({ deps, run, session, snapshot }) => {
+    const { execution } = snapshot;
+    // The baseline is taken when the first wrap-up input is prepared.
+    const baselineText =
+      snapshot.runs.find((item) => item.sessionId === session.id && item.baseline !== null)
+        ?.baseline ?? null;
+    const baseline = baselineText === null ? null : parseBaseline(baselineText);
+    if (
+      baseline === null ||
+      execution.worktreeBaseSha === null ||
+      execution.worktreeBranch === null ||
+      execution.worktreePath === null
+    ) {
+      return Promise.resolve(
+        errorReport(WRAPUP_VALIDATOR_VERSION, 'The wrap-up baseline or worktree is missing.'),
+      );
+    }
+    return Promise.resolve(
+      validateWrapup({
+        baseBranch: execution.worktreeBaseBranch,
+        baseline,
+        baseSha: execution.worktreeBaseSha,
+        branch: execution.worktreeBranch,
+        codeRoot: execution.policy.codeRoot,
+        commands: execution.policy.validation.work.commands,
+        factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+        findPullRequest: deps.findPullRequest,
+        generated: execution.policy.validation.wrapup.generated,
+        output: outputOf(run.resultJson),
+        pullRequests: execution.policy.pullRequests,
+        usage: deps.usage,
+        worktree: execution.worktreePath,
+      }),
+    );
+  },
+  version: WRAPUP_VALIDATOR_VERSION,
+};

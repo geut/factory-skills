@@ -1,21 +1,18 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { allowsEmptyDiff } from '../config.ts';
 import { attentionCard } from '../controller/run-card.ts';
 import {
-  applyControllerEvent,
   claimNextAction,
   executionIsCurrent,
   extendActionLease,
   finishLeasedAction,
   loadSnapshotByExecution,
   loadSnapshotByRun,
-  type ApplyResult,
 } from '../controller/store.ts';
+import { usageTable } from '../controller/usage.ts';
 import type {
   ActionRecord,
-  ControllerEvent,
   FactorySnapshot,
   IdSource,
   RunId,
@@ -26,15 +23,13 @@ import type {
 } from '../domain.ts';
 import { childToolList, paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
-import { inspectPlanDir } from '../validation/plan.ts';
+import { validators } from '../validation/index.ts';
 import { recordValidation } from '../validation/record.ts';
-import { errorReport } from '../validation/report.ts';
-import { REVIEW_VALIDATOR_VERSION, validateReview } from '../validation/review.ts';
-import { validateWork, validationLeaseMs, WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
+import { applyActionEvent } from './apply.ts';
 import { inspectWorkInput } from './work-input.ts';
 import { prepareWorktree } from './worktree.ts';
-import { openHandoffPane, prepareWrapupInput, validateWrapupRun } from './wrapup.ts';
+import { openHandoffPane, prepareWrapupInput } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
   if (
@@ -102,14 +97,18 @@ export async function dispatchPending(input: {
     }
     if (
       claimed.action.kind === 'validate_run' &&
-      workRun(snapshot, claimed.action.runId) !== null
+      validatorFor(snapshot, claimed.action.runId)?.leaseMs !== undefined
     ) {
       const action = claimed.action;
       input.liveValidations.add(action.id);
-      void runWorkValidation(input, action, snapshot).finally(() => {
-        input.liveValidations.delete(action.id);
-        input.afterValidation();
-      });
+      void runValidation(input, action, snapshot)
+        .catch((error: unknown) => {
+          finishLeasedAction(input.db, action.id, input.now(), 'failed', messageOf(error));
+        })
+        .finally(() => {
+          input.liveValidations.delete(action.id);
+          input.afterValidation();
+        });
       continue;
     }
     try {
@@ -140,16 +139,8 @@ async function perform(
     case 'launch_run':
     case 'resume_run':
       return launch(input, action, snapshot);
-    case 'validate_run': {
-      const stage = runStage(snapshot, action.runId);
-      if (stage === 'review') {
-        return validateReviewRun(input, action, snapshot);
-      }
-      if (stage === 'wrapup') {
-        return validateWrapupRun(input, action, snapshot);
-      }
-      return validate(input, action, snapshot);
-    }
+    case 'validate_run':
+      return runValidation(input, action, snapshot);
     case 'prepare_work_input':
       return prepareInput(input, action, snapshot);
     case 'prepare_wrapup_input':
@@ -168,20 +159,6 @@ async function perform(
       return _exhaustive;
     }
   }
-}
-
-function apply(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
-  event: ControllerEvent,
-  dedupeKey: string,
-  source: 'action' | 'validator',
-  prepare?: (db: DatabaseSync) => void,
-): ApplyResult {
-  const base = { dedupeKey, event, ids: input.ids, now: input.now(), source };
-  if (prepare === undefined) {
-    return applyControllerEvent(input.db, base);
-  }
-  return applyControllerEvent(input.db, { ...base, prepare });
 }
 
 async function launch(
@@ -227,7 +204,7 @@ async function launch(
   try {
     const started =
       spec.mode === 'resume' ? await input.runtime.resume(spec) : await input.runtime.launch(spec);
-    const applied = apply(
+    const applied = applyActionEvent(
       input,
       {
         actionId: action.id,
@@ -239,41 +216,16 @@ async function launch(
         sessionFile: started.sessionFile,
       },
       `run-started:${run.id}`,
-      'action',
     );
     return applied.armRunId;
   } catch (error: unknown) {
-    apply(
+    applyActionEvent(
       input,
       { actionId: action.id, kind: 'launch_failed', message: messageOf(error), runId: run.id },
       `launch-failed:${action.id}`,
-      'action',
     );
     return null;
   }
-}
-
-function validate(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  snapshot: FactorySnapshot,
-): Promise<RunId | null> {
-  const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
-  if (run === null || run.resultJson === null || run.resultHash === null) {
-    throw new Error('validate action is missing a plan result');
-  }
-  recordValidation(input, {
-    event: {
-      actionId: action.id,
-      kind: 'validation_finished',
-      report: inspectPlanDir({ factoryDir: snapshot.execution.factoryDir }),
-      runId: run.id,
-      stage: 'plan',
-    },
-    executionId: snapshot.execution.id,
-    resultHash: run.resultHash,
-  });
-  return Promise.resolve(null);
 }
 
 function worktree(
@@ -288,15 +240,14 @@ function worktree(
     slug: action.slug,
   });
   if (prepared.kind === 'failed') {
-    apply(
+    applyActionEvent(
       input,
       { actionId: action.id, kind: 'worktree_failed', message: prepared.message },
       `worktree-failed:${action.id}`,
-      'action',
     );
     return Promise.resolve(null);
   }
-  apply(
+  applyActionEvent(
     input,
     {
       actionId: action.id,
@@ -307,60 +258,53 @@ function worktree(
       worktreePath: prepared.path,
     },
     `worktree-ready:${action.id}`,
-    'action',
   );
   return Promise.resolve(null);
 }
 
-function runStage(snapshot: FactorySnapshot, id: RunId): SessionRecord['stage'] | null {
-  const run = snapshot.runs.find((item) => item.id === id) ?? null;
-  return run === null ? null : (sessionForRun(snapshot, run)?.stage ?? null);
+function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
+  const run = snapshot.runs.find((item) => item.id === runId) ?? null;
+  const stage = run === null ? null : (sessionForRun(snapshot, run)?.stage ?? null);
+  return stage === null ? null : validators[stage];
 }
 
-function workRun(snapshot: FactorySnapshot, id: RunId): RunRecord | null {
-  return runStage(snapshot, id) === 'work'
-    ? (snapshot.runs.find((item) => item.id === id) ?? null)
-    : null;
-}
-
-function validateReviewRun(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+// Runs the validator for the run's stage and records its report. A
+// long-running validator holds its action lease for as long as it declares.
+async function runValidation(
+  input: { db: DatabaseSync; findPullRequest: PullRequestLookup; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
   const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
   const session = run === null ? null : sessionForRun(snapshot, run);
   if (run === null || session === null) {
-    throw new Error('validate action is missing its review run');
+    throw new Error('validate action is missing its run');
   }
-  const workSession =
-    snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === session.taskId) ??
-    null;
-  const worktree = snapshot.execution.worktreePath;
-  const report =
-    worktree === null
-      ? errorReport(REVIEW_VALIDATOR_VERSION, 'Worktree is missing.')
-      : validateReview({
-          cwd: worktree,
-          resultError: run.resultError,
-          resultStatus: run.resultStatus,
-          reviewedDiffHash: run.diffHash,
-          reviewModel: session.model,
-          tools: childToolList('review'),
-          workModel: workSession?.model ?? snapshot.execution.policy.models.work,
-        });
-  recordValidation(input, {
-    event: {
-      actionId: action.id,
-      kind: 'validation_finished',
-      report,
-      runId: run.id,
-      stage: 'review',
+  const stage = session.stage;
+  const validator = validators[stage];
+  const leaseMs = validator.leaseMs?.(snapshot);
+  if (leaseMs !== undefined) {
+    extendActionLease(input.db, action.id, input.now(), leaseMs);
+  }
+  const executionId = snapshot.execution.id;
+  const report = await validator.validate({
+    deps: {
+      findPullRequest: input.findPullRequest,
+      usage: () => usageTable(input.db, executionId, { includeWrapup: true }),
     },
-    executionId: snapshot.execution.id,
-    resultHash: run.resultHash,
+    run,
+    session,
+    snapshot,
   });
-  return Promise.resolve(null);
+  recordValidation(input, {
+    actionId: action.id,
+    executionId,
+    report,
+    resultHash: run.resultHash,
+    runId: run.id,
+    stage,
+  });
+  return null;
 }
 
 function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
@@ -377,41 +321,6 @@ function dependenciesDone(snapshot: FactorySnapshot, task: TaskRecord): boolean 
   return task.blockedBy.every((id) =>
     snapshot.tasks.some((item) => item.taskId === id && item.status === 'done'),
   );
-}
-
-async function runWorkValidation(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  snapshot: FactorySnapshot,
-): Promise<void> {
-  const commands = snapshot.execution.policy.validation.work.commands;
-  extendActionLease(input.db, action.id, input.now(), validationLeaseMs(commands));
-  const worktree = snapshot.execution.worktreePath;
-  const baseSha = snapshot.execution.worktreeBaseSha;
-  const report =
-    worktree === null || baseSha === null
-      ? errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.')
-      : await validateWork({
-          allowsEmptyDiff: allowsEmptyDiff(
-            snapshot.ticket.labels,
-            snapshot.execution.policy.labels.map,
-          ),
-          baseSha,
-          commands,
-          cwd: worktree,
-        });
-  const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
-  recordValidation(input, {
-    event: {
-      actionId: action.id,
-      kind: 'validation_finished',
-      report,
-      runId: action.runId,
-      stage: 'work',
-    },
-    executionId: snapshot.execution.id,
-    resultHash: run?.resultHash ?? null,
-  });
 }
 
 function prepareInput(
@@ -448,7 +357,7 @@ function prepareInput(
           worktreeReady: snapshot.execution.worktreeStatus === 'ready',
         });
   if (inspection.kind === 'failed') {
-    apply(
+    applyActionEvent(
       input,
       {
         actionId: action.id,
@@ -456,11 +365,10 @@ function prepareInput(
         message: inspection.failures.join('\n'),
       },
       `work-input-failed:${action.id}`,
-      'action',
     );
     return Promise.resolve(null);
   }
-  apply(
+  applyActionEvent(
     input,
     {
       actionId: action.id,
@@ -470,7 +378,6 @@ function prepareInput(
       taskType: inspection.taskType,
     },
     `work-input-ready:${action.id}`,
-    'action',
   );
   return Promise.resolve(null);
 }
