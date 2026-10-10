@@ -8,7 +8,7 @@ import {
   type IdSource,
   type Reduction,
   type ReviewResult,
-  type ReviewValidationOutcome,
+  type ReviewValidationReport,
   type RunId,
   type RunPurpose,
   type RunRecord,
@@ -18,9 +18,9 @@ import {
   type TerminalOutcome,
   type UsageWrite,
   type WorkInputPurpose,
-  type WorkValidationOutcome,
+  type WorkValidationReport,
   type WrapupInputPurpose,
-  type WrapupValidationOutcome,
+  type WrapupValidationReport,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import {
@@ -686,19 +686,16 @@ function finishWorkValidation(
   existing: FactorySnapshot,
   run: RunRecord,
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  outcome: WorkValidationOutcome,
+  report: Exclude<WorkValidationReport, { status: 'error' }>,
   ids: IdSource,
 ): Reduction {
   const session = sessionFor(snapshot, run.sessionId);
   if (session === null || session.stage !== 'work' || session.taskId === null) {
     return reject(existing, 'Work session is missing.');
   }
-  if (outcome.kind === 'error') {
-    return retryValidation(snapshot, run, action, outcome.message, ids);
-  }
   action.status = 'succeeded';
-  if (outcome.kind === 'failed') {
-    scheduleCorrection(snapshot, session, run, outcome.failures, ids);
+  if (report.status === 'failed') {
+    scheduleCorrection(snapshot, session, run, report.failures, ids);
     return finish(snapshot, 'Work validation failed.');
   }
   const task = taskById(snapshot, session.taskId);
@@ -728,14 +725,14 @@ function finishWorkValidation(
   }
   const round = task.reviewRound + 1;
   const prompt = reviewPrompt({
-    diff: outcome.diff,
+    diff: report.detail.diff,
     displayRef: snapshot.ticket.displayRef,
     planPath: snapshot.execution.planPath ?? '',
     rawOutput: runOutput(run),
     round,
     taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
     taskTitle: task.title,
-    validationSummary: outcome.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
+    validationSummary: report.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
   });
   const reviewRun = addRun(
     snapshot,
@@ -747,7 +744,7 @@ function finishWorkValidation(
     prompt,
   );
   reviewRun.description = childDescription(task.title);
-  reviewRun.diffHash = sha256(outcome.diff);
+  reviewRun.diffHash = sha256(report.detail.diff);
   launchAction(
     snapshot,
     reviewRun,
@@ -1072,7 +1069,7 @@ function finishReviewValidation(
   existing: FactorySnapshot,
   run: RunRecord,
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  outcome: ReviewValidationOutcome,
+  report: Exclude<ReviewValidationReport, { status: 'error' }>,
   ids: IdSource,
 ): Reduction {
   const session = sessionFor(snapshot, run.sessionId);
@@ -1081,20 +1078,24 @@ function finishReviewValidation(
   if (session === null || session.stage !== 'review' || task === null) {
     return reject(existing, 'Review session is missing.');
   }
-  if (outcome.kind === 'error') {
-    return retryValidation(snapshot, run, action, outcome.message, ids);
-  }
   action.status = 'succeeded';
-  switch (outcome.kind) {
+  if (report.status === 'passed') {
+    const parsed = parseReview(runOutput(run), run.semanticRound);
+    if (parsed.kind === 'invalid') {
+      return correctReview(snapshot, session, task, run, parsed.failures, ids);
+    }
+    return applyVerdict(snapshot, task, run, parsed.result, ids);
+  }
+  switch (report.detail.reason) {
     case 'unsafe': {
       task.status = 'blocked';
       pauseWithNotice(snapshot, {
         code: 'review_isolation',
-        failures: outcome.failures,
+        failures: report.failures,
         ids,
         question: [
           'The reviewer was not isolated from the worker:',
-          ...outcome.failures.map((failure) => `- ${failure}`),
+          ...report.failures.map((failure) => `- ${failure}`),
         ].join('\n'),
         retryable: false,
       });
@@ -1103,16 +1104,9 @@ function finishReviewValidation(
     case 'stale':
       return revalidateWork(snapshot, existing, task, run, ids);
     case 'malformed':
-      return correctReview(snapshot, session, task, run, outcome.failures, ids);
-    case 'passed': {
-      const parsed = parseReview(runOutput(run), run.semanticRound);
-      if (parsed.kind === 'invalid') {
-        return correctReview(snapshot, session, task, run, parsed.failures, ids);
-      }
-      return applyVerdict(snapshot, task, run, parsed.result, ids);
-    }
+      return correctReview(snapshot, session, task, run, report.failures, ids);
     default: {
-      const _exhaustive: never = outcome;
+      const _exhaustive: never = report.detail.reason;
       return _exhaustive;
     }
   }
@@ -1259,17 +1253,13 @@ function finishWrapupValidation(
   snapshot: FactorySnapshot,
   run: RunRecord,
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  outcome: WrapupValidationOutcome,
-  usage: string,
+  report: Exclude<WrapupValidationReport, { status: 'error' }>,
   ids: IdSource,
 ): Reduction {
-  if (outcome.kind === 'error') {
-    return retryValidation(snapshot, run, action, outcome.message, ids);
-  }
   action.status = 'succeeded';
-  if (outcome.kind === 'failed') {
+  if (report.status === 'failed') {
     enqueueWrapupInput(snapshot, {
-      failures: outcome.failures,
+      failures: report.failures,
       idempotencyKey: `wrapup-input:${run.id}:correction`,
       ids,
       purpose: 'validation_correction',
@@ -1318,7 +1308,7 @@ function finishWrapupValidation(
     question: [
       `${ref} is ready for handoff. The wrap-up session and the diff are open in their own panes.`,
       '',
-      usage,
+      report.detail.usage,
       '',
       `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
     ].join('\n'),
@@ -1386,28 +1376,33 @@ export function reduce(input: {
       ) {
         return unchanged(existing, 'Duplicate validation event ignored.');
       }
+      // An error asks nothing of the agent: it retries the validation.
+      if (event.report.status === 'error') {
+        return retryValidation(snapshot, run, action, event.report.summary, ids);
+      }
       if (event.stage === 'work') {
-        return finishWorkValidation(snapshot, existing, run, action, event.outcome, ids);
+        return finishWorkValidation(snapshot, existing, run, action, event.report, ids);
       }
       if (event.stage === 'review') {
-        return finishReviewValidation(snapshot, existing, run, action, event.outcome, ids);
+        return finishReviewValidation(snapshot, existing, run, action, event.report, ids);
       }
       if (event.stage === 'wrapup') {
-        return finishWrapupValidation(snapshot, run, action, event.outcome, event.usage, ids);
+        return finishWrapupValidation(snapshot, run, action, event.report, ids);
       }
+      const report = event.report;
       if (run.resultStatus !== 'valid' || run.resultHash === null) {
         return reject(existing, 'Validation requires a valid plan result.');
       }
       action.status = 'succeeded';
-      if (event.outcome.kind === 'failed') {
+      if (report.status === 'failed') {
         const session = sessionFor(snapshot, run.sessionId);
         if (session === null) {
           return reject(existing, 'Plan session is missing.');
         }
-        scheduleCorrection(snapshot, session, run, event.outcome.failures, ids);
+        scheduleCorrection(snapshot, session, run, report.failures, ids);
         return finish(snapshot, 'Plan validation failed.');
       }
-      snapshot.tasks = event.outcome.tasks.map((task) => ({
+      snapshot.tasks = report.detail.tasks.map((task) => ({
         blockedBy: task.blockedBy,
         blockingCount: null,
         findingCount: null,
@@ -1422,7 +1417,7 @@ export function reduce(input: {
       }));
       snapshot.execution.stage = 'work';
       snapshot.execution.status = 'active';
-      snapshot.execution.planPath = event.outcome.planPath;
+      snapshot.execution.planPath = report.detail.planPath;
       snapshot.actions.push({
         attempts: 0,
         attentionReplyId: null,

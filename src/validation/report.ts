@@ -1,0 +1,59 @@
+// What a validator concludes about one run. `failed` asks the agent for a
+// correction; `error` is infrastructure trouble and retries the validation.
+// `detail` carries what the controller needs from a stage beyond pass/fail.
+
+export type ValidationCheck = {
+  command?: string | null;
+  details: string;
+  durationMs?: number | null;
+  exitCode?: number | null;
+  kind: 'artifact' | 'schema' | 'policy' | 'command' | 'diff';
+  name: string;
+  outputExcerpt?: string | null;
+  status: 'passed' | 'failed' | 'error';
+};
+
+export type ValidationReport<Passed = null, Failed = null> =
+  | {
+      checks: Array<ValidationCheck>;
+      detail: Passed;
+      status: 'passed';
+      summary: null;
+      version: string;
+    }
+  | {
+      checks: Array<ValidationCheck>;
+      detail: Failed;
+      failures: Array<string>;
+      status: 'failed';
+      summary: string;
+      version: string;
+    }
+  | { checks: Array<ValidationCheck>; status: 'error'; summary: string; version: string };
+
+export function passedReport<Passed>(
+  version: string,
+  checks: Array<ValidationCheck>,
+  detail: Passed,
+): ValidationReport<Passed, never> {
+  return { checks, detail, status: 'passed', summary: null, version };
+}
+
+export function failedReport<Failed>(
+  version: string,
+  checks: Array<ValidationCheck>,
+  failures: Array<string>,
+  detail: Failed,
+): ValidationReport<never, Failed> {
+  return { checks, detail, failures, status: 'failed', summary: failures.join('\n'), version };
+}
+
+export function errorReport(version: string, message: string): ValidationReport<never, never> {
+  return { checks: [], status: 'error', summary: message, version };
+}
+
+export function failuresOf(checks: Array<ValidationCheck>): Array<string> {
+  return checks
+    .filter((check) => check.status === 'failed')
+    .map((check) => `${check.name}: ${check.details}`);
+}

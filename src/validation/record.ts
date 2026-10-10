@@ -1,19 +1,61 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { ExecutionId, RunId } from '../domain.ts';
-import type { ValidationCheckDraft } from './plan.ts';
+import { applyControllerEvent } from '../controller/store.ts';
+import type { ActionId, ControllerEvent, ExecutionId, IdSource, RunId } from '../domain.ts';
+import type { ValidationCheck, ValidationReport } from './report.ts';
 
-export function writeValidation(
+export type ValidationFinished = Extract<ControllerEvent, { kind: 'validation_finished' }>;
+
+// The one way a validation result reaches the controller: the report is
+// written to validation_runs/validation_checks and the controller applies it
+// in the same transaction. A result for an action that already finished
+// (a late background validation) is neither written nor applied.
+export function recordValidation(
+  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+  validation: { event: ValidationFinished; executionId: ExecutionId; resultHash: string | null },
+): void {
+  const { event, executionId, resultHash } = validation;
+  const id = input.ids.event();
+  const now = input.now();
+  applyControllerEvent(input.db, {
+    dedupeKey: `validation:${event.actionId}`,
+    event,
+    ids: input.ids,
+    now,
+    prepare: (db) => {
+      if (actionFinished(db, event.actionId)) {
+        return;
+      }
+      writeValidation(db, {
+        executionId,
+        id,
+        now,
+        report: event.report,
+        resultHash,
+        runId: event.runId,
+      });
+    },
+    source: 'validator',
+  });
+}
+
+function actionFinished(db: DatabaseSync, id: ActionId): boolean {
+  const row = db.prepare('SELECT status FROM actions WHERE id = ?').get(id);
+  const status =
+    typeof row === 'object' && row !== null && 'status' in row && typeof row.status === 'string'
+      ? row.status
+      : '';
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+}
+
+function writeValidation(
   db: DatabaseSync,
   input: {
-    checks: Array<ValidationCheckDraft>;
     executionId: ExecutionId;
     id: string;
     now: string;
+    report: ValidationReport<unknown, unknown>;
     resultHash: string | null;
     runId: RunId;
-    status: 'passed' | 'failed' | 'error';
-    summary: string | null;
-    validatorVersion: string;
   },
 ): void {
   const attemptRow = db
@@ -35,11 +77,11 @@ export function writeValidation(
     input.executionId,
     input.runId,
     count + 1,
-    input.validatorVersion,
+    input.report.version,
     input.resultHash,
     input.now,
   );
-  input.checks.forEach((check, index) => {
+  input.report.checks.forEach((check: ValidationCheck, index) => {
     db.prepare(
       `INSERT INTO validation_checks
         (validation_id, ordinal, name, kind, status, command, exit_code, duration_ms,
@@ -60,30 +102,5 @@ export function writeValidation(
   });
   db.prepare(
     'UPDATE validation_runs SET status = ?, summary = ?, completed_at = ? WHERE id = ?',
-  ).run(input.status, input.summary, input.now, input.id);
-}
-
-export function writePlanValidation(
-  db: DatabaseSync,
-  input: {
-    checks: Array<ValidationCheckDraft>;
-    executionId: ExecutionId;
-    id: string;
-    now: string;
-    passed: boolean;
-    resultHash: string;
-    runId: RunId;
-  },
-): void {
-  writeValidation(db, {
-    checks: input.checks,
-    executionId: input.executionId,
-    id: input.id,
-    now: input.now,
-    resultHash: input.resultHash,
-    runId: input.runId,
-    status: input.passed ? 'passed' : 'failed',
-    summary: null,
-    validatorVersion: 'plan.v3',
-  });
+  ).run(input.report.status, input.report.summary, input.now, input.id);
 }

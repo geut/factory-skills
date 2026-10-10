@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
-import type { WrapupBaseline, WrapupCheck, WrapupValidationOutcome } from '../domain.ts';
+import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import { errorReport, failedReport, passedReport, type ValidationCheck } from './report.ts';
+
+export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 
 // Validates the wrap-up handoff against the repository, not the agent's
 // claims. The headings are checked for completeness; the prose is not parsed
@@ -246,10 +249,10 @@ const pullRequestUrl = /https?:\/\/\S+\/pull\/\d+/;
 
 function check(
   name: string,
-  kind: WrapupCheck['kind'],
+  kind: ValidationCheck['kind'],
   failures: Array<string>,
   passed: string,
-): WrapupCheck {
+): ValidationCheck {
   return {
     details: failures.length === 0 ? passed : failures.join('\n'),
     kind,
@@ -274,8 +277,10 @@ export function validateWrapup(input: {
   generated: Array<string>;
   output: string;
   pullRequests: boolean;
+  // The all-stage usage table, read once the checks are done.
+  usage: () => string;
   worktree: string;
-}): WrapupValidationOutcome {
+}): WrapupValidationReport {
   let current: WrapupBaseline;
   let dirty: boolean;
   let branchExists: boolean;
@@ -284,13 +289,16 @@ export function validateWrapup(input: {
     dirty = gitOk(input.worktree, ['status', '--porcelain']).trim().length > 0;
     branchExists = refSha(input.codeRoot, `refs/heads/${input.branch}`) !== null;
   } catch (error: unknown) {
-    return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+    return errorReport(
+      WRAPUP_VALIDATOR_VERSION,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   const sections = handoffSections(input.output);
   const section = (name: string) => sections.get(name.toLowerCase()) ?? '';
   const missing = WRAPUP_HEADINGS.filter((name) => !sections.has(name.toLowerCase()));
-  const checks: Array<WrapupCheck> = [
+  const checks: Array<ValidationCheck> = [
     check(
       'handoff headings',
       'schema',
@@ -441,7 +449,10 @@ export function validateWrapup(input: {
     try {
       found = input.findPullRequest(url);
     } catch (error: unknown) {
-      return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+      return errorReport(
+        WRAPUP_VALIDATOR_VERSION,
+        error instanceof Error ? error.message : String(error),
+      );
     }
     if ('missing' in found) {
       policy.push(`No pull request exists at ${url}.`);
@@ -465,5 +476,8 @@ export function validateWrapup(input: {
   const failures = checks
     .filter((item) => item.status === 'failed')
     .flatMap((item) => item.details.split('\n'));
-  return failures.length === 0 ? { checks, kind: 'passed' } : { checks, failures, kind: 'failed' };
+  const detail = { usage: input.usage() };
+  return failures.length === 0
+    ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
+    : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
 }

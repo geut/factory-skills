@@ -1,12 +1,18 @@
 import type {
-  ReviewCheck,
   ReviewFinding,
   ReviewResult,
   ReviewSeverity,
-  ReviewValidationOutcome,
+  ReviewValidationReport,
   ReviewVerdict,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import {
+  errorReport,
+  failedReport,
+  failuresOf,
+  passedReport,
+  type ValidationCheck,
+} from './report.ts';
 import { collectWorkDiff } from './work.ts';
 
 export type ParsedReview =
@@ -180,11 +186,7 @@ export function formatFinding(finding: ReviewFinding): string {
   return `${finding.id} [${finding.severity}] ${finding.title}${location}: ${finding.finding} Evidence: ${finding.evidence}${outcome}`;
 }
 
-function failed(checks: Array<ReviewCheck>): Array<string> {
-  return checks
-    .filter((check) => check.status === 'failed')
-    .map((check) => `${check.name}: ${check.details}`);
-}
+export const REVIEW_VALIDATOR_VERSION = 'review.v1';
 
 export function reviewChecks(input: {
   currentDiffHash: string;
@@ -194,12 +196,12 @@ export function reviewChecks(input: {
   reviewModel: string;
   tools: string;
   workModel: string;
-}): ReviewValidationOutcome {
+}): ReviewValidationReport {
   const mutating = input.tools
     .split(',')
     .map((tool) => tool.trim())
     .filter((tool) => mutatingTools.has(tool));
-  const isolation: Array<ReviewCheck> = [
+  const isolation: Array<ValidationCheck> = [
     {
       details:
         input.reviewModel === input.workModel
@@ -217,7 +219,7 @@ export function reviewChecks(input: {
     },
   ];
   const fresh = input.reviewedDiffHash === null || input.reviewedDiffHash === input.currentDiffHash;
-  const freshness: Array<ReviewCheck> =
+  const freshness: Array<ValidationCheck> =
     input.reviewedDiffHash === null
       ? []
       : [
@@ -236,23 +238,24 @@ export function reviewChecks(input: {
       : (input.resultError ?? 'The review result was not parsed.')
           .split('\n')
           .filter((line) => line.length > 0);
-  const schema: ReviewCheck = {
+  const schema: ValidationCheck = {
     details: schemaFailures.length === 0 ? 'factory.review.v4' : schemaFailures.join('\n'),
     kind: 'schema',
     name: 'review result',
     status: schemaFailures.length === 0 ? 'passed' : 'failed',
   };
   const checks = [schema, ...isolation, ...freshness];
-  if (failed(isolation).length > 0) {
-    return { checks, failures: failed(isolation), kind: 'unsafe' };
+  const version = REVIEW_VALIDATOR_VERSION;
+  if (failuresOf(isolation).length > 0) {
+    return failedReport(version, checks, failuresOf(isolation), { reason: 'unsafe' });
   }
   if (!fresh) {
-    return { checks, failures: failed(freshness), kind: 'stale' };
+    return failedReport(version, checks, failuresOf(freshness), { reason: 'stale' });
   }
   if (schemaFailures.length > 0) {
-    return { checks, failures: schemaFailures, kind: 'malformed' };
+    return failedReport(version, checks, schemaFailures, { reason: 'malformed' });
   }
-  return { checks, kind: 'passed' };
+  return passedReport(version, checks, null);
 }
 
 export function validateReview(input: {
@@ -263,10 +266,10 @@ export function validateReview(input: {
   reviewModel: string;
   tools: string;
   workModel: string;
-}): ReviewValidationOutcome {
+}): ReviewValidationReport {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
-    return { kind: 'error', message: collected.message };
+    return errorReport(REVIEW_VALIDATOR_VERSION, collected.message);
   }
   return reviewChecks({ ...input, currentDiffHash: sha256(collected.diff) });
 }

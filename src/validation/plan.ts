@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { taskId, type PlanValidationOutcome, type PlannedTask } from '../domain.ts';
+import { taskId, type PlanValidationReport, type PlannedTask } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import { errorReport, failedReport, passedReport } from './report.ts';
 
 export type ParsedPlanTask = { blockedBy: Array<string>; id: string; path: string };
 
@@ -207,9 +208,22 @@ function titleOf(markdown: string, fallback: string): string {
 
 const taskFilePattern = /^(\d+)-task-.+\.md$/;
 
-export function inspectPlanDir(input: { factoryDir: string }): PlanValidationOutcome {
+export const PLAN_VALIDATOR_VERSION = 'plan.v3';
+
+export function inspectPlanDir(input: { factoryDir: string }): PlanValidationReport {
   const failures: Array<string> = [];
   const planFile = path.join(input.factoryDir, 'plan.md');
+  let filenames: Array<string>;
+  try {
+    filenames = readdirSync(input.factoryDir)
+      .filter((name) => taskFilePattern.test(name))
+      .sort();
+  } catch {
+    return errorReport(
+      PLAN_VALIDATOR_VERSION,
+      `Ticket directory ${input.factoryDir} cannot be read.`,
+    );
+  }
   let planText: string | null = null;
   try {
     planText = readFileSync(planFile, 'utf8');
@@ -219,20 +233,21 @@ export function inspectPlanDir(input: { factoryDir: string }): PlanValidationOut
   if (planText === null || planText.trim().length === 0) {
     failures.push('plan.md is missing.');
   }
-
-  let filenames: Array<string> = [];
-  try {
-    filenames = readdirSync(input.factoryDir)
-      .filter((name) => taskFilePattern.test(name))
-      .sort();
-  } catch {
-    failures.push(`Ticket directory ${input.factoryDir} cannot be read.`);
-  }
   if (filenames.length === 0) {
     failures.push('At least one task file is required.');
   }
   if (failures.length > 0) {
-    return { failures, kind: 'failed' };
+    return failedReport(
+      PLAN_VALIDATOR_VERSION,
+      failures.map((failure) => ({
+        details: failure,
+        kind: 'artifact',
+        name: failure,
+        status: 'failed',
+      })),
+      failures,
+      null,
+    );
   }
 
   const tasks: Array<PlannedTask> = [];
@@ -254,36 +269,12 @@ export function inspectPlanDir(input: { factoryDir: string }): PlanValidationOut
       title: titleOf(text, `Task ${id}`),
     });
   }
-  return { kind: 'passed', planPath: planFile, tasks };
-}
-
-export type ValidationCheckDraft = {
-  command?: string | null;
-  details: string;
-  durationMs?: number | null;
-  exitCode?: number | null;
-  kind: 'artifact' | 'schema' | 'policy' | 'command' | 'diff';
-  name: string;
-  outputExcerpt?: string | null;
-  status: 'passed' | 'failed' | 'error';
-};
-
-export function planChecks(outcome: PlanValidationOutcome): Array<ValidationCheckDraft> {
-  if (outcome.kind === 'failed') {
-    return outcome.failures.map((failure) => ({
-      details: failure,
-      kind: 'artifact',
-      name: failure,
-      status: 'failed',
-    }));
-  }
-  return [
-    { details: outcome.planPath, kind: 'artifact', name: 'plan.md', status: 'passed' },
-    {
-      details: String(outcome.tasks.length),
-      kind: 'schema',
-      name: 'task graph',
-      status: 'passed',
-    },
-  ];
+  return passedReport(
+    PLAN_VALIDATOR_VERSION,
+    [
+      { details: planFile, kind: 'artifact', name: 'plan.md', status: 'passed' },
+      { details: String(tasks.length), kind: 'schema', name: 'task graph', status: 'passed' },
+    ],
+    { planPath: planFile, tasks },
+  );
 }

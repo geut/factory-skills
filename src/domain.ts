@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -201,25 +202,13 @@ export type PlannedTask = {
   title: string;
 };
 
-export type PlanValidationOutcome =
-  | { kind: 'passed'; planPath: string; tasks: Array<PlannedTask> }
-  | { failures: Array<string>; kind: 'failed' };
+export type PlanValidationReport = ValidationReport<{
+  planPath: string;
+  tasks: Array<PlannedTask>;
+}>;
 
-export type WorkCheck = {
-  command: string | null;
-  details: string;
-  durationMs: number | null;
-  exitCode: number | null;
-  kind: 'diff' | 'command' | 'policy';
-  name: string;
-  outputExcerpt: string | null;
-  status: 'passed' | 'failed';
-};
-
-export type WorkValidationOutcome =
-  | { checks: Array<WorkCheck>; diff: string; kind: 'passed' }
-  | { checks: Array<WorkCheck>; failures: Array<string>; kind: 'failed' }
-  | { kind: 'error'; message: string };
+// The diff is the worktree after the validation commands ran.
+export type WorkValidationReport = ValidationReport<{ diff: string }>;
 
 export type ReviewFinding = {
   blocking: boolean;
@@ -240,31 +229,15 @@ export type ReviewResult = {
   verdict: ReviewVerdict;
 };
 
-export type ReviewCheck = {
-  details: string;
-  kind: 'schema' | 'policy' | 'diff';
-  name: string;
-  status: 'passed' | 'failed';
-};
-
 // `malformed` resumes the reviewer, `stale` re-validates the worker's diff,
 // and `unsafe` pauses: the reviewer was not isolated from the worker.
-export type ReviewValidationOutcome =
-  | { checks: Array<ReviewCheck>; kind: 'passed' }
-  | { checks: Array<ReviewCheck>; failures: Array<string>; kind: 'malformed' | 'stale' | 'unsafe' }
-  | { kind: 'error'; message: string };
+export type ReviewValidationReport = ValidationReport<
+  null,
+  { reason: 'malformed' | 'stale' | 'unsafe' }
+>;
 
-export type WrapupCheck = {
-  details: string;
-  kind: 'artifact' | 'diff' | 'policy' | 'schema';
-  name: string;
-  status: 'failed' | 'passed';
-};
-
-export type WrapupValidationOutcome =
-  | { checks: Array<WrapupCheck>; kind: 'passed' }
-  | { checks: Array<WrapupCheck>; failures: Array<string>; kind: 'failed' }
-  | { kind: 'error'; message: string };
+// The all-stage usage table, including the finished wrap-up run.
+export type WrapupValidationReport = ValidationReport<{ usage: string }, { usage: string }>;
 
 // What wrap-up validation compares against: taken when the first wrap-up
 // input is prepared, before the agent runs.
@@ -293,21 +266,21 @@ export type ControllerEvent =
   | {
       actionId: ActionId;
       kind: 'validation_finished';
-      outcome: PlanValidationOutcome;
+      report: PlanValidationReport;
       runId: RunId;
       stage: 'plan';
     }
   | {
       actionId: ActionId;
       kind: 'validation_finished';
-      outcome: WorkValidationOutcome;
+      report: WorkValidationReport;
       runId: RunId;
       stage: 'work';
     }
   | {
       actionId: ActionId;
       kind: 'validation_finished';
-      outcome: ReviewValidationOutcome;
+      report: ReviewValidationReport;
       runId: RunId;
       stage: 'review';
     }
@@ -335,11 +308,9 @@ export type ControllerEvent =
   | {
       actionId: ActionId;
       kind: 'validation_finished';
-      outcome: WrapupValidationOutcome;
+      report: WrapupValidationReport;
       runId: RunId;
       stage: 'wrapup';
-      // The all-stage usage table, including the finished wrap-up run.
-      usage: string;
     }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
   | {

@@ -11,12 +11,14 @@ import {
 import { usageTable } from '../controller/usage.ts';
 import type { ActionRecord, ControllerEvent, FactorySnapshot, IdSource, RunId } from '../domain.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
-import { writeValidation } from '../validation/record.ts';
+import { recordValidation } from '../validation/record.ts';
+import { errorReport } from '../validation/report.ts';
 import { collectWorkDiff } from '../validation/work.ts';
 import {
   captureWrapupState,
   parseBaseline,
   validateWrapup,
+  WRAPUP_VALIDATOR_VERSION,
   type PullRequestLookup,
 } from '../validation/wrapup.ts';
 import { inspectWrapupInput } from './wrapup-input.ts';
@@ -162,12 +164,13 @@ export function validateWrapupRun(
       return '';
     }
   })();
-  const outcome =
+  const usage = () => usageTable(input.db, snapshot.execution.id, { includeWrapup: true });
+  const report =
     baseline === null ||
     worktreeBaseSha === null ||
     worktreeBranch === null ||
     worktreePath === null
-      ? { kind: 'error' as const, message: 'The wrap-up baseline or worktree is missing.' }
+      ? errorReport(WRAPUP_VALIDATOR_VERSION, 'The wrap-up baseline or worktree is missing.')
       : validateWrapup({
           baseBranch: snapshot.execution.worktreeBaseBranch,
           baseline,
@@ -180,45 +183,20 @@ export function validateWrapupRun(
           generated: snapshot.execution.policy.validation.wrapup.generated,
           output,
           pullRequests: snapshot.execution.policy.pullRequests,
+          usage,
           worktree: worktreePath,
         });
-  const checks = outcome.kind === 'error' ? [] : outcome.checks;
-  const status = outcome.kind === 'error' ? 'error' : outcome.kind;
-  const summary =
-    outcome.kind === 'error'
-      ? outcome.message
-      : outcome.kind === 'failed'
-        ? outcome.failures.join('\n')
-        : 'passed';
-  const executionId = snapshot.execution.id;
-  const validationId = input.ids.event();
-  const now = input.now();
-  apply(
-    input,
-    {
+  recordValidation(input, {
+    event: {
       actionId: action.id,
       kind: 'validation_finished',
-      outcome,
+      report,
       runId: run.id,
       stage: 'wrapup',
-      usage: usageTable(input.db, executionId, { includeWrapup: true }),
     },
-    `validation:${action.id}`,
-    'validator',
-    (db) => {
-      writeValidation(db, {
-        checks,
-        executionId,
-        id: validationId,
-        now,
-        resultHash: null,
-        runId: run.id,
-        status,
-        summary,
-        validatorVersion: 'wrapup.v1',
-      });
-    },
-  );
+    executionId: snapshot.execution.id,
+    resultHash: run.resultHash,
+  });
   return Promise.resolve(null);
 }
 

@@ -4,6 +4,8 @@ import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '.
 import { wrapupRunning } from '../stories/scenarios.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { reduce } from './reduce.ts';
+import { errorReport, passedReport } from '../validation/report.ts';
+import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
 
 const now = '2026-10-10T00:00:00.000Z';
 
@@ -75,10 +77,9 @@ test('a validator error uses the infrastructure retry budget, then fails retryab
       event: {
         actionId: action.id,
         kind: 'validation_finished',
-        outcome: { kind: 'error', message: 'git crashed' },
+        report: errorReport(WRAPUP_VALIDATOR_VERSION, 'git crashed'),
         runId,
         stage: 'wrapup',
-        usage: '',
       },
       ids: randomIds(),
       now,
@@ -103,20 +104,13 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
   const event = {
     actionId: action.id,
     kind: 'validation_finished' as const,
-    outcome: {
-      checks: [
-        {
-          details: 'ok',
-          kind: 'schema' as const,
-          name: 'handoff headings',
-          status: 'passed' as const,
-        },
-      ],
-      kind: 'passed' as const,
-    },
+    report: passedReport(
+      WRAPUP_VALIDATOR_VERSION,
+      [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
+      { usage: 'Stage  Sess  Input' },
+    ),
     runId,
     stage: 'wrapup' as const,
-    usage: 'Stage  Sess  Input',
   };
   const passed = reduce({ event, ids: randomIds(), now, snapshot });
   const after = passed.snapshot ?? snapshot;

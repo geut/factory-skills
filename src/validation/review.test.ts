@@ -144,8 +144,8 @@ const base = {
 
 test('review checks pass only for an isolated, fresh, parsed review', () => {
   const passed = reviewChecks(base);
-  assert.equal(passed.kind, 'passed');
-  if (passed.kind === 'passed') {
+  assert.equal(passed.status, 'passed');
+  if (passed.status === 'passed') {
     assert.deepEqual(
       passed.checks.map((check) => [check.name, check.status]),
       [
@@ -157,8 +157,8 @@ test('review checks pass only for an isolated, fresh, parsed review', () => {
     );
   }
   const untracked = reviewChecks({ ...base, reviewedDiffHash: null });
-  assert.equal(untracked.kind, 'passed');
-  if (untracked.kind === 'passed') {
+  assert.equal(untracked.status, 'passed');
+  if (untracked.status === 'passed') {
     assert.equal(
       untracked.checks.some((check) => check.name === 'reviewed diff'),
       false,
@@ -172,17 +172,17 @@ test('isolation outranks a stale diff, which outranks a malformed result', () =>
     resultError: '## Verdict is missing.\n## Findings is missing.',
     resultStatus: 'invalid',
   });
-  assert.equal(malformed.kind, 'malformed');
-  if (malformed.kind === 'malformed') {
+  assert.equal(malformed.status === 'failed' && malformed.detail.reason, 'malformed');
+  if (malformed.status === 'failed') {
     assert.deepEqual(malformed.failures, ['## Verdict is missing.', '## Findings is missing.']);
   }
   const stale = reviewChecks({ ...base, currentDiffHash: 'diff-b', resultStatus: 'invalid' });
-  assert.equal(stale.kind, 'stale');
+  assert.equal(stale.status === 'failed' && stale.detail.reason, 'stale');
   const sameModel = reviewChecks({ ...base, currentDiffHash: 'diff-b', reviewModel: 'work-model' });
-  assert.equal(sameModel.kind, 'unsafe');
+  assert.equal(sameModel.status === 'failed' && sameModel.detail.reason, 'unsafe');
   const writable = reviewChecks({ ...base, tools: 'read,edit,write' });
-  assert.equal(writable.kind, 'unsafe');
-  if (writable.kind === 'unsafe') {
+  assert.equal(writable.status === 'failed' && writable.detail.reason, 'unsafe');
+  if (writable.status === 'failed') {
     assert.match(writable.failures[0] ?? '', /mutating tools: edit, write/);
   }
 });

@@ -140,19 +140,20 @@ function validate(
     generated: options.generated ?? [],
     output,
     pullRequests: options.pullRequests ?? false,
+    usage: () => 'usage table',
     worktree: value.worktree,
   });
 }
 
 function failures(outcome: ReturnType<typeof validate>): string {
-  return outcome.kind === 'failed' ? outcome.failures.join('\n') : '';
+  return outcome.status === 'failed' ? outcome.failures.join('\n') : '';
 }
 
 test('a complete handoff passes, and prose outside the headings is ignored', () => {
   const value = fixture();
   const outcome = validate(value, value.baseline(), handoff(value));
-  assert.equal(outcome.kind, 'passed', failures(outcome));
-  if (outcome.kind === 'passed') {
+  assert.equal(outcome.status, 'passed', failures(outcome));
+  if (outcome.status === 'passed') {
     assert.deepEqual(
       outcome.checks.map((item) => item.name),
       [
@@ -227,7 +228,7 @@ test('a product-code change by the wrap-up agent fails; a named doc change passe
     docsBaseline,
     handoff(docs, { files: ['README.md', 'src/filter.ts', 'src/store.ts'] }),
   );
-  assert.equal(named.kind, 'passed', failures(named));
+  assert.equal(named.status, 'passed', failures(named));
 
   const generated = fixture();
   const generatedBaseline = generated.baseline();
@@ -238,7 +239,7 @@ test('a product-code change by the wrap-up agent fails; a named doc change passe
     handoff(generated, { files: ['src/filter.ts', 'src/schema.snap', 'src/store.ts'] }),
     { generated: ['*.snap'] },
   );
-  assert.equal(allowed.kind, 'passed', failures(allowed));
+  assert.equal(allowed.status, 'passed', failures(allowed));
 });
 
 test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', () => {
@@ -247,7 +248,7 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', (
   mkdirSync(path.join(value.factoryRoot, 'learnings'));
   writeFileSync(path.join(value.factoryRoot, 'CONTEXT.md'), '# Context\n');
   writeFileSync(path.join(value.factoryRoot, 'learnings/filters.md'), 'Persist early.\n');
-  assert.equal(validate(value, baseline, handoff(value)).kind, 'passed');
+  assert.equal(validate(value, baseline, handoff(value)).status, 'passed');
   writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/plan.md'), '# Edited plan\n');
   writeFileSync(path.join(value.factoryRoot, 'wrapup.md'), 'handoff\n');
   const text = failures(validate(value, baseline, handoff(value)));
@@ -274,7 +275,7 @@ test('with pull requests off, a push fails and commands are required', () => {
   const value = fixture();
   addRemote(value);
   const baseline = value.baseline();
-  assert.equal(validate(value, baseline, handoff(value)).kind, 'passed');
+  assert.equal(validate(value, baseline, handoff(value)).status, 'passed');
   git(value.worktree, ['push', '-u', 'origin', branch]);
   assert.match(
     failures(validate(value, baseline, handoff(value))),
@@ -295,7 +296,7 @@ test('with pull requests on and uncommitted changes, no push or pull request is 
     failures(outcome),
     /pull request was reported while the worktree has uncommitted changes/,
   );
-  assert.equal(validate(value, baseline, handoff(value), { pullRequests: true }).kind, 'passed');
+  assert.equal(validate(value, baseline, handoff(value), { pullRequests: true }).status, 'passed');
 });
 
 test('with pull requests on and a clean worktree, the handoff needs a real pull request', () => {
@@ -312,7 +313,7 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
     findPullRequest: found,
     pullRequests: true,
   });
-  assert.equal(passed.kind, 'passed', failures(passed));
+  assert.equal(passed.status, 'passed', failures(passed));
   assert.match(
     failures(validate(value, baseline, handoff(value, { merge: url }), { pullRequests: true })),
     /No pull request exists at/,
@@ -329,7 +330,8 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
     },
     pullRequests: true,
   });
-  assert.deepEqual(broken, { kind: 'error', message: 'gh: network unreachable' });
+  assert.equal(broken.status, 'error');
+  assert.equal(broken.summary, 'gh: network unreachable');
 });
 
 test('Files paths come from backticks or the first word of a list item', () => {
