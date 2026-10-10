@@ -1,6 +1,8 @@
 # Handoff surfaces
 
-After the supervised wrap-up result and its usage have been recorded, open two named panes. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix and emoji with a single space.
+In a controller run, the controller opens both panes itself after validation passes: `📦 <ticket>` runs `pi --session <wrap-up-session-file>`, and `🔀 <ticket>` opens the worktree diff, written to a file next to the session, in Fresh with `--no-restore`. Do not open them yourself. The rest of this page applies to a direct run.
+
+After the controller records the wrap-up result and usage, open two named panes. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix and emoji with a single space.
 
 - `<prefix> 📦` reopens the completed wrap-up Pi session for the human.
 - `<prefix> 🔀` shows Fresh's working-tree `Review Diff` from the ticket worktree.

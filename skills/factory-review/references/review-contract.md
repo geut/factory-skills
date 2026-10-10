@@ -1,6 +1,6 @@
 # Review contract
 
-The reviewer Output template in [reviewer-prompt.md](reviewer-prompt.md) is `factory.review.v4`. The result is markdown, not JSON.
+The reviewer output template in [output.md](output.md) is `factory.review.v4`. The result is markdown, not JSON. Verdict rules for the prompt are in [reviewer-prompt.md](reviewer-prompt.md).
 
 ## Verdicts
 
@@ -18,7 +18,7 @@ Unmet acceptance criteria are findings, not a separate checks list. "Looks corre
 
 `critical` and `major` are blocking and trigger another work-review round. `minor` is not. Purely stylistic preferences are not findings. A finding identifies a location when possible, makes one falsifiable claim, cites evidence, and states the outcome needed. Non-blocking findings are observations for the human.
 
-The supervisor synthesizes stable ids `R{round}-{n}` from `### n.` headings for state and worker relay. The same number is kept across rounds when the underlying problem is the same.
+The controller synthesizes stable ids `R{round}-{n}` from `### n.` headings for state and worker relay. The same number is kept across rounds when the underlying problem is the same.
 
 ## Review standard
 

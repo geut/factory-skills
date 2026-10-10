@@ -1,0 +1,623 @@
+== task 03/06 in review · 40 cols ==
+────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · ■■□□□...
+   03/06 Overview page (`/`) on the v...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+ ▶ work · 03 · ready for review
+   review · 03 · r1 · running
+
+  All checks green. The overview page
+  renders from the v2 read module.
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== task 03/06 in review · 60 cols ==
+────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+   03/06 Overview page (`/`) on the v2 read module
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+ ▶ work · 03 · ready for review
+   review · 03 · r1 · running
+
+  All checks green. The overview page renders from the v2
+  read module.
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== task 03/06 in review · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+   03/06 Overview page (`/`) on the v2 read module
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+ ▶ work · 03 · ready for review
+   review · 03 · r1 · running
+
+  All checks green. The overview page renders from the v2 read module.
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== task 03/06 in review · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+   03/06 Overview page (`/`) on the v2 read module
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+ ▶ work · 03 · ready for review
+   review · 03 · r1 · running
+
+  All checks green. The overview page renders from the v2 read module.
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== round limit with findings · 40 cols ==
+────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□...
+   03/06 Overview page (`/`) on the v...
+   paused · → /factory reply dpaez/fa...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · changes requested
+   work · 03 · r1 · ready for review
+   review · 03 · r2 · changes requested
+   work · 03 · r2 · ready for review
+ ▶ review · 03 · r3 · paused
+
+  ## Verdict
+
+  changes_requested
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== round limit with findings · 60 cols ==
+────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r3
+   03/06 Overview page (`/`) on the v2 read module
+   paused · → /factory reply dpaez/factory-dashboard#11 "...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · changes requested
+   work · 03 · r1 · ready for review
+   review · 03 · r2 · changes requested
+   work · 03 · r2 · ready for review
+ ▶ review · 03 · r3 · paused
+
+  ## Verdict
+
+  changes_requested
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== round limit with findings · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r3
+   03/06 Overview page (`/`) on the v2 read module
+   paused · → /factory reply dpaez/factory-dashboard#11 "answer"
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · changes requested
+   work · 03 · r1 · ready for review
+   review · 03 · r2 · changes requested
+   work · 03 · r2 · ready for review
+ ▶ review · 03 · r3 · paused
+
+  ## Verdict
+
+  changes_requested
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== round limit with findings · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r3
+   03/06 Overview page (`/`) on the v2 read module
+   paused · → /factory reply dpaez/factory-dashboard#11 "answer"
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · changes requested
+   work · 03 · r1 · ready for review
+   review · 03 · r2 · changes requested
+   work · 03 · r2 · ready for review
+ ▶ review · 03 · r3 · paused
+
+  ## Verdict
+
+  changes_requested
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== worker asks a question · 40 cols ==
+────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□...
+   03/06 Overview page (`/`) on the v...
+   waiting for you · → /factory reply...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · waiting for you
+
+  Should the overview hide done tickets?
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== worker asks a question · 60 cols ==
+────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+   03/06 Overview page (`/`) on the v2 read module
+   waiting for you · → /factory reply dpaez/factory-dashb...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · waiting for you
+
+  Should the overview hide done tickets?
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== worker asks a question · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+   03/06 Overview page (`/`) on the v2 read module
+   waiting for you · → /factory reply dpaez/factory-dashboard#11 "answer"
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · waiting for you
+
+  Should the overview hide done tickets?
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== worker asks a question · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+   03/06 Overview page (`/`) on the v2 read module
+   waiting for you · → /factory reply dpaez/factory-dashboard#11 "answer"
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · waiting for you
+
+  Should the overview hide done tickets?
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== ready for handoff · 40 cols ==
+────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■...
+   ready for handoff · → /factory com...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== ready for handoff · 60 cols ==
+────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-...
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== ready for handoff · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== ready for handoff · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+   ready for handoff · → /factory complete dpaez/factory-dashboard#11
+
+   plan · planned
+   work · 01 · ready for review
+   review · 01 · r1 · approved
+   work · 02 · ready for review
+   review · 02 · r1 · approved
+   work · 03 · ready for review
+   review · 03 · r1 · approved
+   work · 04 · ready for review
+   review · 04 · r1 · approved
+   work · 05 · ready for review
+   review · 05 · r1 · approved
+   work · 06 · ready for review
+   review · 06 · r1 · approved
+ ▶ wrapup · ready for handoff
+
+  ## Outcome
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== plan running · 40 cols ==
+────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · plan
+
+ ▶ plan · running
+
+  This run has no message yet.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== plan running · 60 cols ==
+────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · plan
+
+ ▶ plan · running
+
+  This run has no message yet.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== plan running · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · plan
+
+ ▶ plan · running
+
+  This run has no message yet.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== plan running · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ● dpaez/factory-dashboard#11 · plan
+
+ ▶ plan · running
+
+  This run has no message yet.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== ticket is no longer current · 40 cols ==
+────────────────────────────────────────
+ factory
+
+  This ticket has no runs yet.
+
+  This ticket is no longer current.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────
+
+== ticket is no longer current · 60 cols ==
+────────────────────────────────────────────────────────────
+ factory
+
+  This ticket has no runs yet.
+
+  This ticket is no longer current.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────
+
+== ticket is no longer current · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ factory
+
+  This ticket has no runs yet.
+
+  This ticket is no longer current.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== ticket is no longer current · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ factory
+
+  This ticket has no runs yet.
+
+  This ticket is no longer current.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ run  pgup/pgdn message  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

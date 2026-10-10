@@ -23,9 +23,9 @@ The session handoff is the Output template. Do not wrap it in a recap.
 
 Open the diff, relevant code, runtime, or debugger when that lands the explanation faster than prose. Read [references/visual-explanations.md](references/visual-explanations.md) whenever the change has three or more moving parts or a spatial UI behavior.
 
-Read [references/usage-table.md](references/usage-table.md) for the final token and cost table. In a supervised run, do not estimate this wrap-up session's own usage: return the handoff first so the supervisor can record the completed session and show the all-stage table in its completion message. In a direct run, show all usage currently recorded and label the current wrap-up session as pending if it is not yet available.
+Read [references/usage-table.md](references/usage-table.md) for the final token and cost table. In a controller run, do not estimate this wrap-up session's own usage: return the handoff first so the controller can record the completed session and show the all-stage table in its completion message. In a direct run, show all usage currently recorded and label the current wrap-up session as pending if it is not yet available.
 
-Read [references/panes-handoff.md](references/panes-handoff.md) for the two human-facing panes. In a supervised run, the supervisor reopens this completed Pi session for inspection after receiving its final output, and opens the diff separately in Fresh. Neither action starts another model turn. Leave both panes open until the human closes them.
+Read [references/panes-handoff.md](references/panes-handoff.md) for the two human-facing panes. In a controller run, the controller reopens this completed Pi session for inspection after receiving its final output, and opens the diff separately in Fresh. Neither action starts another model turn. Leave both panes open until the human closes them.
 
 ## Open or update the pull request
 
@@ -92,33 +92,10 @@ git -C "<code-root>" branch -d "<ticket-branch>"
 
 Do not show cleanup unless the ticket is committed and the user can first verify the merge.
 
-In a supervised run, let the supervisor record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to stage `done` with status `complete`. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, or clean up the worktree. Push and open or update a pull request only in the section above, and only when `github.pullRequests` is true. The human owns the merge.
+In a controller run, let the controller record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to `wrapup` / `ready_for_handoff`. Only the human completion action moves it to `done` / `complete`. In a direct invocation, report the result without inventing operational state edits; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, or clean up the worktree. Push and open or update a pull request only in the section above, and only when `github.pullRequests` is true. The human owns the merge.
 
 ## Output
 
-Return only this template (`factory.wrapup.v1`). No JSON object, no recap after it. Include every heading.
+Return only the `factory.wrapup.v1` template in [references/output.md](references/output.md). No JSON object, no recap after it. Include every heading.
 
-```markdown
-## Outcome
-What changed for the user or system.
-
-## PR summary
-Plain pull-request summary. Explicit non-goals.
-
-## Files
-Added, modified, and removed paths.
-
-## Tests
-Commands, results, and anything not run. Include E2E or the human path.
-
-## Operations
-Operational or migration notes, or none.
-
-## Limitations
-Known limitations and follow-up that is genuinely out of scope, or none.
-
-## Merge commands
-When the pull request was opened or updated, its URL. Otherwise, exact commit and merge commands with real paths; do not execute them.
-```
-
-After the template, call `subagent_done` and emit nothing else.
+After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is only for a question you cannot answer. Do not edit the controller database.

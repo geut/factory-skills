@@ -1,0 +1,36 @@
+{
+  "name": "factory-skills",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "format": "oxfmt --write .",
+    "gallery": "node --watch src/stories/server.ts",
+    "lint": "oxlint .",
+    "stories": "node src/stories/run.ts",
+    "stories:update": "STORIES_UPDATE=1 node --test src/stories/stories.test.ts",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@nkzw/eslint-plugin": "^2.0.0",
+    "@nkzw/oxlint-config": "^2.0.1",
+    "oxfmt": "^0.65.0",
+    "oxlint": "^1.80.0",
+    "typescript": "^5.9.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

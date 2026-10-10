@@ -14,7 +14,7 @@ Turn one ticket into the smallest plan that another agent can execute without re
 3. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions.
 4. When `github.cli` is true and the ticket is a GitHub issue, do not create `.factory/tickets/<ticket-id>/` as a copy of the issue. Keep acceptance criteria on the issue. A local execution note may point at the issue URL. When GitHub is not the source, create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
 
-A parent issue is coordination only. If it has related concrete issues, stop and tell the supervisor to register those issues as separate tickets. Do not turn them into numbered tasks under the parent. A concrete ticket gets local task files only when its own implementation needs more than one slice, and only in filesystem mode. In tracker mode, split further by commenting on that issue or by asking the user before creating local tasks.
+A parent issue is coordination only. If it has related concrete issues, stop and tell the controller to register those issues as separate tickets. Do not turn them into numbered tasks under the parent. A concrete ticket gets local task files only when its own implementation needs more than one slice, and only in filesystem mode. In tracker mode, split further by commenting on that issue or by asking the user before creating local tasks.
 
 Do not create `reviews/`, `handoffs/`, `visuals/`, `decisions.md`, `wrapup.md`, or per-ticket state files.
 
@@ -22,7 +22,7 @@ Do not create `reviews/`, `handoffs/`, `visuals/`, `decisions.md`, `wrapup.md`, 
 
 Answer questions from the codebase and existing documents before asking the user. When a material unknown changes scope, behavior, sequencing, or a hard-to-reverse decision, request user attention and use `grill-with-docs`. Ask one focused question at a time, include a recommended answer and its consequence, and stop as soon as the ticket is executable.
 
-In a supervised child session, call `caller_ping` with the question. The supervisor sets the ticket status to `waiting_for_user`, presents the question, and resumes this same planning session with `subagent_resume` after the answer. Do not emit a final planning contract while waiting. In a direct session, ask the user and pause normally.
+In a controller child session, call `caller_ping` with the question. The controller persists the question, sets the execution status to `waiting_for_user`, presents it, and resumes this same planning session after the answer. Do not emit a final planning contract while waiting. In a direct session, ask the user and pause normally.
 
 When Matt Pocock's skills are installed, use their useful mechanics rather than copying their output locations:
 
@@ -50,34 +50,12 @@ Before finishing, verify that:
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.
 
-In a supervised run, return the planning result and let the supervisor create or transition state. In a direct invocation, use `node …/factory-supervise/scripts/fstate/cli.mjs`; otherwise report the missing integration without inventing state edits.
+In a controller run, return the planning result and let the controller validate artifacts and transition state. In a direct invocation, report the result without inventing operational state edits.
 
 Do not commit or publish anything.
 
 ## Output
 
-Return only this template (`factory.plan.v3`). No JSON object, no recap after it. Durable content stays in the ticket files from [references/artifacts.md](references/artifacts.md).
+Write `plan.md` and one or more numbered task files, using [references/artifacts.md](references/artifacts.md). Hand off with the `factory.plan.v3` template in [references/output.md](references/output.md). No JSON object, no recap after it.
 
-```markdown
-## Status
-planned | blocked
-
-## Artifacts
-- plan: .factory/tickets/PROJ-123/plan.md
-- adr: none
-- tasks:
-  - 01: .factory/tickets/PROJ-123/01-task-foundation.md (pending, blockedBy none)
-
-## Ready
-01
-
-## Assumptions
-- none
-
-## Blocker
-none
-```
-
-`Status` is `planned` or `blocked`. A blocked result must name the unresolved decision or missing evidence under `Blocker`; it may list partial artifact paths but must not advertise a ready task frontier. Use `none` for empty optional fields.
-
-After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source.
+The controller accepts the plan when `plan.md` exists and at least one task file is present. It does not grade the chat text. After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source. Do not edit the controller database.

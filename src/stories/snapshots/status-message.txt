@@ -1,0 +1,889 @@
+== plan ready: 6 tasks with dependencies · 40 cols ==
+✓ dpaez/factory-dashboard#11 · plan ·
+  planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema
+    guard, scratch fixture, and error
+    page
+  • 02 Typed read module over the
+    controller views · after 01
+  • 03 Overview page (`/`) on the v2
+    read module · after 02
+  • 04 Ticket detail page
+    (`/tickets/[slug]`) on the v2 read
+    module · after 02
+  • 05 Contract: delete the legacy data
+    layer and supersede the fstate ADRs
+    · after 03, 04
+  • 06 Regenerate
+    `verify-factory-dashboard` without
+    `fstate seed` · after 05
+
+== plan ready: 6 tasks with dependencies · 60 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch
+    fixture, and error page
+  • 02 Typed read module over the controller views · after
+    01
+  • 03 Overview page (`/`) on the v2 read module · after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read
+    module · after 02
+  • 05 Contract: delete the legacy data layer and supersede
+    the fstate ADRs · after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate
+    seed` · after 05
+
+== plan ready: 6 tasks with dependencies · 80 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch fixture, and error page
+  • 02 Typed read module over the controller views · after 01
+  • 03 Overview page (`/`) on the v2 read module · after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read module · after 02
+  • 05 Contract: delete the legacy data layer and supersede the fstate ADRs ·
+    after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate seed` · after 05
+
+== plan ready: 6 tasks with dependencies · 120 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch fixture, and error page
+  • 02 Typed read module over the controller views · after 01
+  • 03 Overview page (`/`) on the v2 read module · after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read module · after 02
+  • 05 Contract: delete the legacy data layer and supersede the fstate ADRs · after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate seed` · after 05
+
+== plan ready: long titles · 40 cols ==
+✓ dpaez/factory-dashboard#11 · plan ·
+  planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema
+    guard, scratch fixture, and error
+    page, with a much longer explanation
+    of the acceptance criteria
+  • 02 Typed read module over the
+    controller views, with a much longer
+    explanation of the acceptance
+    criteria · after 01
+  • 03 Overview page (`/`) on the v2
+    read module, with a much longer
+    explanation of the acceptance
+    criteria · after 02
+  • 04 Ticket detail page
+    (`/tickets/[slug]`) on the v2 read
+    module, with a much longer
+    explanation of the acceptance
+    criteria · after 02
+  • 05 Contract: delete the legacy data
+    layer and supersede the fstate ADRs,
+    with a much longer explanation of
+    the acceptance criteria · after 03,
+    04
+  • 06 Regenerate
+    `verify-factory-dashboard` without
+    `fstate seed`, with a much longer
+    explanation of the acceptance
+    criteria · after 05
+
+== plan ready: long titles · 60 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch
+    fixture, and error page, with a much longer explanation
+    of the acceptance criteria
+  • 02 Typed read module over the controller views, with a
+    much longer explanation of the acceptance criteria ·
+    after 01
+  • 03 Overview page (`/`) on the v2 read module, with a
+    much longer explanation of the acceptance criteria ·
+    after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read
+    module, with a much longer explanation of the acceptance
+    criteria · after 02
+  • 05 Contract: delete the legacy data layer and supersede
+    the fstate ADRs, with a much longer explanation of the
+    acceptance criteria · after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate
+    seed`, with a much longer explanation of the acceptance
+    criteria · after 05
+
+== plan ready: long titles · 80 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch fixture, and error page,
+    with a much longer explanation of the acceptance criteria
+  • 02 Typed read module over the controller views, with a much longer
+    explanation of the acceptance criteria · after 01
+  • 03 Overview page (`/`) on the v2 read module, with a much longer explanation
+    of the acceptance criteria · after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read module, with a much
+    longer explanation of the acceptance criteria · after 02
+  • 05 Contract: delete the legacy data layer and supersede the fstate ADRs,
+    with a much longer explanation of the acceptance criteria · after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate seed`, with a much
+    longer explanation of the acceptance criteria · after 05
+
+== plan ready: long titles · 120 cols ==
+✓ dpaez/factory-dashboard#11 · plan · planned
+  0/6 done
+  6 tasks planned · ready: 01
+  • 01 Read-only v2 connection, schema guard, scratch fixture, and error page, with a much longer explanation of the
+    acceptance criteria
+  • 02 Typed read module over the controller views, with a much longer explanation of the acceptance criteria · after 01
+  • 03 Overview page (`/`) on the v2 read module, with a much longer explanation of the acceptance criteria · after 02
+  • 04 Ticket detail page (`/tickets/[slug]`) on the v2 read module, with a much longer explanation of the acceptance
+    criteria · after 02
+  • 05 Contract: delete the legacy data layer and supersede the fstate ADRs, with a much longer explanation of the
+    acceptance criteria · after 03, 04
+  • 06 Regenerate `verify-factory-dashboard` without `fstate seed`, with a much longer explanation of the acceptance
+    criteria · after 05
+
+== task 03/06 ready for review · 40 cols ==
+✓ dpaez/factory-dashboard#11 · work ·
+  ready for review
+  03/06 Overview page (`/`) on the v2
+  read module · 2/6 done
+  All checks green. The overview page r…
+  +1 line · expand to read
+
+== task 03/06 ready for review · 60 cols ==
+✓ dpaez/factory-dashboard#11 · work · ready for review
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  All checks green. The overview page renders from the v2 r…
+  +1 line · expand to read
+
+== task 03/06 ready for review · 80 cols ==
+✓ dpaez/factory-dashboard#11 · work · ready for review
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  All checks green. The overview page renders from the v2 read module.
+
+== task 03/06 ready for review · 120 cols ==
+✓ dpaez/factory-dashboard#11 · work · ready for review
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  All checks green. The overview page renders from the v2 read module.
+
+== task 03/06 approved; next task queued · 40 cols ==
+✓ dpaez/factory-dashboard#11 · review
+  · approved
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 3/6 done
+  The overview page meets every accepta…
+  +1 line · expand to read
+
+== task 03/06 approved; next task queued · 60 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6
+  done
+  The overview page meets every acceptance criterion.
+
+== task 03/06 approved; next task queued · 80 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+
+== task 03/06 approved; next task queued · 120 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+
+== task 03/06 approved, expanded · 40 cols ==
+✓ dpaez/factory-dashboard#11 · review
+  · approved
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 3/6 done
+  The overview page meets every
+  acceptance criterion.
+
+== task 03/06 approved, expanded · 60 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6
+  done
+  The overview page meets every acceptance criterion.
+
+== task 03/06 approved, expanded · 80 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+
+== task 03/06 approved, expanded · 120 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page (`/`) on the v2 read module · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+
+== changes requested, round 2 of 3 · 40 cols ==
+● dpaez/factory-dashboard#11 · review
+  · changes requested
+  03/06 Overview page (`/`) on the v2
+  read module · r2 · 2/6 done
+  Two blocking problems remain in the e…
+  • R2-1 [major] Missing DB_URL bypasses
+    the typed error page
+  • R2-2 [critical] The detail lookup
+    can return a ticket with id
+    "undefined"
+  +1 line · expand to read
+
+== changes requested, round 2 of 3 · 60 cols ==
+● dpaez/factory-dashboard#11 · review · changes requested
+  03/06 Overview page (`/`) on the v2 read module · r2 · 2/6
+  done
+  Two blocking problems remain in the error path.
+  • R2-1 [major] Missing DB_URL bypasses the typed error
+    page
+  • R2-2 [critical] The detail lookup can return a ticket
+    with id "undefined"
+
+== changes requested, round 2 of 3 · 80 cols ==
+● dpaez/factory-dashboard#11 · review · changes requested
+  03/06 Overview page (`/`) on the v2 read module · r2 · 2/6 done
+  Two blocking problems remain in the error path.
+  • R2-1 [major] Missing DB_URL bypasses the typed error page
+  • R2-2 [critical] The detail lookup can return a ticket with id "undefined"
+
+== changes requested, round 2 of 3 · 120 cols ==
+● dpaez/factory-dashboard#11 · review · changes requested
+  03/06 Overview page (`/`) on the v2 read module · r2 · 2/6 done
+  Two blocking problems remain in the error path.
+  • R2-1 [major] Missing DB_URL bypasses the typed error page
+  • R2-2 [critical] The detail lookup can return a ticket with id "undefined"
+
+== review round limit reached · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · paused
+  03/06 Overview page (`/`) on the v2
+  read module · r3 · 2/6 done
+  Two blocking problems remain in the
+  error path.
+  • R3-1 [major] Missing DB_URL bypasses
+    the typed error page
+  • R3-2 [critical] The detail lookup
+    can return a ticket with id
+    "undefined"
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== review round limit reached · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · r3 · 2/6
+  done
+  Two blocking problems remain in the error path.
+  • R3-1 [major] Missing DB_URL bypasses the typed error
+    page
+  • R3-2 [critical] The detail lookup can return a ticket
+    with id "undefined"
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review round limit reached · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · r3 · 2/6 done
+  Two blocking problems remain in the error path.
+  • R3-1 [major] Missing DB_URL bypasses the typed error page
+  • R3-2 [critical] The detail lookup can return a ticket with id "undefined"
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review round limit reached · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · r3 · 2/6 done
+  Two blocking problems remain in the error path.
+  • R3-1 [major] Missing DB_URL bypasses the typed error page
+  • R3-2 [critical] The detail lookup can return a ticket with id "undefined"
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review round limit notice · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · paused
+  03/06 Overview page (`/`) on the v2
+  read module · review r3 · 2/6 done
+  Review round 3 of 3 for task 03 still
+  has blocking findings:
+  - R3-1 [major] Missing DB_URL
+    bypasses the typed error page
+  - R3-2 [critical] The detail lookup
+    can return a ticket with id
+    "undefined"
+  Reply to tell the reviewer how to
+  settle them.
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== review round limit notice · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review
+  r3 · 2/6 done
+  Review round 3 of 3 for task 03 still has blocking
+  findings:
+  - R3-1 [major] Missing DB_URL bypasses the typed error
+    page
+  - R3-2 [critical] The detail lookup can return a ticket
+    with id "undefined"
+  Reply to tell the reviewer how to settle them.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review round limit notice · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r3 · 2/6 done
+  Review round 3 of 3 for task 03 still has blocking findings:
+  - R3-1 [major] Missing DB_URL bypasses the typed error page
+  - R3-2 [critical] The detail lookup can return a ticket with id "undefined"
+  Reply to tell the reviewer how to settle them.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review round limit notice · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r3 · 2/6 done
+  Review round 3 of 3 for task 03 still has blocking findings:
+  - R3-1 [major] Missing DB_URL bypasses the typed error page
+  - R3-2 [critical] The detail lookup can return a ticket with id "undefined"
+  Reply to tell the reviewer how to settle them.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked the task · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · blocked
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 2/6 done
+  The task file is missing, so the scope
+  cannot be checked.
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked the task · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · blocked
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6
+  done
+  The task file is missing, so the scope cannot be checked.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked the task · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · blocked
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  The task file is missing, so the scope cannot be checked.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked the task · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · blocked
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  The task file is missing, so the scope cannot be checked.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked notice · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · paused
+  03/06 Overview page (`/`) on the v2
+  read module · review r1 · 2/6 done
+  The reviewer blocked task 03: The task
+  file is missing, so the scope cannot
+  be checked.
+  Reply to resume the reviewer with what
+  it needs.
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked notice · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review
+  r1 · 2/6 done
+  The reviewer blocked task 03: The task file is missing, so
+  the scope cannot be checked.
+  Reply to resume the reviewer with what it needs.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked notice · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The reviewer blocked task 03: The task file is missing, so the scope cannot be
+  checked.
+  Reply to resume the reviewer with what it needs.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer blocked notice · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The reviewer blocked task 03: The task file is missing, so the scope cannot be checked.
+  Reply to resume the reviewer with what it needs.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== malformed review; correcting · 40 cols ==
+● dpaez/factory-dashboard#11 · review
+  · correcting
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 2/6 done
+  ## Verdict is missing.
+
+== malformed review; correcting · 60 cols ==
+● dpaez/factory-dashboard#11 · review · correcting
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6
+  done
+  ## Verdict is missing.
+
+== malformed review; correcting · 80 cols ==
+● dpaez/factory-dashboard#11 · review · correcting
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  ## Verdict is missing.
+
+== malformed review; correcting · 120 cols ==
+● dpaez/factory-dashboard#11 · review · correcting
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  ## Verdict is missing.
+
+== review correction limit reached · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · paused
+  03/06 Overview page (`/`) on the v2
+  read module · review r1 · 2/6 done
+  The review result is still malformed
+  after the correction limit:
+  - ## Verdict is missing.
+  - ## Summary is missing or empty.
+  Reply to resume the reviewer.
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== review correction limit reached · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review
+  r1 · 2/6 done
+  The review result is still malformed after the correction
+  limit:
+  - ## Verdict is missing.
+  - ## Summary is missing or empty.
+  Reply to resume the reviewer.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review correction limit reached · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The review result is still malformed after the correction limit:
+  - ## Verdict is missing.
+  - ## Summary is missing or empty.
+  Reply to resume the reviewer.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== review correction limit reached · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The review result is still malformed after the correction limit:
+  - ## Verdict is missing.
+  - ## Summary is missing or empty.
+  Reply to resume the reviewer.
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== diff changed during review · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · diff changed
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 2/6 done
+  Checked the diff against the task
+  file.
+
+== diff changed during review · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · diff changed
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6
+  done
+  Checked the diff against the task file.
+
+== diff changed during review · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · diff changed
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  Checked the diff against the task file.
+
+== diff changed during review · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · diff changed
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  Checked the diff against the task file.
+
+== diff keeps changing; paused · 40 cols ==
+▲ dpaez/factory-dashboard#11 · review
+  · paused
+  03/06 Overview page (`/`) on the v2
+  read module · review r1 · 2/6 done
+  The worktree changed again while
+  review round 1 of task 03 ran.
+  Something keeps writing files the diff
+  includes. Check git status in
+  /repo/.factory/worktrees/dpaez-factory
+  -dashboard-11 and ignore generated
+  files.
+  Then run /factory retry
+  dpaez/factory-dashboard#11 to validate
+  the work and review it again.
+  → /factory retry
+    dpaez/factory-dashboard#11
+
+== diff keeps changing; paused · 60 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review
+  r1 · 2/6 done
+  The worktree changed again while review round 1 of task 03
+  ran.
+  Something keeps writing files the diff includes. Check git
+  status in
+  /repo/.factory/worktrees/dpaez-factory-dashboard-11 and
+  ignore generated files.
+  Then run /factory retry dpaez/factory-dashboard#11 to
+  validate the work and review it again.
+  → /factory retry dpaez/factory-dashboard#11
+
+== diff keeps changing; paused · 80 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The worktree changed again while review round 1 of task 03 ran.
+  Something keeps writing files the diff includes. Check git status in
+  /repo/.factory/worktrees/dpaez-factory-dashboard-11 and ignore generated
+  files.
+  Then run /factory retry dpaez/factory-dashboard#11 to validate the work and
+  review it again.
+  → /factory retry dpaez/factory-dashboard#11
+
+== diff keeps changing; paused · 120 cols ==
+▲ dpaez/factory-dashboard#11 · review · paused
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  The worktree changed again while review round 1 of task 03 ran.
+  Something keeps writing files the diff includes. Check git status in
+  /repo/.factory/worktrees/dpaez-factory-dashboard-11 and ignore generated files.
+  Then run /factory retry dpaez/factory-dashboard#11 to validate the work and review it again.
+  → /factory retry dpaez/factory-dashboard#11
+
+== work checks failed; correcting · 40 cols ==
+● dpaez/factory-dashboard#11 · work ·
+  correcting
+  03/06 Overview page (`/`) on the v2
+  read module · 2/6 done
+  test: npm test exited with 1
+
+== work checks failed; correcting · 60 cols ==
+● dpaez/factory-dashboard#11 · work · correcting
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  test: npm test exited with 1
+
+== work checks failed; correcting · 80 cols ==
+● dpaez/factory-dashboard#11 · work · correcting
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  test: npm test exited with 1
+
+== work checks failed; correcting · 120 cols ==
+● dpaez/factory-dashboard#11 · work · correcting
+  03/06 Overview page (`/`) on the v2 read module · 2/6 done
+  test: npm test exited with 1
+
+== worker asks a question · 40 cols ==
+▲ dpaez/factory-dashboard#11 · work ·
+  waiting for you
+  03/06 Overview page (`/`) on the v2
+  read module · work · 2/6 done
+  Should the overview hide done tickets,
+  or show them below the active ones?
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== worker asks a question · 60 cols ==
+▲ dpaez/factory-dashboard#11 · work · waiting for you
+  03/06 Overview page (`/`) on the v2 read module · work ·
+  2/6 done
+  Should the overview hide done tickets, or show them below
+  the active ones?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== worker asks a question · 80 cols ==
+▲ dpaez/factory-dashboard#11 · work · waiting for you
+  03/06 Overview page (`/`) on the v2 read module · work · 2/6 done
+  Should the overview hide done tickets, or show them below the active ones?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== worker asks a question · 120 cols ==
+▲ dpaez/factory-dashboard#11 · work · waiting for you
+  03/06 Overview page (`/`) on the v2 read module · work · 2/6 done
+  Should the overview hide done tickets, or show them below the active ones?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== reviewer crashed; retrying · 40 cols ==
+● dpaez/factory-dashboard#11 · review
+  · retrying
+  03/06 Overview page (`/`) on the v2
+  read module · r1 · 2/6 done
+  The pane closed before subagent_done.
+
+== reviewer crashed; retrying · 60 cols ==
+● dpaez/factory-dashboard#11 · review · retrying
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6
+  done
+  The pane closed before subagent_done.
+
+== reviewer crashed; retrying · 80 cols ==
+● dpaez/factory-dashboard#11 · review · retrying
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  The pane closed before subagent_done.
+
+== reviewer crashed; retrying · 120 cols ==
+● dpaez/factory-dashboard#11 · review · retrying
+  03/06 Overview page (`/`) on the v2 read module · r1 · 2/6 done
+  The pane closed before subagent_done.
+
+== last task approved; wrap-up running · 40 cols ==
+✓ dpaez/factory-dashboard#11 · review
+  · approved
+  06/06 Regenerate
+  `verify-factory-dashboard` without
+  `fstate seed` · r1 · 6/6 done
+  Checked the diff against the task fil…
+  +1 line · expand to read
+
+== last task approved; wrap-up running · 60 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  06/06 Regenerate `verify-factory-dashboard` without
+  `fstate seed` · r1 · 6/6 done
+  Checked the diff against the task file.
+
+== last task approved; wrap-up running · 80 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  06/06 Regenerate `verify-factory-dashboard` without `fstate seed` · r1 · 6/6
+  done
+  Checked the diff against the task file.
+
+== last task approved; wrap-up running · 120 cols ==
+✓ dpaez/factory-dashboard#11 · review · approved
+  06/06 Regenerate `verify-factory-dashboard` without `fstate seed` · r1 · 6/6 done
+  Checked the diff against the task file.
+
+== wrap-up failed validation; correcting · 40 cols ==
+● dpaez/factory-dashboard#11 · wrapup
+  · correcting
+  6/6 done
+  ## Files does not list changed path s…
+  +1 line · expand to read
+
+== wrap-up failed validation; correcting · 60 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.t…
+  +1 line · expand to read
+
+== wrap-up failed validation; correcting · 80 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.ts.
+
+== wrap-up failed validation; correcting · 120 cols ==
+● dpaez/factory-dashboard#11 · wrapup · correcting
+  6/6 done
+  ## Files does not list changed path src/lib/server/read.ts.
+
+== wrap-up asks a question · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · waiting for you
+  6/6 done
+  The PR template asks for a migration
+  note. Is a schema v2 note enough?
+  → /factory reply
+    dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2
+  note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2 note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== wrap-up asks a question · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · waiting for you
+  6/6 done
+  The PR template asks for a migration note. Is a schema v2 note enough?
+  → /factory reply dpaez/factory-dashboard#11 "answer"
+
+== handoff passed validation · 40 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup
+  · ready for handoff
+  6/6 done
+  The dashboard reads the factory's sch…
+  +1 line · expand to read
+
+== handoff passed validation · 60 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, rea…
+  +1 line · expand to read
+
+== handoff passed validation · 80 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, read-only.
+
+== handoff passed validation · 120 cols ==
+✓ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  The dashboard reads the factory's schema v2 database, read-only.
+
+== ready for handoff notice · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready
+  for handoff. The wrap-up session and
+  the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache
+  rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900
+  135,000    22,000    163,928  41%
+  0.754
+  Work        6    610  48,000
+  590,000    31,000    669,610  64%
+  6.105
+  Review      6    480  25,200
+  300,000    12,000    337,680  38%
+  5.80
+  Wrap-up     1     20   1,400
+  40,000     1,500     42,920  22%
+  0.178
+  Total      14  1,138  81,500
+  1,065,000    66,500  1,214,138    —
+  12.837
+  Models: plan qwen3.8-max · work
+  qwen3.8-max · review kimi-k3 · wrap-up
+  qwen3.8-max
+  Merge it yourself, then run /factory
+  complete dpaez/factory-dashboard#11.
+  → /factory complete
+    dpaez/factory-dashboard#11
+
+== ready for handoff notice · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The
+  wrap-up session and the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr
+  Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000
+  163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000
+  669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000
+  337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500
+  42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500
+  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review
+  kimi-k3 · wrap-up qwen3.8-max
+  Merge it yourself, then run /factory complete
+  dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== ready for handoff notice · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The wrap-up session and the
+  diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000    163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000    669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000    337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500     42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review kimi-k3 · wrap-up
+  qwen3.8-max
+  Merge it yourself, then run /factory complete dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== ready for handoff notice · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · ready for handoff
+  6/6 done
+  dpaez/factory-dashboard#11 is ready for handoff. The wrap-up session and the diff are open in their own panes.
+  Stage    Sess  Input  Output   Cache rd  Cache wr      Total  Ctx     USD
+  Plan        1     28   6,900    135,000    22,000    163,928  41%   0.754
+  Work        6    610  48,000    590,000    31,000    669,610  64%   6.105
+  Review      6    480  25,200    300,000    12,000    337,680  38%    5.80
+  Wrap-up     1     20   1,400     40,000     1,500     42,920  22%   0.178
+  Total      14  1,138  81,500  1,065,000    66,500  1,214,138    —  12.837
+  Models: plan qwen3.8-max · work qwen3.8-max · review kimi-k3 · wrap-up qwen3.8-max
+  Merge it yourself, then run /factory complete dpaez/factory-dashboard#11.
+  → /factory complete dpaez/factory-dashboard#11
+
+== /factory complete · 40 cols ==
+● dpaez/factory-dashboard#11 · done ·
+  complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complet…
+  +1 line · expand to read
+
+== /factory complete · 60 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
+== /factory complete · 80 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
+== /factory complete · 120 cols ==
+● dpaez/factory-dashboard#11 · done · complete
+  6/6 done
+  dpaez/factory-dashboard#11 is complete.
+
+== /factory status while reviewing · 40 cols ==
+● dpaez/factory-dashboard#11 · review
+  · active
+  03/06 Overview page (`/`) on the v2
+  read module · review r1 · 2/6 done
+  Launched 👀 dpaez/factory-dashboard#1…
+  +1 line · expand to read
+
+== /factory status while reviewing · 60 cols ==
+● dpaez/factory-dashboard#11 · review · active
+  03/06 Overview page (`/`) on the v2 read module · review
+  r1 · 2/6 done
+  Launched 👀 dpaez/factory-dashboard#11.
+
+== /factory status while reviewing · 80 cols ==
+● dpaez/factory-dashboard#11 · review · active
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  Launched 👀 dpaez/factory-dashboard#11.
+
+== /factory status while reviewing · 120 cols ==
+● dpaez/factory-dashboard#11 · review · active
+  03/06 Overview page (`/`) on the v2 read module · review r1 · 2/6 done
+  Launched 👀 dpaez/factory-dashboard#11.
+
+== /factory status while planning · 40 cols ==
+● dpaez/factory-dashboard#11 · plan ·
+  active
+  Launched 🗺 dpaez/factory-dashboard#11.
+
+== /factory status while planning · 60 cols ==
+● dpaez/factory-dashboard#11 · plan · active
+  Launched 🗺 dpaez/factory-dashboard#11.
+
+== /factory status while planning · 80 cols ==
+● dpaez/factory-dashboard#11 · plan · active
+  Launched 🗺 dpaez/factory-dashboard#11.
+
+== /factory status while planning · 120 cols ==
+● dpaez/factory-dashboard#11 · plan · active
+  Launched 🗺 dpaez/factory-dashboard#11.
+
+== plain message without a card · 40 cols ==
+No factory execution matches proj-404.
+
+== plain message without a card · 60 cols ==
+No factory execution matches proj-404.
+
+== plain message without a card · 80 cols ==
+No factory execution matches proj-404.
+
+== plain message without a card · 120 cols ==
+No factory execution matches proj-404.

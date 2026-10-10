@@ -4,3 +4,6 @@ __pycache__/
 skills/.DS_Store
 
 analysis/
+node_modules/
+.factory/
+.scratch/

@@ -1,6 +1,6 @@
 # Reviewer prompt
 
-The supervisor packet already supplies intent and the cumulative ticket diff. Do not wait for `{INTENT}` or `{DIFF}` placeholders.
+The controller packet already supplies intent and the cumulative ticket diff. Do not wait for `{INTENT}` or `{DIFF}` placeholders.
 
 Find real problems: unmet acceptance criteria, bugs, design flaws, security issues, and maintainability concerns. Do not invent requirements. Do not turn preferences into blockers.
 
@@ -12,7 +12,7 @@ Review whether the implementation achieves the ticket outcome and this task's us
 
 ## Code under review
 
-Use the supervisor packet: current-task intent from the plan and task extracts, `--stat`, the untracked-file list, and the full cumulative ticket diff. Start with the diff. Locate surrounding code with `grep`, `find`, or `ls`. `read` only a range (`offset`/`limit`). Do not dump a whole file to check a signature, type, or existence. Treat earlier-task hunks as context unless they regress this task. Do not approve from `--stat` alone, a worker's confidence statement, or "tests pass." Judge test code and behavioral evidence visible in the diff. Do not block merely because a work-session test log was not included.
+Use the controller packet: current-task intent from the plan and task extracts, `--stat`, the untracked-file list, and the full cumulative ticket diff. Start with the diff. Locate surrounding code with `grep`, `find`, or `ls`. `read` only a range (`offset`/`limit`). Do not dump a whole file to check a signature, type, or existence. Treat earlier-task hunks as context unless they regress this task. Do not approve from `--stat` alone, a worker's confidence statement, or "tests pass." Judge test code and behavioral evidence visible in the diff. Do not block merely because a work-session test log was not included.
 
 If the packet or diff file is missing and cannot be read, return verdict `blocked` and name the missing condition as a finding. If this session is not read-only, return `blocked`. If this session uses the same model as work, return `blocked`.
 
@@ -46,7 +46,7 @@ For later rounds, verify claimed fixes and regressions first. Keep the same find
 
 ## Output
 
-Return only the template below. No JSON object, no Markdown fence around the whole result, no recap after it. `factory.review.v4`. Verdict and severity lookup is in [review-contract.md](review-contract.md).
+Return only the template in [output.md](output.md). No JSON object, no Markdown fence around the whole result, no recap after it. `factory.review.v4`. Verdict and severity lookup is in [review-contract.md](review-contract.md).
 
 Verdict is `approve`, `changes_requested`, or `blocked`:
 
@@ -60,27 +60,9 @@ Severity is `critical`, `major`, or `minor`:
 - `major`: unmet acceptance criterion, likely user-visible defect, invalid architecture boundary, or missing proof of essential behavior.
 - `minor`: real localized maintainability or clarity problem within scope.
 
-`critical` and `major` are blocking. `minor` is not. Exclude purely stylistic preferences. Number findings from 1. The supervisor synthesizes stable ids `R{round}-{n}` from those numbers.
+`critical` and `major` are blocking. `minor` is not. Exclude purely stylistic preferences. Number findings from 1. The controller synthesizes stable ids `R{round}-{n}` from those numbers.
 
-```markdown
-## Verdict
-approve | changes_requested | blocked
-
-## Summary
-One evidence-based sentence.
-
-## Findings
-none
-
-### 1. [Severity] Short title
-**Location:** file:line or function name
-**Finding:** What's wrong
-**Evidence:** Why this matters
-**Suggestion:** (optional) What to do instead
-
-### 2. [Severity] Short title
-...
-```
+The template itself is [output.md](output.md).
 
 If there are no findings, `## Findings` is exactly `none` and the review stops. An approved review may retain a small number of useful non-blocking minor findings. Use `none` when there are none.
 

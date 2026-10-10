@@ -1,309 +1,151 @@
 # Factory Skills
 
-A small set of [Pi](https://github.com/earendil-works/pi) skills for running a budget-aware software factory inside the [sbx-shell-pi factory image](https://github.com/geut/sbx-shell-pi).
+A [Pi](https://pi.dev) package that runs one ticket from planning through work, review, and wrap-up to a human handoff. Coordination lives in a TypeScript controller. Skills describe specialist behavior only.
 
-The factory takes one ticket through research, a small dependency-ordered task plan, tested implementation, bounded adversarial review, and a human-ready pull-request handoff. It favors the shortest clear solution that satisfies the ticket: no speculative infrastructure, unlimited review loops, or automatic publishing.
+## Commands
 
-## Status
+Pi loads `src/extension/index.ts` and the `skills/` directory from this package. The first `/factory start` creates `.factory/db/state.sqlite`. `.factory/FACTORY.json` must already exist and name distinct `models.work` and `models.review`. `models.plan` defaults to the work model.
 
-This repository contains the v0 skills and their Output templates. The supervised flow expects:
+```text
+/factory start <github-url | owner/repo#n | KEY-123 | local-file>
+/factory start --text <id> <ticket text>
+/factory reply <ticket> "answer"
+/factory retry <ticket>
+/factory complete <ticket>
+/factory status <ticket>
+```
 
-- [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents) for asynchronous Pi role sessions inside Herdr.
-- Node.js 24+ to run `skills/factory-supervise/scripts/fstate/cli.mjs` for atomic SQLite state updates and usage collection.
+`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. A parent GitHub issue with sub-issues is rejected. After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The planner still hands off with the `factory.plan.v3` template.
 
-You can still invoke individual skills directly with the manual workflow below. Detailed reviews remain in Pi sessions in v0; state keeps only verdicts, round counts, token and cost usage, and unresolved blockers.
+`caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
+
+When a worker finishes, the controller inspects the worktree diff and runs the trusted `validation.work.commands`. A failure resumes the same worker with the exact failures. A pass launches a read-only reviewer on `models.review` with the diff that was checked.
+
+The reviewer returns the `factory.review.v4` template. The controller parses the verdict and its findings, then checks that the reviewer was isolated and that the worktree diff has not changed since the reviewer received it.
+
+- `approve` marks the task done and starts the next dependency-ready task. After the last task, the controller launches wrap-up.
+- `changes_requested` resumes the same worker with only the blocking findings. Work validation runs again, then the same reviewer session reviews round 2. `limits.reviewRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the reviewer with your decision.
+- `blocked` pauses the ticket. `reply` resumes the reviewer.
+- A result the controller cannot parse resumes the reviewer with the parse errors. That does not spend a round. `limits.reviewCorrections` (default 3) bounds it per round.
+- A diff that changed during review is validated again before another review in the same round. The reviewer gets the worktree as it stands after the validation commands. A second change in the same round pauses the ticket, because something keeps writing to the worktree; ignore the generated files, then `retry` validates the work and reviews it again.
+
+Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round.
+
+After the last approval, the controller checks the wrap-up input in code: every task is done with an approving review, the plan and task files exist, the worktree is ready on its branch, and no other child runs. It records the worktree, refs, and factory files as a baseline, then launches the `factory-wrapup` agent on `models.work` in the worktree. A failed check pauses the ticket; `retry` checks again.
+
+The wrap-up agent returns the `factory.wrapup.v1` handoff. The controller keeps it as written and validates it against the repository:
+
+- every heading is present; `## Files` lists every changed path and no other; `## Tests` names the `validation.work.commands`; `## Merge commands` holds a pull-request URL or commands with the real worktree and branch;
+- wrap-up changed no product code: a change it makes must be documentation, or a generated artifact listed in `validation.wrapup.generated`, and must be named in `## Files`;
+- in the factory root only `CONTEXT.md`, `PRD.md`, and `learnings/` may change; no `wrapup.md` or `visuals/`;
+- nothing was committed or merged, and the branch still exists;
+- `github.pullRequests` decides whether a push and a pull request are allowed: never when it is off or the worktree has uncommitted changes; with a clean worktree, the pull request must exist for the branch.
+
+A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `github.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
+
+## What you see
+
+Every status card names the ticket, the stage, and what the run led to, then the task and round:
+
+```text
+✓ dpaez/factory-dashboard#11 · review · approved
+  03/06 Overview page · r1 · 3/6 done
+  The overview page meets every acceptance criterion.
+```
+
+Outcomes are `planned`, `ready for review`, `approved`, `changes requested`, `blocked`, `correcting`, `retrying`, `diff changed`, `paused`, `waiting for you`, `failed`, and `finished`. The plan card lists every task with its dependencies. Blocking findings show under the card. A card that waits on you (`▲`) shows its whole message and the command to run next.
+
+Above the editor, the widget keeps each unfinished ticket's progress on screen between runs, followed by the running agents:
+
+```text
+● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
+  03/06 Overview page
+```
+
+## Layout
+
+```text
+src/extension/     Pi /factory command
+src/controller/    commands, pure reducer, SQLite persistence
+src/actions/       leased dispatcher, worktree preparation
+src/runtime/       FactorySubagentRuntime, fake, pi-herdr adapter
+src/validation/    plan, work, review, and wrap-up checks
+src/stories/       component gallery: fixtures, scenarios, server, snapshots
+src/state/         schema and database opener
+skills/            specialist procedures and output templates
+tests/             recovery tests against real SQLite
+```
+
+Child sessions follow the named skill, return only the versioned template in that skill's `references/output.md`, then call `subagent_done`. `caller_ping` replaces the template when a decision is needed. Skills do not write the controller database.
 
 ## Vocabulary
 
-Use these terms consistently in prompts, files, Output templates, and user-facing messages:
-
-| Term | Meaning |
-| --- | --- |
-| factory | The overall system and skill set. It is not a work item. |
-| ticket | The external unit of work, from GitHub, a local document, JSON, or plain text. |
-| ticket type | Bug, feature, refactor, performance task, or investigation. |
-| task | One dependency-ordered implementation slice produced during planning. |
-| supervisor | The Pi session that coordinates specialist agents and state. |
-| stage | Where a ticket is in the workflow: `plan`, `work`, `review`, `wrapup`, or `done`. |
-| status | The ticket's current condition: `active`, `waiting_for_user`, `blocked`, `failed`, or `complete`. |
-| worktree | The isolated Git checkout used to change code for one ticket. |
-| factory root | The repo-local, untracked `.factory/` directory. |
-| ticket directory | `.factory/tickets/<ticket-id>/`, containing the ticket's durable planning artifacts. |
-
-Prefer “Choose a ticket to work on,” “Working on task 01,” and “Ticket PROJ-123 is waiting for user input.” Avoid referring to a ticket or its directory as a factory.
-
-### Simple scenario
-
-Ticket `SHOP-42` asks the product to remember a user's catalog filter.
-
-1. `factory-plan` researches `SHOP-42`, writes `.factory/tickets/SHOP-42/plan.md`, and creates `01-task-store-filter.md` and `02-task-restore-filter.md`.
-2. `factory-work` implements task 01 in the ticket worktree and marks it `ready_for_review`.
-3. `factory-review`, running on a different model, either approves task 01 or returns focused findings. Work and review repeat for at most three rounds.
-4. The supervisor advances to task 02 only after task 01 is `done`.
-5. `factory-wrapup` summarizes the approved change, updates durable knowledge when warranted, and prints the commands the human can use to commit and merge the worktree. The supervisor shows the all-stage usage table, leaves a `SHOP-42 📦` pane with the completed wrap-up Pi session, and opens a `SHOP-42 🔀` pane with Fresh's Review Diff.
-
-## Skills
-
-| Skill | Responsibility | Main output |
-| --- | --- | --- |
-| `setup-factory` | Asks for role models, a ticket pattern, pull-request permission, and triage labels, then scaffolds the factory root before the first ticket. | `.factory/FACTORY.json`, the empty SQLite store, and, on GitHub, issue and pull-request notes. |
-| `factory-supervise` | Coordinates tickets, Herdr subagents, worktrees, atomic state, budgets, and the review loop. Uses GitHub as the ticket source when setup recorded `github.cli`; otherwise uses `.factory/tickets`. | A ticket advanced safely through its stages. |
-| `factory-plan` | Researches one ticket, requests clarification when necessary, and creates the smallest executable plan. | `plan.md`, optional `adr.md`, numbered task files, and a `factory.plan.v3` markdown Output. |
-| `factory-work` | Implements one ready task using a small design sketch, behavior-first tests, and a type-specific playbook. | Tests, code, verification evidence, and a `factory.work.v3` markdown Output. |
-| `factory-review` | Reviews one task adversarially from a different, read-only model session. | A `factory.review.v4` markdown findings list and verdict. |
-| `factory-wrapup` | Updates durable knowledge and prepares the change for human submission. | A `factory.wrapup.v1` markdown handoff, usage table, Pi summary view, and Fresh diff. |
-| `factory-reflect` | Finds reusable lessons and evaluates proposed skill or tooling improvements. | A markdown candidate list for human approval. |
-
-The work playbooks cover bugs, features, performance changes, refactors, and investigations. Reflection is not required for every ticket; use it after meaningful corrections, expensive failures, or repeated patterns.
-
-## Requirements
-
-- The `ghcr.io/geut/sbx-shell-pi:node-24-factory` image, with Pi and Herdr.
-- [`pi-herdr-subagents`](https://github.com/modem-dev/pi-herdr-subagents), with its Herdr plugin linked and enabled. It requires Herdr 0.8.2 or newer and Node.js 22 or newer.
-- A Git repository for the product code. Concurrent tickets use separate Herdr workspaces and worktrees.
-- A work model and a different review model.
-- [Fresh](https://getfresh.dev/) for the final handoff and Review Diff panes.
-- Node.js 24+ for `skills/factory-supervise/scripts/fstate/cli.mjs` in the fully supervised workflow.
-
-Matt Pocock's [`grill-with-docs`, `to-spec`, and `to-tickets`](https://github.com/mattpocock/skills) are optional but recommended. `factory-plan` reuses their interview, synthesis, and slicing mechanics while overriding their destinations: artifacts stay local and nothing is published to an issue tracker.
-
-The architecture and review behavior are simplified, budget-conscious adaptations of ideas from [pstack](https://github.com/cursor/plugins/tree/main/pstack).
-
-## Install the skills
-
-Pi discovers recursive `SKILL.md` files from package `skills/` directories. Once this repository is published, install it inside the sandbox:
-
-```sh
-pi install git:github.com/geut/factory-skills
-```
-
-Pin a tag or commit in reproducible factory images:
-
-```sh
-pi install git:github.com/geut/factory-skills@<tag-or-commit>
-```
-
-For local development, link the skill directories into Pi's global skill directory:
-
-```sh
-mkdir -p ~/.pi/agent/skills
-for skill_dir in /path/to/factory-skills/skills/*; do
-  ln -s "$skill_dir" ~/.pi/agent/skills/"$(basename "$skill_dir")"
-done
-```
-
-Start a new Pi session after installing or changing skills. Invoke a skill explicitly with `/skill:<name>`; Pi may also select a skill from its description.
+| Term         | Meaning                                               |
+| ------------ | ----------------------------------------------------- |
+| ticket       | External work, from GitHub or a local document.       |
+| execution    | One generation of a ticket.                           |
+| stage        | `plan`, `work`, `review`, `wrapup`, or `done`.        |
+| session      | One Pi conversation, reused when that agent resumes.  |
+| run          | One pane launch. A resume or retry creates a new run. |
+| factory root | Untracked `.factory/` in the code repository.         |
 
 ## Factory root
 
-The default factory root is `.factory/` inside the code repository. Keep it untracked. It contains only durable guidance and operational state:
-
 ```text
-<code-repository>/
-├── .factory/
-│   ├── CONTEXT.md
-│   ├── FACTORY.json
-│   ├── github.md                      # GitHub remotes only
-│   ├── triage-labels.md               # GitHub remotes only
-│   ├── db/                            # created by fstate init
-│   │   └── state.sqlite
-│   ├── PRD.md                         # optional
-│   ├── tickets/
-│   │   └── PROJ-123/
-│   │       ├── plan.md
-│   │       ├── adr.md                 # optional
-│   │       ├── 01-task-foundation.md
-│   │       └── 02-task-behavior.md
-│   └── learnings/                     # created only for reusable findings
-└── <product code and tests>
+.code-repository/
+└── .factory/
+    ├── FACTORY.json
+    ├── CONTEXT.md
+    ├── db/state.sqlite
+    ├── tickets/<slug>/
+    ├── worktrees/<slug>/
+    └── sessions/
 ```
 
-Agent conversations, detailed reviews, and temporary visuals remain in Herdr/Pi sessions unless explicitly promoted to durable project documentation.
-
-## First-time setup
-
-From the code repository, in a Pi session:
-
-```text
-/skill:setup-factory
-```
-
-The skill asks for a model and thinking level for each role, a ticket id pattern, whether wrap-up may open a pull request, and whether to keep the default triage labels. It records `github.cli` when `gh auth status` succeeds and the remote is GitHub. It then runs `fstate init`, which writes `.factory/FACTORY.json`, creates `.factory/tickets` and the empty `.factory/db/state.sqlite`, and appends `/.factory/` to `.git/info/exclude` when that line is missing. When a GitHub repo is recorded, `init` also writes `.factory/github.md`. `init` copies missing `factory-plan.md`, `factory-work.md`, `factory-review.md`, and `factory-wrapup.md` into `~/.pi/agent/agents/` and does not overwrite a file that is already there. It also generates `.factory/skills/verify-<repo>/` when the project needs a scripted proof path.
-
-If you leave the ticket pattern blank, init stores `PROJ-<number>`. Change `ticketIdPattern` in `FACTORY.json` later if the project uses another convention. When `origin` is GitHub, setup writes `.factory/triage-labels.md` and creates any missing labels. A ticket that is not an issue number or URL stays plain text. `github.cli: true` makes a passed GitHub issue the ticket source. Otherwise `.factory/tickets` is the ticket source.
-
-`FACTORY.json` has this shape. `github` is omitted in part when the remote is not GitHub: no `repo` unless one was recorded, and no `labels` unless setup stored them. `pullRequests` defaults to false. `github.cli` defaults to false.
+`FACTORY.json` example:
 
 ```json
 {
-  "schemaVersion": 2,
-  "ticketIdPattern": "PROJ-<number>",
-  "models": {
-    "plan": { "model": "provider/planning-model", "thinking": "medium" },
-    "work": { "model": "provider/work-model", "thinking": "medium" },
-    "review": { "model": "other-provider-or-model/review-model", "thinking": "medium" },
-    "wrapup": { "model": "provider/wrapup-model", "thinking": "medium" },
-    "arbiter": null
-  },
-  "limits": {
-    "maxTickets": 2,
-    "maxAgents": 4,
-    "reviewRounds": 3
-  },
-  "github": {
-    "cli": true,
-    "repo": "owner/name",
-    "pullRequests": false,
-    "labels": {
-      "needs-triage": "needs-triage",
-      "needs-info": "needs-info",
-      "ready-for-agent": "ready-for-agent",
-      "ready-for-human": "ready-for-human",
-      "wontfix": "wontfix"
-    }
-  },
-  "hooks": {
-    "before": [
-      { "on": "task:ready_for_review", "command": "node <fstate>/hooks/require-evidence.mjs" },
-      { "on": "ticket:wrapup", "command": "node <fstate>/hooks/require-evidence.mjs" }
-    ],
-    "after": []
-  },
-  "verification": {
-    "command": null
+  "models": { "work": "work-model", "review": "review-model" },
+  "github": { "owner": "geut", "repo": "factory-skills", "pullRequests": false },
+  "keys": { "PROJ": { "provider": "github" } },
+  "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
+  "validation": {
+    "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] },
+    "wrapup": { "generated": ["docs/api/", "*.snap"] }
   }
 }
 ```
 
-Do not create the state file by hand. `fstate init` writes it. The first `fstate create` still works when the store is missing, and it creates a ticket.
+SQLite is the read contract. Views such as `current_ticket_executions`, `ready_task_frontier`, and `open_attention` are documented in [`src/state/README.md`](src/state/README.md). The controller does not emit a JSON state file.
 
-`FACTORY.json` (config) and the SQLite store (operational state) have independent schema versions. The domain state shape is version 4. The code root is derived with `git rev-parse --show-toplevel`; it is not stored in configuration. The factory root defaults to `<code-root>/.factory`. For an exceptional external location, pass `--factory-root` or set `FACTORY_ROOT`; relative values resolve from the code root. New worktrees are `$HOME/<repo-name>/worktrees/<ticket-id>`. Pass the main factory root to every child and to `review-packet.py --factory-root`. A worktree does not contain `.factory`.
-
-Setup asks for `ticketIdPattern` and stores `PROJ-<number>` when the answer is blank. If neither the ticket source nor the configuration supplies an ID, planning asks the user before creating artifacts. `models.review.model` must differ from `models.work.model`. Each role may set `thinking` to a Pi level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Omit `thinking` to use `medium`. A legacy string such as `"review": "provider/model"` is equivalent to `{ "model": "…", "thinking": "medium" }`. Do not append `:<thinking>` to the model id. Keep review at `medium` unless you raise it deliberately; `max` is expensive for adversarial review. When `arbiter` is set, it uses the same object shape. Review rounds may be configured below three; a fourth round always requires explicit human authorization.
-
-Before supervision, run Pi inside Herdr and confirm that `subagents_list` is available. The supervisor uses the extension's `subagent`, `subagent_resume`, and `subagent_interrupt` tools directly; it does not create agent panes by typing shell commands or poll terminals for completion. Confirm that the extension's generic argv pane entrypoint is also enabled; wrap-up uses it to reopen the completed Pi session and launch Fresh without a shell-startup race.
-
-## Live visibility
-
-Supervisor and child panes use compact labels such as `PROJ-123 🧭`, `PROJ-123 🔨 T01`, and `PROJ-123 🔍 T01 R2`. The label starts with the first 12 characters of the ticket id, then one role emoji. A shorter id is used whole. The supervisor also reports Herdr display tokens named `ticket` (the full id), `stage`, `task`, and `round`. Keep `pane` in `[ui.sidebar.agents]` and optionally add `$ticket`, `$stage`, `$task`, and `$round` to the row. The pane label answers “what is this?”, while tokens let a dense sidebar expose only the dimensions useful to you.
-
-These values are display metadata only. Herdr remains the source of live agent state, while `.factory/db/state.sqlite` remains the source of ticket progress.
-
-## Kick off a ticket
-
-### 1. Enter the sandbox
+## Checks
 
 ```sh
-sbx run -t ghcr.io/geut/sbx-shell-pi:node-24-factory shell <project-directory>
+node --test
+npx oxlint .
+npx tsc --noEmit
 ```
 
-The image opens Herdr. Start Pi in the initial pane if it is not already running.
+Node.js 24 runs the TypeScript tests directly.
 
-### 2. Start with a planning gate
+## Component gallery
 
-In the supervisor Pi session:
-
-```text
-/skill:factory-supervise
-
-Start ticket PROJ-123.
-Ticket: <ticket URL or full ticket text>
-
-Run the plan stage, then stop so I can review plan.md and the task breakdown.
-```
-
-The supervisor creates or reuses the ticket workspace, starts a planning subagent, and produces:
-
-```text
-.factory/tickets/PROJ-123/plan.md
-.factory/tickets/PROJ-123/01-task-<name>.md
-.factory/tickets/PROJ-123/02-task-<name>.md
-```
-
-`adr.md` is created only for a consequential, hard-to-reverse architectural decision. If material ticket information is missing, the planner asks one focused question using `grill-with-docs`; the supervisor requests user attention and resumes the same planning session after the answer.
-
-### 3. Review the plan and continue
-
-After checking the scope, user stories, acceptance criteria, and dependency edges, tell the same supervisor:
-
-```text
-Continue ticket PROJ-123 through work, review, and wrap-up.
-Pause for unresolved product decisions, genuine blockers, or review findings
-that remain blocking after the third round.
-```
-
-The supervisor works the ready task frontier. A task moves through `pending` → `in_progress` → `ready_for_review` → `in_review` → `done`. `ready_for_review` means the evidence gate passed and review has not started. `in_review` means a reviewer is running. `blocked` returns to `pending` or `in_progress`. Wrap-up starts only after every required task is approved and its evidence manifest exists. When the ticket is a GitHub issue and `github.cli` is true, related concrete issues are separate tickets; the parent is coordination only. Otherwise plans and task files live in `.factory/tickets`.
-
-For a small, well-understood ticket, the initial prompt may authorize the complete flow. The planning gate is recommended while the skills are being evaluated.
-
-## Manual v0 workflow
-
-To run roles without a supervisor, invoke them explicitly in separate Herdr tabs. Start each role tab with `pi --model <role-model> --thinking <level>` from that role in `FACTORY.json`; omit `thinking` in config to pass `--thinking medium`. Do not append `:<thinking>` to the model id.
-
-1. Plan:
-
-   ```text
-   /skill:factory-plan Plan ticket PROJ-123 from <URL or ticket text>.
-   ```
-
-2. For each dependency-ready task, work:
-
-   ```text
-   /skill:factory-work Implement task 01 for ticket PROJ-123.
-   ```
-
-3. After work finishes, build the packet from the ticket worktree, then start a fresh Pi reviewer tab with a different model, `--thinking` from `models.review.thinking` (default `medium`), and `read`, `grep`, `find`, and `ls` (no `bash`, `edit`, or `write`):
-
-   ```sh
-   pi --model <review-model> --thinking medium --tools read,grep,find,ls
-   python3 <skill-dir>/scripts/review-packet.py --ticket PROJ-123 --task 01 --round 1 --worktree <worktree> --factory-root <factory-root> --out /tmp
-   ```
-
-   ```text
-   /skill:factory-review Review ticket PROJ-123 task 01 round 1. Follow factory-review.
-   Packet: /tmp/PROJ-123-T01-R1-packet.md
-   Diff: /tmp/PROJ-123-T01-R1.diff
-   End with the factory.review.v4 Output template only.
-   ```
-
-4. Relay blocking findings to the work tab. Rerun `review-packet.py` and return the new packet and diff paths to the same reviewer tab. Stop after approval or three rounds.
-5. Repeat for the next ready task.
-6. After every task is approved, run:
-
-   ```text
-   /skill:factory-wrapup Prepare ticket PROJ-123 for human PR submission.
-   ```
-
-7. Run `/skill:factory-reflect` only when the ticket produced a reusable lesson worth evaluating.
-
-The reviewer returns only the Output template and never edits code. In supervised mode, wrap-up reopens its completed Pi session in a named summary pane and opens a second named Fresh pane for Review Diff. In the direct workflow, the current Pi pane already holds the summary. The human remains responsible for committing and merging. When `github.pullRequests` is true, wrap-up pushes the committed branch and creates or updates the pull request. Otherwise the human pushes and opens it.
-
-## Review outcomes
-
-- `approve`: no blocking findings remain; non-blocking minor observations may still be present.
-- `changes_requested`: blocking findings (`critical` or `major`) return to the existing work session.
-- `blocked`: review lacks the packet or diff, model independence, or read-only isolation.
-- `waiting_for_user`: blocking findings remain after three rounds or require a product decision.
-
-The supervisor enforces Output templates and loop limits but does not overrule technical judgment. An optional arbiter model may receive one bounded dispute-only prompt; it does not perform another full review.
-
-## Parallel ticket state
-
-`.factory/db/state.sqlite` is authoritative. Each ticket owns its stage, status, tasks, sessions, usage, worktree, blocker, latest meaningful message, and timestamps. Every mutation is one SQLite transaction with an expected-revision check. WAL lets dashboards query the same file while supervisors write.
-
-`fstate status` still prints a nested JSON view of that snapshot for agents. A dashboard should read the database directly and treat `meta.revision` as its change cursor. For live updates, run:
+Each TUI component (Status Message, Widget, Ticket View, Agents View) has scenarios next to it in `src/extension/*.stories.ts`. A scenario is one state of the component, rendered without Pi from plain JSON state. The scenarios cover a ticket's life, from the plan card through review rounds, pauses, questions, retries, and wrap-up.
 
 ```sh
-node skills/factory-supervise/scripts/fstate/cli.mjs server --host 127.0.0.1 --port 8787
+npm run gallery                       # live gallery at http://127.0.0.1:5180/
+npm run gallery -- --port 5200 --host 0.0.0.0
 ```
 
-Then subscribe to `http://127.0.0.1:8787/events`. Each event is a compact `{ revision, op, ticket, payload }`; re-query SQLite after the cursor moves. The `events` table is the history JSON never had. Do not open the database by hand from an agent session.
+The sidebar lists the components. `/component/<id>` shows that component's scenarios, each in its own card with a description, rendered with Pi's own theme at the widths you pick (40, 60, 80, 120). The theme selector at the top applies to every page. **Edit state** opens a scenario's state as JSON; the render updates as you type, the edit is kept in the browser, and **Reset** restores it. The server runs under `node --watch`, so a code change restarts it and the open page reloads.
 
-## What the factory does not do
+The same scenarios print in the terminal:
 
-- It does not commit or merge. When `github.cli` is true, it reads, comments, and labels the GitHub issue it was given, and it does not copy that issue into `.factory/tickets`. When `github.cli` is false, `.factory/tickets` is the ticket source and it does not create or edit GitHub issues. It creates or updates a pull request only when `github.pullRequests` is true, and only for a branch that is already committed. It does not close an issue until that pull request is merged or the user asks.
-- It does not create an ADR for every ticket.
-- It does not persist detailed review transcripts in `.factory/`.
-- It does not run more than three unattended review rounds.
-- It does not treat an idle agent as proof that a stage succeeded.
-- It does not automatically rewrite or install improved skills.
+```sh
+npm run stories                              # every scenario at 40, 60, 80, 120 columns, Pi's dark theme
+npm run stories -- --story widget --width 60 # filter by component or scenario name
+npm run stories -- --theme light --plain     # light theme, or no colour
+```
+
+`node --test` renders every story at every width, fails if a line is wider than its width, and compares the text with `src/stories/snapshots/`. After an intended UI change, run `npm run stories:update` and review the snapshot diff.

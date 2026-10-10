@@ -14,23 +14,8 @@ Check the thing the user touches:
 - Read the current output, not a cached screenshot or an old log.
 - When a check fails, suspect the observation method before suspecting the product.
 
-The strongest proof is a command someone else can re-run. Write that command, its working directory, its exit code, and the artifact it produced into `.factory/evidence/<ticket>/<task>/manifest.json` under the factory root:
+The strongest proof is a deterministic script that re-runs the same comparison, not a one-time eyeball. Write the script, run it, and keep its output as an artifact a reviewer can re-run instead of trusting your word.
 
-```json
-{
-  "ticket": "PROJ-123",
-  "task": "01",
-  "criteria": [
-    {
-      "id": "AC1",
-      "command": "pnpm exec vitest run src/filter.spec.ts",
-      "cwd": "/absolute/worktree",
-      "exitCode": 0,
-      "artifact": "/absolute/factory/evidence/PROJ-123/01/vitest.log"
-    }
-  ],
-  "verifiedAt": "2026-10-01T18:00:00Z"
-}
-```
+Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration.
 
-A criterion without a command and a zero exit code is not proof. For a UI task, the artifact includes the Surf screenshot and the read-back of the rendered page, taken against the worktree's own server. Commit the manifest only when the ticket itself asks for an auditable trail.
+For a UI task, the artifact includes the Surf screenshot and the read-back of the rendered page, taken against the worktree's own server.
