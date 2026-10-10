@@ -208,9 +208,7 @@ test('the Files section must list every changed path and nothing else', async ()
 test('the Tests section must name the recorded validation commands', async () => {
   const value = fixture();
   assert.match(
-    failures(
-      await validate(value, value.baseline(), handoff(value, { tests: 'Ran the suite.' })),
-    ),
+    failures(await validate(value, value.baseline(), handoff(value, { tests: 'Ran the suite.' }))),
     /does not mention the validation command test/,
   );
 });

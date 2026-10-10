@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '../domain.ts';
 import { wrapupRunning } from '../stories/scenarios.ts';
-import { parseFactoryCommand } from './parse.ts';
-import { reduce } from './reduce.ts';
 import { errorReport, passedReport } from '../validation/report.ts';
 import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
+import { parseFactoryCommand } from './parse.ts';
+import { reduce } from './reduce.ts';
 
 const now = '2026-10-10T00:00:00.000Z';
 
