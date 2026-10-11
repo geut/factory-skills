@@ -1,4 +1,5 @@
 import { defineStage } from '../definition.ts';
+import { runOutput } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 
 // What work's input preparation found in the factory files.
@@ -27,7 +28,14 @@ const skill = 'factory-work';
 const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
-export const work = defineStage<WorkInput, 'work'>({
+export const work = defineStage<WorkInput, 'work', WorkPrepared>({
+  conclude: (_view, run, report) =>
+    report.status === 'passed'
+      ? {
+          handoff: { checks: report.checks, diff: report.detail.diff, output: runOutput(run) },
+          kind: 'accept',
+        }
+      : { failures: report.failures, kind: 'correct' },
   contract,
   corrections: {
     limit: 'workCorrections',
@@ -35,6 +43,29 @@ export const work = defineStage<WorkInput, 'work'>({
     per: 'session',
   },
   emoji: '🛠',
+  input: ({ snapshot, task }, { prepared }) => {
+    const execution = snapshot.execution;
+    if (task === null || execution.worktreePath === null) {
+      throw new Error('Work runs for a task in a ready worktree.');
+    }
+    return {
+      adrPath: prepared.adrPath,
+      commands: execution.policy.validation.work.commands,
+      contextPath: prepared.contextPath,
+      dependencies: task.blockedBy.map((id) => ({
+        status: snapshot.tasks.find((item) => item.taskId === id)?.status ?? 'missing',
+        taskId: id,
+      })),
+      displayRef: snapshot.ticket.displayRef,
+      planPath: execution.planPath ?? '',
+      taskFile: `${execution.factoryDir}/${task.taskFile}`,
+      taskId: task.taskId,
+      taskType: prepared.taskType,
+      title: task.title,
+      worktree: execution.worktreePath,
+      worktreeBranch: execution.worktreeBranch ?? '',
+    };
+  },
   label: 'Work',
   model: 'work',
   name: 'work',

@@ -326,8 +326,17 @@ function retryOf(json: string | null): Retry | null {
   if (retry === undefined || retry === null) {
     return null;
   }
-  if (isRecord(retry) && retry['kind'] === 'revalidate' && typeof retry['taskId'] === 'string') {
-    return { kind: 'revalidate', taskId: taskId(retry['taskId']) };
+  if (
+    isRecord(retry) &&
+    retry['kind'] === 'revalidate' &&
+    typeof retry['stage'] === 'string' &&
+    typeof retry['taskId'] === 'string'
+  ) {
+    return {
+      kind: 'revalidate',
+      stage: taskStage(retry['stage']),
+      taskId: taskId(retry['taskId']),
+    };
   }
   if (isRecord(retry) && typeof retry['kind'] === 'string') {
     return { kind: oneOf(retry['kind'], retryKinds, 'retry kind') };
@@ -1491,7 +1500,10 @@ export function listRunningChildren(db: DatabaseSync): Array<RunningChildRow> {
       const stage = text(record, 'stage');
       const title = nullableText(record, 'task_title');
       const taskTitle =
-        (stage === 'work' || stage === 'review') && title !== null && title.trim().length > 0
+        Object.hasOwn(stages, stage) &&
+        stages[stage as StageName].scope === 'task' &&
+        title !== null &&
+        title.trim().length > 0
           ? title
           : null;
       return {

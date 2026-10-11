@@ -230,7 +230,7 @@ export function diffKeepsChanging(): Scenario {
   pause(snapshot, {
     code: 'review_diff_changed',
     question,
-    retry: { kind: 'revalidate', taskId: taskId('03') },
+    retry: { kind: 'revalidate', stage: 'work', taskId: taskId('03') },
     runId: again,
   });
   return { question, run: again, snapshot };

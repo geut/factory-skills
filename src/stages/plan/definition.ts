@@ -7,6 +7,10 @@ const skill = 'factory-plan';
 const contract = 'factory.plan.v3';
 
 export const plan = defineStage<PlanInput, 'plan'>({
+  conclude: (_view, _run, report) =>
+    report.status === 'passed'
+      ? { kind: 'accept', plan: { path: report.detail.planPath, tasks: report.detail.tasks } }
+      : { failures: report.failures, kind: 'correct' },
   contract,
   corrections: {
     limit: 'planCorrections',

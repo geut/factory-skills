@@ -1,5 +1,9 @@
+import path from 'node:path';
+import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
+import { runOutput } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
+import { formatFinding, parseReview } from '../review/parse.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
@@ -38,11 +42,41 @@ export type WrapupInput = {
   worktreeBranch: string;
 };
 
+// Every task's non-blocking review findings, from its latest valid review.
+function minorFindings(snapshot: FactorySnapshot): Array<string> {
+  const findings: Array<string> = [];
+  for (const session of snapshot.sessions) {
+    if (session.stage !== 'review') {
+      continue;
+    }
+    const latest = snapshot.runs
+      .filter((run) => run.sessionId === session.id && run.resultStatus === 'valid')
+      .sort((left, right) => right.sequence - left.sequence)[0];
+    if (latest === undefined) {
+      continue;
+    }
+    const parsed = parseReview(runOutput(latest), latest.semanticRound);
+    // Finding ids restart in every task's review, so name the task.
+    if (parsed.kind === 'valid') {
+      findings.push(
+        ...parsed.result.findings
+          .filter((item) => !item.blocking)
+          .map((item) => `Task ${session.taskId ?? '?'} ${formatFinding(item)}`),
+      );
+    }
+  }
+  return findings;
+}
+
 const skill = 'factory-wrapup';
 const contract = 'factory.wrapup.v1';
 const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 
-export const wrapup = defineStage<WrapupInput, 'wrapup'>({
+export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
+  conclude: (_view, _run, report) =>
+    report.status === 'passed'
+      ? { kind: 'accept', notice: report.detail.usage }
+      : { failures: report.failures, kind: 'correct' },
   contract,
   corrections: {
     limit: null,
@@ -50,6 +84,36 @@ export const wrapup = defineStage<WrapupInput, 'wrapup'>({
     per: 'session',
   },
   emoji: '📦',
+  input: ({ snapshot }, { prepared }) => {
+    const execution = snapshot.execution;
+    if (execution.worktreePath === null) {
+      throw new Error('Wrap-up runs in a ready worktree.');
+    }
+    return {
+      adrPath: prepared.adrPath,
+      baseBranch: execution.worktreeBaseBranch,
+      codeRoot: execution.policy.codeRoot,
+      contextPath: prepared.contextPath,
+      displayRef: snapshot.ticket.displayRef,
+      factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+      minorFindings: minorFindings(snapshot),
+      // Wrap-up runs on the work model.
+      model: execution.policy.models.work,
+      planPath: execution.planPath ?? '',
+      pullRequests: execution.policy.pullRequests,
+      tasks: snapshot.tasks.map((task) => ({
+        status: task.status,
+        taskFile: `${execution.factoryDir}/${task.taskFile}`,
+        taskId: task.taskId,
+        title: task.title,
+        verdict: task.summaries.review?.label ?? 'none',
+      })),
+      usage: prepared.usage,
+      verification: prepared.verification,
+      worktree: execution.worktreePath,
+      worktreeBranch: execution.worktreeBranch ?? '',
+    };
+  },
   label: 'Wrap-up',
   // Wrap-up runs on the work model; it has no model setting of its own.
   model: 'work',
@@ -68,6 +132,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup'>({
         };
   },
   preparesInput: true,
+  // The validator compares the worktree, refs, and factory files against it.
   prompts: {
     correction: (failures) =>
       [
@@ -114,6 +179,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup'>({
         'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless github.pullRequests allows it.',
       ].join('\n'),
   },
+  runBaseline: (prepared) => prepared.baseline,
   scope: 'ticket',
   skill,
   thinking: 'medium',

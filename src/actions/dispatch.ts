@@ -25,7 +25,7 @@ import type {
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
-import { stageTools } from '../stages/index.ts';
+import { stages, stageTools } from '../stages/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
@@ -63,7 +63,7 @@ function previousPaneId(snapshot: FactorySnapshot, run: RunRecord): string | nul
 }
 
 function taskLabel(snapshot: FactorySnapshot, session: SessionRecord): string | null {
-  if (session.taskId === null || (session.stage !== 'work' && session.stage !== 'review')) {
+  if (session.taskId === null || stages[session.stage].scope !== 'task') {
     return null;
   }
   const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;

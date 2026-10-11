@@ -1,4 +1,3 @@
-import path from 'node:path';
 import {
   type ActionRecord,
   type ControllerEvent,
@@ -9,9 +8,7 @@ import {
   type IdSource,
   type InputPurpose,
   type Reduction,
-  type ReviewResult,
   type Retry,
-  type ReviewValidationReport,
   type RunId,
   type RunPurpose,
   type RunRecord,
@@ -21,15 +18,13 @@ import {
   type TaskRecord,
   type TerminalOutcome,
   type UsageWrite,
-  type WorkValidationReport,
-  type WrapupValidationReport,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
-import type { StageDefinition } from '../stages/definition.ts';
+import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
+import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
-import { formatFinding, parseReview } from '../stages/review/parse.ts';
-import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
+import { currentStep, nextAction, progressText } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
   return {
@@ -277,7 +272,12 @@ function newSession(
 }
 
 function sessionCwd(snapshot: FactorySnapshot, session: SessionRecord): string {
-  if (session.stage !== 'plan' && snapshot.execution.worktreePath !== null) {
+  // The stages before the tasks run in the code root; the worktree exists
+  // only once the tasks are known.
+  if (
+    !flow.ticket.some((stage) => stage === session.stage) &&
+    snapshot.execution.worktreePath !== null
+  ) {
     return snapshot.execution.worktreePath;
   }
   return snapshot.execution.policy.codeRoot;
@@ -313,10 +313,6 @@ function enqueueValidation(
 function enterStage(task: TaskRecord, stage: StageName): void {
   task.status = 'active';
   task.stage = stage;
-}
-
-function reviewRound(task: TaskRecord): number {
-  return task.summaries.review?.round ?? 0;
 }
 
 type PrepareInputAction = Extract<ActionRecord, { kind: 'prepare_input' }>;
@@ -665,16 +661,6 @@ function reduceStart(
   return finish(created, `Planning queued for ${event.ticket.displayRef}.`);
 }
 
-function lowestReady(snapshot: FactorySnapshot): FactorySnapshot['tasks'][number] | null {
-  const done = new Set(
-    snapshot.tasks.filter((task) => task.status === 'done').map((task) => task.taskId),
-  );
-  const ready = snapshot.tasks
-    .filter((task) => task.status === 'pending' && task.blockedBy.every((id) => done.has(id)))
-    .sort((left, right) => left.ordinal - right.ordinal);
-  return ready[0] ?? null;
-}
-
 function retryValidation(
   snapshot: FactorySnapshot,
   run: RunRecord,
@@ -699,75 +685,6 @@ function retryValidation(
   return finish(snapshot, 'Retrying validation.');
 }
 
-function finishWorkValidation(
-  snapshot: FactorySnapshot,
-  existing: FactorySnapshot,
-  run: RunRecord,
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  report: Exclude<WorkValidationReport, { status: 'error' }>,
-  ids: IdSource,
-): Reduction {
-  const session = sessionFor(snapshot, run.sessionId);
-  if (session === null || session.stage !== 'work' || session.taskId === null) {
-    return reject(existing, 'Work session is missing.');
-  }
-  action.status = 'succeeded';
-  if (report.status === 'failed') {
-    correct(snapshot, session, run, report.failures, ids);
-    return finish(snapshot, 'Work validation failed.');
-  }
-  const task = taskById(snapshot, session.taskId);
-  if (task === null || snapshot.execution.worktreePath === null) {
-    return reject(existing, 'Work task is missing.');
-  }
-  enterStage(task, 'review');
-  snapshot.execution.stage = 'review';
-  snapshot.execution.status = 'active';
-  // Later rounds resume the same reviewer so it can check its earlier findings.
-  const previous =
-    snapshot.sessions.find((item) => item.stage === 'review' && item.taskId === task.taskId) ??
-    null;
-  const reviewSession =
-    previous ?? newSession(snapshot.execution.policy, 'review', task.taskId, ids);
-  if (previous === null) {
-    snapshot.sessions.push(reviewSession);
-  }
-  const round = reviewRound(task) + 1;
-  const prompt = stages.review.turn({
-    input: {
-      diff: report.detail.diff,
-      displayRef: snapshot.ticket.displayRef,
-      planPath: snapshot.execution.planPath ?? '',
-      rawOutput: runOutput(run),
-      round,
-      taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-      taskTitle: task.title,
-      validationSummary: report.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
-    },
-    kind: 'initial',
-  });
-  const reviewRun = addRun(
-    snapshot,
-    reviewSession,
-    null,
-    previous === null ? 'initial' : 'reentry',
-    round,
-    ids,
-    prompt,
-  );
-  reviewRun.description = childDescription(task.title);
-  reviewRun.diffHash = sha256(report.detail.diff);
-  launchAction(
-    snapshot,
-    reviewRun,
-    prompt,
-    reviewSession.sessionFile === null ? 'launch' : 'resume',
-    ids,
-    snapshot.execution.worktreePath,
-  );
-  return finish(snapshot, `Review round ${round} queued for task ${task.taskId}.`);
-}
-
 function closeTaskSessions(snapshot: FactorySnapshot, task: TaskRecord): void {
   for (const session of snapshot.sessions) {
     if (session.taskId === task.taskId && session.status !== 'abandoned') {
@@ -776,187 +693,26 @@ function closeTaskSessions(snapshot: FactorySnapshot, task: TaskRecord): void {
   }
 }
 
-function minorFindings(snapshot: FactorySnapshot): Array<string> {
-  const findings: Array<string> = [];
-  for (const session of snapshot.sessions) {
-    if (session.stage !== 'review') {
-      continue;
-    }
-    const latest = snapshot.runs
-      .filter((run) => run.sessionId === session.id && run.resultStatus === 'valid')
-      .sort((left, right) => right.sequence - left.sequence)[0];
-    if (latest === undefined) {
-      continue;
-    }
-    const parsed = parseReview(runOutput(latest), latest.semanticRound);
-    // Finding ids restart in every task's review, so name the task.
-    if (parsed.kind === 'valid') {
-      findings.push(
-        ...parsed.result.findings
-          .filter((item) => !item.blocking)
-          .map((item) => `Task ${session.taskId ?? '?'} ${formatFinding(item)}`),
-      );
-    }
-  }
-  return findings;
-}
-
-// Wrap-up starts with a checked input; the session and run are created when
-// that input is ready.
-function queueWrapup(snapshot: FactorySnapshot, ids: IdSource): void {
-  snapshot.execution.stage = 'wrapup';
-  snapshot.execution.status = 'active';
-  enqueueInput(snapshot, 'wrapup', {
-    failures: [],
-    idempotencyKey: `wrapup-input:${snapshot.execution.id}:initial`,
-    ids,
-    purpose: 'initial',
-  });
-}
-
-// After an approval, either start the next dependency-ready task or, once
-// every task is done, hand the ticket to wrap-up.
-function advanceAfterApproval(
+function latestFinishedRun(
   snapshot: FactorySnapshot,
-  ids: IdSource,
-  approved: TaskRecord,
-): string {
-  const next = lowestReady(snapshot);
-  if (next !== null) {
-    snapshot.execution.stage = 'work';
-    snapshot.execution.status = 'active';
-    enqueueInput(snapshot, 'work', {
-      failures: [],
-      idempotencyKey: `work-input:${snapshot.execution.id}:${next.taskId}:initial`,
-      ids,
-      purpose: 'initial',
-      taskId: next.taskId,
-    });
-    return `Task ${approved.taskId} approved. Work input queued for task ${next.taskId}.`;
-  }
-  const open = snapshot.tasks.filter(
-    (task) => task.status !== 'done' && task.status !== 'cancelled',
-  );
-  if (open.length > 0) {
-    const waiting = open.map((task) => task.taskId).join(', ');
-    pauseWithNotice(snapshot, {
-      code: 'no_ready_task',
-      failures: [`No remaining task is ready: ${waiting}.`],
-      ids,
-      question: `Task ${approved.taskId} was approved, but no remaining task is ready: ${waiting}.`,
-      retry: null,
-    });
-    return `Task ${approved.taskId} approved. No remaining task is ready.`;
-  }
-  queueWrapup(snapshot, ids);
-  return `Task ${approved.taskId} approved. Every task is done; wrap-up queued.`;
-}
-
-function applyVerdict(
-  snapshot: FactorySnapshot,
-  task: TaskRecord,
-  run: RunRecord,
-  result: ReviewResult,
-  ids: IdSource,
-): Reduction {
-  const blocking = result.findings.filter((finding) => finding.blocking);
-  task.summaries.review = {
-    counts: { blocking: blocking.length, findings: result.findings.length },
-    label: result.verdict,
-    round: result.round,
-  };
-  const limit = snapshot.execution.policy.limits.reviewRounds;
-  switch (result.verdict) {
-    case 'approve': {
-      task.status = 'done';
-      task.stage = null;
-      closeTaskSessions(snapshot, task);
-      return finish(snapshot, advanceAfterApproval(snapshot, ids, task));
-    }
-    case 'changes_requested': {
-      const lines = blocking.map((finding) => formatFinding(finding));
-      if (result.round >= limit) {
-        task.status = 'blocked';
-        pauseWithNotice(snapshot, {
-          code: 'review_round_limit',
-          failures: lines,
-          ids,
-          question: [
-            `Review round ${result.round} of ${limit} for task ${task.taskId} still has blocking findings:`,
-            ...lines.map((line) => `- ${line}`),
-            'Reply to tell the reviewer how to settle them.',
-          ].join('\n'),
-          retry: null,
-          runId: run.id,
-        });
-        return finish(snapshot, `Review round limit reached for task ${task.taskId}.`);
-      }
-      enterStage(task, 'work');
-      snapshot.execution.stage = 'work';
-      snapshot.execution.status = 'active';
-      enqueueInput(snapshot, 'work', {
-        failures: lines,
-        idempotencyKey: `work-input:${run.id}:review:${result.round}`,
-        ids,
-        origin: 'review',
-        purpose: 'return_to_work',
-        taskId: task.taskId,
-      });
-      return finish(snapshot, `Review round ${result.round} requested changes to ${task.taskId}.`);
-    }
-    case 'blocked': {
-      const lines = result.findings.map((finding) => formatFinding(finding));
-      task.status = 'blocked';
-      pauseWithNotice(snapshot, {
-        code: 'review_blocked',
-        failures: [result.summary, ...lines],
-        ids,
-        question: [
-          `The reviewer blocked task ${task.taskId}: ${result.summary}`,
-          ...lines.map((line) => `- ${line}`),
-          'Reply to resume the reviewer with what it needs.',
-        ].join('\n'),
-        retry: null,
-        runId: run.id,
-      });
-      return finish(snapshot, `Review blocked task ${task.taskId}.`);
-    }
-    default: {
-      const _exhaustive: never = result.verdict;
-      return _exhaustive;
-    }
-  }
-}
-
-function correctReview(
-  snapshot: FactorySnapshot,
-  session: SessionRecord,
-  parent: RunRecord,
-  failures: Array<string>,
-  ids: IdSource,
-): Reduction {
-  return correct(snapshot, session, parent, failures, ids) === 'paused'
-    ? finish(snapshot, 'Review correction limit reached.')
-    : finish(snapshot, 'Review result is malformed. Resuming the reviewer.');
-}
-
-function latestWorkRun(snapshot: FactorySnapshot, taskId: TaskId): RunRecord | null {
-  const workSession =
-    snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === taskId) ?? null;
-  if (workSession === null) {
+  stage: StageName,
+  taskId: TaskId,
+): RunRecord | null {
+  const session = sessionOf(snapshot, stage, taskId);
+  if (session === null) {
     return null;
   }
   return (
     [...snapshot.runs]
       .reverse()
-      .find((item) => item.sessionId === workSession.id && item.terminalKind === 'subagent_done') ??
+      .find((item) => item.sessionId === session.id && item.terminalKind === 'subagent_done') ??
     null
   );
 }
 
-// Stale reviews earlier in this round. Each one enqueued a validation keyed
-// `validate:<work run>:stale:<review run>`.
-function staleReviews(snapshot: FactorySnapshot, review: RunRecord): number {
+// Stale runs of this stage earlier in the same round. Each one enqueued a
+// validation keyed `validate:<previous stage's run>:stale:<stale run>`.
+function staleRuns(snapshot: FactorySnapshot, review: RunRecord): number {
   return snapshot.actions.filter((action) => {
     if (action.kind !== 'validate_run') {
       return false;
@@ -971,236 +727,206 @@ function staleReviews(snapshot: FactorySnapshot, review: RunRecord): number {
   }).length;
 }
 
-// The worktree changed after the reviewer received its diff. Validate the
-// worker's latest attempt again so the next reviewer gets a checked diff.
-// A second change in the same round pauses: something keeps writing to the
-// worktree, and another review would only spend tokens.
-function revalidateWork(
-  snapshot: FactorySnapshot,
-  existing: FactorySnapshot,
-  task: TaskRecord,
-  review: RunRecord,
-  ids: IdSource,
-): Reduction {
-  const workRun = latestWorkRun(snapshot, task.taskId);
-  if (workRun === null) {
-    return reject(existing, 'No finished work run can be validated again.');
-  }
-  if (staleReviews(snapshot, review) >= 1) {
-    const worktree = snapshot.execution.worktreePath ?? 'the worktree';
-    const failure = `The worktree changed again while review round ${review.semanticRound} of task ${task.taskId} ran.`;
-    task.status = 'blocked';
-    pauseWithNotice(snapshot, {
-      code: 'review_diff_changed',
-      failures: [failure],
-      ids,
-      question: [
-        failure,
-        `Something keeps writing files the diff includes. Check git status in ${worktree} and ignore generated files.`,
-        `Then run /factory retry ${snapshot.ticket.commandRef} to validate the work and review it again.`,
-      ].join('\n'),
-      retry: { kind: 'revalidate', taskId: task.taskId },
-      runId: review.id,
-    });
-    return finish(snapshot, 'The worktree keeps changing during review.');
-  }
-  enterStage(task, 'work');
-  snapshot.execution.stage = 'work';
-  snapshot.execution.status = 'active';
-  enqueueValidation(snapshot, workRun, `validate:${workRun.id}:stale:${review.id}`, ids);
-  return finish(snapshot, 'The worktree changed during review. Validating the work again.');
+// A stage as the driver drives it: each stage's input, prompts, and report
+// types pair up only inside that stage, so the driver hands them through.
+type LooseStage = StageDefinition<unknown, StageName, unknown> & {
+  conclude: (view: StageView, run: RunRecord, report: unknown) => Outcome;
+};
+
+function loose(stage: StageName): LooseStage {
+  return stages[stage] as unknown as LooseStage;
 }
 
-function finishReviewValidation(
+function sessionOf(
   snapshot: FactorySnapshot,
-  existing: FactorySnapshot,
-  run: RunRecord,
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  report: Exclude<ReviewValidationReport, { status: 'error' }>,
+  stage: StageName,
+  taskId: TaskId | null,
+): SessionRecord | null {
+  return snapshot.sessions.find((item) => item.stage === stage && item.taskId === taskId) ?? null;
+}
+
+function latestTerminalRun(snapshot: FactorySnapshot, session: SessionRecord): RunRecord | null {
+  return (
+    [...snapshot.runs]
+      .reverse()
+      .find((item) => item.sessionId === session.id && item.status === 'terminal') ?? null
+  );
+}
+
+// The run of a stage's first ask for a task (or ticket). A stage with rounds
+// resumes its earlier session for a later round, so its agent can check its
+// earlier findings.
+function launchStage(
+  snapshot: FactorySnapshot,
+  stage: StageName,
+  task: TaskRecord | null,
+  from: { handoff: Handoff | null; prepared: unknown },
   ids: IdSource,
-): Reduction {
-  const session = sessionFor(snapshot, run.sessionId);
-  const task =
-    session?.taskId === null || session === null ? null : taskById(snapshot, session.taskId);
-  if (session === null || session.stage !== 'review' || task === null) {
-    return reject(existing, 'Review session is missing.');
+): string {
+  const definition = loose(stage);
+  if (definition.input === undefined) {
+    throw new Error(`The ${stage} stage starts from the ticket, not from the flow.`);
   }
-  action.status = 'succeeded';
-  if (report.status === 'passed') {
-    const parsed = parseReview(runOutput(run), run.semanticRound);
-    if (parsed.kind === 'invalid') {
-      return correctReview(snapshot, session, run, parsed.failures, ids);
-    }
-    return applyVerdict(snapshot, task, run, parsed.result, ids);
+  if (task !== null) {
+    enterStage(task, stage);
   }
-  switch (report.detail.reason) {
-    case 'unsafe': {
-      task.status = 'blocked';
+  snapshot.execution.stage = stage;
+  snapshot.execution.status = 'active';
+  const previous = sessionOf(snapshot, stage, task?.taskId ?? null);
+  const session =
+    previous ?? newSession(snapshot.execution.policy, stage, task?.taskId ?? null, ids);
+  if (previous === null) {
+    snapshot.sessions.push(session);
+  }
+  const round = definition.rounds ? (task?.summaries[stage]?.round ?? 0) + 1 : 0;
+  const prompt = definition.turn({
+    input: definition.input({ snapshot, task }, { ...from, round }),
+    kind: 'initial',
+  });
+  const run = addRun(
+    snapshot,
+    session,
+    null,
+    previous === null ? 'initial' : 'reentry',
+    round,
+    ids,
+    prompt,
+  );
+  run.description = childDescription(task?.title ?? snapshot.ticket.title);
+  run.baseline = definition.runBaseline?.(from.prepared) ?? null;
+  // The stage answers for exactly the diff it was given.
+  run.diffHash = from.handoff === null ? null : sha256(from.handoff.diff);
+  launchAction(
+    snapshot,
+    run,
+    prompt,
+    session.sessionFile === null ? 'launch' : 'resume',
+    ids,
+    sessionCwd(snapshot, session),
+  );
+  const what = definition.rounds ? `${definition.label} round ${round}` : definition.label;
+  return task === null ? `${what} queued.` : `${what} queued for task ${task.taskId}.`;
+}
+
+// Starts what the flow runs next. Input preparation comes first for a stage
+// that has it; a per-task stage first needs the worktree.
+function begin(
+  snapshot: FactorySnapshot,
+  step: Step,
+  ids: IdSource,
+  handoff: Handoff | null,
+): string {
+  switch (step.kind) {
+    case 'handoff':
+      throw new Error('Handoff follows the closing stage, not a start.');
+    case 'waiting': {
+      const waiting = step.taskIds.join(', ');
       pauseWithNotice(snapshot, {
-        code: 'review_isolation',
-        failures: report.failures,
+        code: 'no_ready_task',
+        failures: [`No remaining task is ready: ${waiting}.`],
         ids,
-        question: [
-          'The reviewer was not isolated from the worker:',
-          ...report.failures.map((failure) => `- ${failure}`),
-        ].join('\n'),
+        question: `No remaining task is ready: ${waiting}.`,
         retry: null,
       });
-      return finish(snapshot, 'Review isolation failed.');
+      return 'No remaining task is ready.';
     }
-    case 'stale':
-      return revalidateWork(snapshot, existing, task, run, ids);
-    case 'malformed':
-      return correctReview(snapshot, session, run, report.failures, ids);
+    case 'stage': {
+      const task = step.taskId === null ? null : taskById(snapshot, step.taskId);
+      snapshot.execution.stage = step.stage;
+      snapshot.execution.status = 'active';
+      if (task !== null && snapshot.execution.worktreeStatus !== 'ready') {
+        snapshot.actions.push({
+          attempts: 0,
+          attentionReplyId: null,
+          attentionRequestId: null,
+          id: ids.action(),
+          idempotencyKey: `worktree:${snapshot.execution.id}`,
+          kind: 'prepare_worktree',
+          lastError: null,
+          maxAttempts: 3,
+          retryOfActionId: null,
+          runId: null,
+          slug: snapshot.execution.factoryDir.split('/').at(-1) ?? snapshot.execution.id,
+          status: 'pending',
+        });
+        return 'Preparing the worktree.';
+      }
+      if (isInputStage(step.stage)) {
+        const key = task === null ? '' : `${task.taskId}:`;
+        enqueueInput(snapshot, step.stage, {
+          failures: [],
+          idempotencyKey: `${step.stage}-input:${snapshot.execution.id}:${key}initial`,
+          ids,
+          purpose: 'initial',
+          ...(task === null ? {} : { taskId: task.taskId }),
+        });
+        return task === null
+          ? `${stages[step.stage].label} input queued.`
+          : `${stages[step.stage].label} input queued for task ${task.taskId}.`;
+      }
+      return launchStage(snapshot, step.stage, task, { handoff, prepared: null }, ids);
+    }
     default: {
-      const _exhaustive: never = report.detail.reason;
+      const _exhaustive: never = step;
       return _exhaustive;
     }
   }
 }
 
-function wrapupSession(snapshot: FactorySnapshot): SessionRecord | null {
-  return snapshot.sessions.find((item) => item.stage === 'wrapup') ?? null;
-}
-
-function wrapupInputReady(
+// The worktree changed after a stage was given its diff. Validate the
+// previous stage's latest attempt again so the next run gets a checked diff.
+// A second change in the same round pauses: something keeps writing to the
+// worktree, and another run would only spend tokens.
+function revalidatePrevious(
   snapshot: FactorySnapshot,
   existing: FactorySnapshot,
-  action: PrepareInputAction,
-  event: PreparedInput['wrapup'],
+  task: TaskRecord,
+  stage: StageName,
+  stale: RunRecord,
   ids: IdSource,
 ): Reduction {
-  const worktree = snapshot.execution.worktreePath;
-  if (snapshot.execution.stage !== 'wrapup' || worktree === null) {
-    return reject(existing, 'The execution is not in wrap-up.');
+  const previous = previousTaskStage(snapshot.execution.policy, stage);
+  const earlier = previous === null ? null : latestFinishedRun(snapshot, previous, task.taskId);
+  if (previous === null || earlier === null) {
+    return reject(existing, 'No finished run before this stage can be validated again.');
   }
-  action.status = 'succeeded';
-  const existingSession = wrapupSession(snapshot);
-  if (action.purpose === 'initial') {
-    if (existingSession !== null) {
-      return unchanged(existing, 'Wrap-up already started.');
-    }
-    const session = newSession(snapshot.execution.policy, 'wrapup', null, ids);
-    snapshot.sessions.push(session);
-    const prompt = stages.wrapup.turn({
-      input: {
-        adrPath: event.adrPath,
-        baseBranch: snapshot.execution.worktreeBaseBranch,
-        codeRoot: snapshot.execution.policy.codeRoot,
-        contextPath: event.contextPath,
-        displayRef: snapshot.ticket.displayRef,
-        factoryRoot: path.dirname(path.dirname(snapshot.execution.factoryDir)),
-        minorFindings: minorFindings(snapshot),
-        model: session.model,
-        planPath: snapshot.execution.planPath ?? '',
-        pullRequests: snapshot.execution.policy.pullRequests,
-        tasks: snapshot.tasks.map((task) => ({
-          status: task.status,
-          taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-          taskId: task.taskId,
-          title: task.title,
-          verdict: task.summaries.review?.label ?? 'none',
-        })),
-        usage: event.usage,
-        verification: event.verification,
-        worktree,
-        worktreeBranch: snapshot.execution.worktreeBranch ?? '',
-      },
-      kind: 'initial',
+  if (staleRuns(snapshot, stale) >= 1) {
+    const worktree = snapshot.execution.worktreePath ?? 'the worktree';
+    const label = stages[stage].label.toLowerCase();
+    const failure = `The worktree changed again while ${label} round ${stale.semanticRound} of task ${task.taskId} ran.`;
+    task.status = 'blocked';
+    pauseWithNotice(snapshot, {
+      code: `${stage}_diff_changed`,
+      failures: [failure],
+      ids,
+      question: [
+        failure,
+        `Something keeps writing files the diff includes. Check git status in ${worktree} and ignore generated files.`,
+        `Then run /factory retry ${snapshot.ticket.commandRef} to validate the ${previous} again and run ${label} again.`,
+      ].join('\n'),
+      retry: { kind: 'revalidate', stage: previous, taskId: task.taskId },
+      runId: stale.id,
     });
-    const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
-    run.description = childDescription(snapshot.ticket.title);
-    run.baseline = event.baseline;
-    launchAction(snapshot, run, prompt, 'launch', ids, worktree);
-    snapshot.execution.status = 'active';
-    return finish(snapshot, 'Wrap-up queued.');
+    return finish(snapshot, 'The worktree keeps changing.');
   }
-  if (existingSession === null) {
-    return reject(existing, 'Wrap-up session is missing.');
-  }
-  const parent =
-    [...snapshot.runs]
-      .reverse()
-      .find((item) => item.sessionId === existingSession.id && item.status === 'terminal') ?? null;
-  if (action.purpose === 'validation_correction') {
-    // Wrap-up corrections are not counted against a limit.
-    const prompt = stages.wrapup.turn({ failures: action.failures, kind: 'correction' });
-    const count = snapshot.runs.filter(
-      (item) => item.sessionId === existingSession.id && item.purpose === 'validation_correction',
-    ).length;
-    const run = addRun(
-      snapshot,
-      existingSession,
-      parent,
-      'validation_correction',
-      count + 1,
-      ids,
-      prompt,
-    );
-    run.description = parent?.description ?? childDescription(snapshot.ticket.title);
-    launchAction(
-      snapshot,
-      run,
-      prompt,
-      existingSession.sessionFile === null ? 'launch' : 'resume',
-      ids,
-      worktree,
-    );
-    snapshot.execution.status = 'active';
-    return finish(snapshot, 'Wrap-up correction queued.');
-  }
-  const attention =
-    snapshot.attention.find((item) => item.status === 'resuming' || item.status === 'answered') ??
-    null;
-  const reply =
-    snapshot.replies.find(
-      (item) => item.isCurrent && attention !== null && item.requestId === attention.id,
-    ) ?? null;
-  if (attention === null || reply === null) {
-    return reject(existing, 'Reply was not stored.');
-  }
-  const asked = attention.runId === null ? parent : runFor(snapshot, attention.runId);
-  const prompt = stages.wrapup.turn({ answer: reply.answer, kind: 'reply' });
-  const run = addRun(snapshot, existingSession, asked, 'human_reply', 0, ids, prompt);
-  run.description = asked?.description ?? childDescription(snapshot.ticket.title);
-  snapshot.actions.push({
-    attempts: 0,
-    attentionReplyId: reply.id,
-    attentionRequestId: attention.id,
-    cwd: worktree,
-    id: ids.action(),
-    idempotencyKey: `resume:${reply.id}:${run.id}`,
-    kind: 'resume_run',
-    lastError: null,
-    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-    prompt,
-    retryOfActionId: null,
-    runId: run.id,
-    status: 'pending',
-  });
-  attention.status = 'resuming';
-  snapshot.execution.status = 'resuming';
-  return finish(snapshot, 'Reply stored. Resuming wrap-up.');
+  enterStage(task, previous);
+  snapshot.execution.stage = previous;
+  snapshot.execution.status = 'active';
+  enqueueValidation(snapshot, earlier, `validate:${earlier.id}:stale:${stale.id}`, ids);
+  return finish(snapshot, `The worktree changed. Validating the ${previous} again.`);
 }
 
-function finishWrapupValidation(
+// The closing stage passed: the person takes it from here. Its session stays
+// open for reading, next to the diff.
+function handOff(
   snapshot: FactorySnapshot,
+  session: SessionRecord,
   run: RunRecord,
-  action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  report: Exclude<WrapupValidationReport, { status: 'error' }>,
+  notice: string,
   ids: IdSource,
 ): Reduction {
-  action.status = 'succeeded';
-  if (report.status === 'failed') {
-    const session = wrapupSession(snapshot);
-    if (session === null) {
-      return reject(snapshot, 'Wrap-up session is missing.');
-    }
-    correct(snapshot, session, run, report.failures, ids);
-    return finish(snapshot, 'Wrap-up validation failed.');
-  }
-  // Passed: the human takes it from here. The session stays open for reading.
   const ref = snapshot.ticket.displayRef;
+  const definition = stages[session.stage];
   snapshot.execution.status = 'ready_for_handoff';
   snapshot.execution.retry = null;
   snapshot.execution.statusReasonCode = null;
@@ -1222,7 +948,7 @@ function finishWrapupValidation(
       id: ids.action(),
       idempotencyKey: `pane:session:${run.id}`,
       kind: 'open_pane',
-      name: `${stages.wrapup.emoji} ${ref}`,
+      name: `${definition.emoji} ${ref}`,
     },
     {
       ...base,
@@ -1238,9 +964,9 @@ function finishWrapupValidation(
     id: ids.attention(),
     kind: 'manual_approval',
     question: [
-      `${ref} is ready for handoff. The wrap-up session and the diff are open in their own panes.`,
+      `${ref} is ready for handoff. The ${definition.label.toLowerCase()} session and the diff are open in their own panes.`,
       '',
-      report.detail.usage,
+      notice,
       '',
       `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
     ].join('\n'),
@@ -1267,80 +993,160 @@ function finishWrapupValidation(
   return finish(snapshot, `${ref} is ready for handoff.`);
 }
 
-// Work starts, corrects, or resumes once its input is checked; the session
-// and run are created here so they exist only for a ready input.
-function workInputReady(
+// Carries out what a stage concluded about its validated run.
+function applyOutcome(
+  snapshot: FactorySnapshot,
+  existing: FactorySnapshot,
+  session: SessionRecord,
+  run: RunRecord,
+  outcome: Outcome,
+  ids: IdSource,
+): Reduction {
+  const stage = stages[session.stage];
+  const task = session.taskId === null ? null : taskById(snapshot, session.taskId);
+  if (session.taskId !== null && task === null) {
+    return reject(existing, `The ${session.stage} task is missing.`);
+  }
+  if (task !== null && 'summary' in outcome && outcome.summary !== undefined) {
+    task.summaries[session.stage] = outcome.summary;
+  }
+  switch (outcome.kind) {
+    case 'correct':
+      return correct(snapshot, session, run, outcome.failures, ids) === 'paused'
+        ? finish(snapshot, `${stage.label} correction limit reached.`)
+        : finish(snapshot, `${stage.label} validation failed.`);
+    case 'pause':
+      if (task !== null) {
+        task.status = 'blocked';
+      }
+      pauseWithNotice(snapshot, {
+        code: outcome.code,
+        failures: outcome.failures,
+        ids,
+        question: outcome.question,
+        retry: null,
+        ...(outcome.reply ? { runId: run.id } : {}),
+      });
+      return finish(snapshot, outcome.message);
+    case 'revalidate_previous':
+      return task === null
+        ? reject(existing, `The ${session.stage} stage runs for a task.`)
+        : revalidatePrevious(snapshot, existing, task, session.stage, run, ids);
+    case 'return_to_work': {
+      if (task === null) {
+        return reject(existing, `The ${session.stage} stage runs for a task.`);
+      }
+      enterStage(task, 'work');
+      snapshot.execution.stage = 'work';
+      snapshot.execution.status = 'active';
+      enqueueInput(snapshot, 'work', {
+        failures: outcome.problems,
+        idempotencyKey: `work-input:${run.id}:${session.stage}:${outcome.summary.round}`,
+        ids,
+        origin: session.stage,
+        purpose: 'return_to_work',
+        taskId: task.taskId,
+      });
+      return finish(
+        snapshot,
+        `${stage.label} round ${outcome.summary.round} sent task ${task.taskId} back to work.`,
+      );
+    }
+    case 'accept': {
+      if (outcome.plan !== undefined) {
+        snapshot.tasks = outcome.plan.tasks.map((planned) => ({
+          blockedBy: planned.blockedBy,
+          ordinal: planned.ordinal,
+          specHash: planned.specHash,
+          stage: null,
+          status: 'pending',
+          summaries: {},
+          taskFile: planned.taskFile,
+          taskId: planned.taskId,
+          title: planned.title,
+        }));
+        snapshot.execution.planPath = outcome.plan.path;
+      }
+      const step = nextStep(snapshot, session.stage, task?.taskId ?? null);
+      if (step.kind === 'handoff') {
+        return handOff(snapshot, session, run, outcome.notice ?? '', ids);
+      }
+      const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;
+      if (task !== null && !sameTask) {
+        // The task's last per-task stage accepted: the task is done.
+        task.status = 'done';
+        task.stage = null;
+        closeTaskSessions(snapshot, task);
+        const after = nextStep(snapshot, session.stage, task.taskId);
+        return finish(snapshot, `Task ${task.taskId} done. ${begin(snapshot, after, ids, null)}`);
+      }
+      return finish(
+        snapshot,
+        begin(snapshot, step, ids, sameTask ? (outcome.handoff ?? null) : null),
+      );
+    }
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// A stage's input is ready: start its first run, its correction, its return
+// to work, or resume it with a reply. The session and run are created here so
+// they exist only for a checked input.
+function inputReady(
   snapshot: FactorySnapshot,
   existing: FactorySnapshot,
   action: PrepareInputAction,
-  event: PreparedInput['work'],
+  prepared: PreparedInput[InputStage],
   ids: IdSource,
 ): Reduction {
+  const definition = stages[action.stage];
   const task = action.taskId === null ? null : taskById(snapshot, action.taskId);
   const worktree = snapshot.execution.worktreePath;
-  if (task === null || worktree === null) {
-    return reject(existing, 'Work task is missing.');
+  if ((action.taskId !== null && task === null) || worktree === null) {
+    return reject(existing, `The ${action.stage} input has no task or worktree.`);
+  }
+  if (snapshot.execution.stage !== action.stage) {
+    return reject(existing, `The execution is not in ${action.stage}.`);
   }
   action.status = 'succeeded';
+  const session = sessionOf(snapshot, action.stage, action.taskId);
+  const title = task?.title ?? snapshot.ticket.title;
+  const forTask = task === null ? '' : ` for task ${task.taskId}`;
   if (action.purpose === 'initial') {
-    enterStage(task, 'work');
-    const session = newSession(snapshot.execution.policy, 'work', task.taskId, ids);
-    snapshot.sessions.push(session);
-    const prompt = stages.work.turn({
-      input: {
-        adrPath: event.adrPath,
-        commands: snapshot.execution.policy.validation.work.commands,
-        contextPath: event.contextPath,
-        dependencies: task.blockedBy.map((id) => ({
-          status: taskById(snapshot, id)?.status ?? 'missing',
-          taskId: id,
-        })),
-        displayRef: snapshot.ticket.displayRef,
-        planPath: snapshot.execution.planPath ?? '',
-        taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-        taskId: task.taskId,
-        taskType: event.taskType,
-        title: task.title,
-        worktree,
-        worktreeBranch: snapshot.execution.worktreeBranch ?? '',
-      },
-      kind: 'initial',
-    });
-    const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
-    run.description = childDescription(task.title);
-    launchAction(snapshot, run, prompt, 'launch', ids, worktree);
-    return finish(snapshot, `Work queued for task ${task.taskId}.`);
+    if (session !== null) {
+      return unchanged(existing, `${definition.label} already started.`);
+    }
+    return finish(
+      snapshot,
+      launchStage(snapshot, action.stage, task, { handoff: null, prepared }, ids),
+    );
   }
-  const session =
-    snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === task.taskId) ?? null;
   if (session === null) {
-    return reject(existing, 'Work session is missing.');
+    return reject(existing, `The ${action.stage} session is missing.`);
   }
+  const parent = latestTerminalRun(snapshot, session);
   if (action.purpose === 'validation_correction' || action.purpose === 'return_to_work') {
-    const review = action.purpose === 'return_to_work';
+    const returned = action.purpose === 'return_to_work';
     // A return names the round of the stage that sent the task back.
-    const returnRound = action.origin === null ? 0 : (task.summaries[action.origin]?.round ?? 0);
-    const prompt = review
-      ? stages.work.turn({ kind: 'return', problems: action.failures, round: returnRound })
-      : stages.work.turn({ failures: action.failures, kind: 'correction' });
-    const parent =
-      [...snapshot.runs]
-        .reverse()
-        .find((item) => item.sessionId === session.id && item.status === 'terminal') ?? null;
+    const returnRound =
+      action.origin === null || task === null ? 0 : (task.summaries[action.origin]?.round ?? 0);
+    const prompt = returned
+      ? definition.turn({ kind: 'return', problems: action.failures, round: returnRound })
+      : definition.turn({ failures: action.failures, kind: 'correction' });
     const count = snapshot.runs.filter(
       (item) => item.sessionId === session.id && item.purpose === 'validation_correction',
     ).length;
-    const run = addRun(
-      snapshot,
-      session,
-      parent,
-      action.purpose,
-      review ? returnRound : count + 1,
-      ids,
-      prompt,
-    );
-    run.origin = review ? action.origin : null;
-    run.description = parent?.description ?? childDescription(task.title);
+    const round = returned
+      ? returnRound
+      : definition.corrections.per === 'round'
+        ? (parent?.semanticRound ?? 0)
+        : count + 1;
+    const run = addRun(snapshot, session, parent, action.purpose, round, ids, prompt);
+    run.origin = returned ? action.origin : null;
+    run.description = parent?.description ?? childDescription(title);
     launchAction(
       snapshot,
       run,
@@ -1350,11 +1156,12 @@ function workInputReady(
       worktree,
     );
     snapshot.execution.status = 'active';
+    const origin = action.origin === null ? definition.label : stages[action.origin].label;
     return finish(
       snapshot,
-      review
-        ? `Review changes queued for task ${task.taskId}.`
-        : `Work correction queued for task ${task.taskId}.`,
+      returned
+        ? `${origin} changes queued${forTask}.`
+        : `${definition.label} correction queued${forTask}.`,
     );
   }
   const attention =
@@ -1367,18 +1174,18 @@ function workInputReady(
   if (attention === null || reply === null) {
     return reject(existing, 'Reply was not stored.');
   }
-  const parent = attention.runId === null ? null : runFor(snapshot, attention.runId);
-  const prompt = stages.work.turn({ answer: reply.answer, kind: 'reply' });
+  const asked = attention.runId === null ? parent : runFor(snapshot, attention.runId);
+  const prompt = definition.turn({ answer: reply.answer, kind: 'reply' });
   const run = addRun(
     snapshot,
     session,
-    parent,
+    asked,
     'human_reply',
-    parent?.semanticRound ?? 0,
+    asked?.semanticRound ?? 0,
     ids,
     prompt,
   );
-  run.description = parent?.description ?? childDescription(task.title);
+  run.description = asked?.description ?? childDescription(title);
   snapshot.actions.push({
     attempts: 0,
     attentionReplyId: reply.id,
@@ -1397,6 +1204,19 @@ function workInputReady(
   attention.status = 'resuming';
   snapshot.execution.status = 'resuming';
   return finish(snapshot, 'Reply stored. Resuming the session.');
+}
+
+// What the stage concludes from its report. The event carries the report its
+// stage's validator wrote, so the stage reads its own report type.
+function conclude(
+  snapshot: FactorySnapshot,
+  session: SessionRecord,
+  run: RunRecord,
+  report: unknown,
+): Outcome {
+  const definition = loose(session.stage);
+  const task = session.taskId === null ? null : taskById(snapshot, session.taskId);
+  return definition.conclude({ snapshot, task }, run, report);
 }
 
 export function reduce(input: {
@@ -1444,57 +1264,19 @@ export function reduce(input: {
       if (event.report.status === 'error') {
         return retryValidation(snapshot, run, action, event.report.summary, ids);
       }
-      if (event.stage === 'work') {
-        return finishWorkValidation(snapshot, existing, run, action, event.report, ids);
-      }
-      if (event.stage === 'review') {
-        return finishReviewValidation(snapshot, existing, run, action, event.report, ids);
-      }
-      if (event.stage === 'wrapup') {
-        return finishWrapupValidation(snapshot, run, action, event.report, ids);
-      }
-      const report = event.report;
-      if (run.resultStatus !== 'valid' || run.resultHash === null) {
-        return reject(existing, 'Validation requires a valid plan result.');
+      const session = sessionFor(snapshot, run.sessionId);
+      if (session === null || session.stage !== event.stage) {
+        return reject(existing, 'Validation result does not match a session.');
       }
       action.status = 'succeeded';
-      if (report.status === 'failed') {
-        const session = sessionFor(snapshot, run.sessionId);
-        if (session === null) {
-          return reject(existing, 'Plan session is missing.');
-        }
-        correct(snapshot, session, run, report.failures, ids);
-        return finish(snapshot, 'Plan validation failed.');
-      }
-      snapshot.tasks = report.detail.tasks.map((task) => ({
-        blockedBy: task.blockedBy,
-        ordinal: task.ordinal,
-        specHash: task.specHash,
-        stage: null,
-        status: 'pending',
-        summaries: {},
-        taskFile: task.taskFile,
-        taskId: task.taskId,
-        title: task.title,
-      }));
-      snapshot.execution.stage = 'work';
-      snapshot.execution.status = 'active';
-      snapshot.execution.planPath = report.detail.planPath;
-      snapshot.actions.push({
-        attempts: 0,
-        attentionReplyId: null,
-        attentionRequestId: null,
-        id: ids.action(),
-        idempotencyKey: `worktree:${snapshot.execution.id}`,
-        kind: 'prepare_worktree',
-        lastError: null,
-        maxAttempts: 3,
-        retryOfActionId: null,
-        runId: null,
-        slug: snapshot.execution.factoryDir.split('/').at(-1) ?? snapshot.execution.id,
-        status: 'pending',
-      });
-      return finish(snapshot, 'Plan accepted. Preparing the worktree.');
+      return applyOutcome(
+        snapshot,
+        existing,
+        session,
+        run,
+        conclude(snapshot, session, run, event.report),
+        ids,
+      );
     }
     case 'worktree_ready': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
@@ -1507,18 +1289,11 @@ export function reduce(input: {
       snapshot.execution.worktreeBaseBranch = event.baseBranch;
       snapshot.execution.worktreeBaseSha = event.baseSha;
       snapshot.execution.worktreeStatus = 'ready';
-      const task = lowestReady(snapshot);
-      if (task === null) {
+      const step = nextStep(snapshot, 'plan', null);
+      if (step.kind !== 'stage' || step.taskId === null) {
         return reject(existing, 'Plan has no runnable task.');
       }
-      enqueueInput(snapshot, 'work', {
-        failures: [],
-        idempotencyKey: `work-input:${snapshot.execution.id}:${task.taskId}:initial`,
-        ids,
-        purpose: 'initial',
-        taskId: task.taskId,
-      });
-      return finish(snapshot, `Work input queued for task ${task.taskId}.`);
+      return finish(snapshot, begin(snapshot, step, ids, null));
     }
     case 'worktree_failed': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
@@ -1542,9 +1317,7 @@ export function reduce(input: {
       if (action.status === 'succeeded') {
         return unchanged(existing, 'Duplicate input event ignored.');
       }
-      return event.stage === 'work'
-        ? workInputReady(snapshot, existing, action, event.input, ids)
-        : wrapupInputReady(snapshot, existing, action, event.input, ids);
+      return inputReady(snapshot, existing, action, event.input, ids);
     }
     case 'input_failed': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
@@ -1701,26 +1474,20 @@ export function reduce(input: {
       if (session === null) {
         return reject(existing, 'No session is available to resume.');
       }
-      if (session.stage === 'work' && session.taskId !== null) {
-        enqueueInput(snapshot, 'work', {
+      // A stage with input preparation checks its input again before resuming.
+      if (isInputStage(session.stage)) {
+        enqueueInput(snapshot, session.stage, {
           failures: [],
-          idempotencyKey: `work-input:${reply.id}`,
+          idempotencyKey: `${session.stage}-input:${reply.id}`,
           ids,
           purpose: 'human_reply',
-          taskId: session.taskId,
+          ...(session.taskId === null ? {} : { taskId: session.taskId }),
         });
         snapshot.execution.status = 'resuming';
-        return finish(snapshot, 'Reply stored. Checking the work input.');
-      }
-      if (session.stage === 'wrapup') {
-        enqueueInput(snapshot, 'wrapup', {
-          failures: [],
-          idempotencyKey: `wrapup-input:${reply.id}`,
-          ids,
-          purpose: 'human_reply',
-        });
-        snapshot.execution.status = 'resuming';
-        return finish(snapshot, 'Reply stored. Checking the wrap-up input.');
+        return finish(
+          snapshot,
+          `Reply stored. Checking the ${stages[session.stage].label.toLowerCase()} input.`,
+        );
       }
       const prompt = stages[session.stage].turn({ answer: event.answer, kind: 'reply' });
       const run = addRun(
@@ -1789,22 +1556,23 @@ export function reduce(input: {
         }
         case 'revalidate': {
           const task = taskById(snapshot, retry.taskId);
-          const workRun = task === null ? null : latestWorkRun(snapshot, task.taskId);
-          if (task === null || workRun === null) {
-            return reject(existing, 'No finished work run can be validated again.');
+          const earlier =
+            task === null ? null : latestFinishedRun(snapshot, retry.stage, task.taskId);
+          if (task === null || earlier === null) {
+            return reject(existing, `No finished ${retry.stage} run can be validated again.`);
           }
           resolveOpen(snapshot);
-          enterStage(task, 'work');
-          snapshot.execution.stage = 'work';
+          enterStage(task, retry.stage);
+          snapshot.execution.stage = retry.stage;
           snapshot.execution.status = 'active';
           snapshot.execution.retry = null;
           enqueueValidation(
             snapshot,
-            workRun,
-            `validate:${workRun.id}:retry:${event.idempotencyKey}`,
+            earlier,
+            `validate:${earlier.id}:retry:${event.idempotencyKey}`,
             ids,
           );
-          return finish(snapshot, 'Validating the work again.');
+          return finish(snapshot, `Validating the ${retry.stage} again.`);
         }
         case 'validate': {
           const run =

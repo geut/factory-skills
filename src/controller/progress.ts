@@ -2,25 +2,7 @@ import type { FactorySnapshot, ReviewVerdict, RunRecord, Stage, TaskRecord } fro
 
 // Read-only views of a snapshot for cards, the widget, and the gallery.
 
-export function runOutput(run: RunRecord): string {
-  if (run.resultJson === null) {
-    return '';
-  }
-  try {
-    const parsed: unknown = JSON.parse(run.resultJson);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'output' in parsed &&
-      typeof parsed.output === 'string'
-    ) {
-      return parsed.output;
-    }
-    return run.resultJson;
-  } catch {
-    return run.resultJson;
-  }
-}
+export { runOutput } from '../stages/output.ts';
 
 export function runVerdict(run: RunRecord): ReviewVerdict | null {
   if (run.resultStatus !== 'valid' || run.resultJson === null) {

@@ -350,8 +350,8 @@ export type TicketRecord = {
 export type Retry =
   // The failed input preparation, with the same stage, task, and purpose.
   | { kind: 'input' }
-  // The task's latest work validation, then review again.
-  | { kind: 'revalidate'; taskId: TaskId }
+  // The latest validation of `stage` for the task, then the stages after it.
+  | { kind: 'revalidate'; stage: StageName; taskId: TaskId }
   // The latest finished run's validation.
   | { kind: 'validate' }
   // The failed worktree preparation.
