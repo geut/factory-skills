@@ -104,13 +104,7 @@ export function readyTasks(snapshot: FactorySnapshot): Array<TaskRecord> {
 // The task being worked on or reviewed, else the next ready one.
 export function currentTask(snapshot: FactorySnapshot): TaskRecord | null {
   const active = snapshot.tasks
-    .filter(
-      (task) =>
-        task.status === 'working' ||
-        task.status === 'ready_for_review' ||
-        task.status === 'reviewing' ||
-        task.status === 'blocked',
-    )
+    .filter((task) => task.status === 'active' || task.status === 'blocked')
     .sort((left, right) => left.ordinal - right.ordinal);
   return active[0] ?? readyTasks(snapshot)[0] ?? null;
 }
@@ -176,8 +170,9 @@ export function stepLabel(snapshot: FactorySnapshot, task: TaskRecord): string {
     const round = latestReviewRound(snapshot, task);
     return round === null ? 'review' : `review r${round}`;
   }
-  if (task.reviewVerdict === 'changes_requested') {
-    return `fixing r${task.reviewRound}`;
+  const review = task.summaries.review;
+  if (review?.label === 'changes_requested') {
+    return `fixing r${review.round}`;
   }
   return 'work';
 }

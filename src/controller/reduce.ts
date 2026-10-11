@@ -142,6 +142,7 @@ function addRun(
     endedAt: null,
     id: ids.run(),
     inputHash: sha256(prompt),
+    origin: null,
     paneId: null,
     paneName: null,
     parentRunId: parent?.id ?? null,
@@ -322,6 +323,16 @@ function enqueueValidation(
   });
 }
 
+// A task is active or blocked at exactly one per-task stage at a time.
+function enterStage(task: TaskRecord, stage: StageName): void {
+  task.status = 'active';
+  task.stage = stage;
+}
+
+function reviewRound(task: TaskRecord): number {
+  return task.summaries.review?.round ?? 0;
+}
+
 type PrepareInputAction = Extract<ActionRecord, { kind: 'prepare_input' }>;
 
 function enqueueInput(
@@ -331,6 +342,8 @@ function enqueueInput(
     failures: Array<string>;
     idempotencyKey: string;
     ids: IdSource;
+    // For a return to work: the per-task stage that sent the task back.
+    origin?: StageName;
     purpose: InputPurpose;
     taskId?: TaskId;
   },
@@ -345,6 +358,7 @@ function enqueueInput(
     kind: 'prepare_input',
     lastError: null,
     maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    origin: input.origin ?? null,
     purpose: input.purpose,
     retryOfActionId: null,
     runId: null,
@@ -693,7 +707,7 @@ function finishWorkValidation(
   if (task === null || snapshot.execution.worktreePath === null) {
     return reject(existing, 'Work task is missing.');
   }
-  task.status = 'ready_for_review';
+  enterStage(task, 'review');
   snapshot.execution.stage = 'review';
   snapshot.execution.status = 'active';
   // Later rounds resume the same reviewer so it can check its earlier findings.
@@ -705,7 +719,7 @@ function finishWorkValidation(
   if (previous === null) {
     snapshot.sessions.push(reviewSession);
   }
-  const round = task.reviewRound + 1;
+  const round = reviewRound(task) + 1;
   const prompt = stages.review.turn({
     input: {
       diff: report.detail.diff,
@@ -723,7 +737,7 @@ function finishWorkValidation(
     snapshot,
     reviewSession,
     null,
-    previous === null ? 'initial' : 'review_changes',
+    previous === null ? 'initial' : 'reentry',
     round,
     ids,
     prompt,
@@ -833,14 +847,16 @@ function applyVerdict(
   ids: IdSource,
 ): Reduction {
   const blocking = result.findings.filter((finding) => finding.blocking);
-  task.reviewRound = result.round;
-  task.reviewVerdict = result.verdict;
-  task.findingCount = result.findings.length;
-  task.blockingCount = blocking.length;
+  task.summaries.review = {
+    counts: { blocking: blocking.length, findings: result.findings.length },
+    label: result.verdict,
+    round: result.round,
+  };
   const limit = snapshot.execution.policy.limits.reviewRounds;
   switch (result.verdict) {
     case 'approve': {
       task.status = 'done';
+      task.stage = null;
       closeTaskSessions(snapshot, task);
       return finish(snapshot, advanceAfterApproval(snapshot, ids, task));
     }
@@ -862,14 +878,15 @@ function applyVerdict(
         });
         return finish(snapshot, `Review round limit reached for task ${task.taskId}.`);
       }
-      task.status = 'working';
+      enterStage(task, 'work');
       snapshot.execution.stage = 'work';
       snapshot.execution.status = 'active';
       enqueueInput(snapshot, 'work', {
         failures: lines,
         idempotencyKey: `work-input:${run.id}:review:${result.round}`,
         ids,
-        purpose: 'review_changes',
+        origin: 'review',
+        purpose: 'return_to_work',
         taskId: task.taskId,
       });
       return finish(snapshot, `Review round ${result.round} requested changes to ${task.taskId}.`);
@@ -1016,7 +1033,7 @@ function revalidateWork(
     });
     return finish(snapshot, 'The worktree keeps changing during review.');
   }
-  task.status = 'working';
+  enterStage(task, 'work');
   snapshot.execution.stage = 'work';
   snapshot.execution.status = 'active';
   enqueueValidation(snapshot, workRun, `validate:${workRun.id}:stale:${review.id}`, ids);
@@ -1111,7 +1128,7 @@ function wrapupInputReady(
           taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
           taskId: task.taskId,
           title: task.title,
-          verdict: task.reviewVerdict ?? 'none',
+          verdict: task.summaries.review?.label ?? 'none',
         })),
         usage: event.usage,
         verification: event.verification,
@@ -1297,7 +1314,7 @@ function workInputReady(
   }
   action.status = 'succeeded';
   if (action.purpose === 'initial') {
-    task.status = 'working';
+    enterStage(task, 'work');
     const session = newSession(snapshot.execution.policy, 'work', task.taskId, ids);
     snapshot.sessions.push(session);
     const prompt = stages.work.turn({
@@ -1330,10 +1347,12 @@ function workInputReady(
   if (session === null) {
     return reject(existing, 'Work session is missing.');
   }
-  if (action.purpose === 'validation_correction' || action.purpose === 'review_changes') {
-    const review = action.purpose === 'review_changes';
+  if (action.purpose === 'validation_correction' || action.purpose === 'return_to_work') {
+    const review = action.purpose === 'return_to_work';
+    // A return names the round of the stage that sent the task back.
+    const returnRound = action.origin === null ? 0 : (task.summaries[action.origin]?.round ?? 0);
     const prompt = review
-      ? stages.work.turn({ kind: 'return', problems: action.failures, round: task.reviewRound })
+      ? stages.work.turn({ kind: 'return', problems: action.failures, round: returnRound })
       : stages.work.turn({ failures: action.failures, kind: 'correction' });
     const parent =
       [...snapshot.runs]
@@ -1347,10 +1366,11 @@ function workInputReady(
       session,
       parent,
       action.purpose,
-      review ? task.reviewRound : count + 1,
+      review ? returnRound : count + 1,
       ids,
       prompt,
     );
+    run.origin = review ? action.origin : null;
     run.description = parent?.description ?? childDescription(task.title);
     launchAction(
       snapshot,
@@ -1479,13 +1499,11 @@ export function reduce(input: {
       }
       snapshot.tasks = report.detail.tasks.map((task) => ({
         blockedBy: task.blockedBy,
-        blockingCount: null,
-        findingCount: null,
         ordinal: task.ordinal,
-        reviewRound: 0,
-        reviewVerdict: null,
         specHash: task.specHash,
+        stage: null,
         status: 'pending',
+        summaries: {},
         taskFile: task.taskFile,
         taskId: task.taskId,
         title: task.title,
@@ -1628,11 +1646,8 @@ export function reduce(input: {
         session.piSessionId = event.piSessionId;
         if (session.taskId !== null) {
           const task = taskById(snapshot, session.taskId);
-          if (task !== null && session.stage === 'review') {
-            task.status = 'reviewing';
-          }
-          if (task !== null && session.stage === 'work' && task.status === 'blocked') {
-            task.status = 'working';
+          if (task !== null && (task.status === 'active' || task.status === 'blocked')) {
+            enterStage(task, session.stage);
           }
         }
       }
@@ -1790,6 +1805,7 @@ export function reduce(input: {
           idempotencyKey: `${failed.stage}-input-retry:${event.idempotencyKey}`,
           ids,
           purpose: failed.purpose,
+          ...(failed.origin === null ? {} : { origin: failed.origin }),
           ...(failed.taskId === null ? {} : { taskId: failed.taskId }),
         });
         snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
@@ -1816,7 +1832,7 @@ export function reduce(input: {
           return reject(existing, 'No finished work run can be validated again.');
         }
         resolveOpen(snapshot);
-        task.status = 'working';
+        enterStage(task, 'work');
         snapshot.execution.stage = 'work';
         snapshot.execution.status = 'active';
         snapshot.execution.retryable = false;

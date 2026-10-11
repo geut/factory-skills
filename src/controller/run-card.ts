@@ -42,10 +42,10 @@ export type RunOutcome =
 
 export type RunStage = 'plan' | 'review' | 'work' | 'wrapup';
 
-// Retries, replies, and corrections are named; first runs and review rounds
-// are not, because the round is shown on its own.
+// Retries, replies, and corrections are named; first runs, returns to work,
+// and later review rounds are not, because the round is shown on its own.
 export function purposeSegment(run: Pick<RunRecord, 'purpose' | 'semanticRound'>): string | null {
-  if (run.purpose === 'initial' || run.purpose === 'review_changes') {
+  if (run.purpose === 'initial' || run.purpose === 'return_to_work' || run.purpose === 'reentry') {
     return null;
   }
   return runStatusLabel(run.purpose);
@@ -219,7 +219,7 @@ export function runsInStartOrder<T extends { startedAt: string | null }>(runs: A
 // Review rounds count from 1; work shows the round whose findings it fixes.
 function runRound(snapshot: FactorySnapshot, run: RunRecord): number | null {
   const stage = runStage(snapshot, run);
-  if (stage === 'review' || (stage === 'work' && run.purpose === 'review_changes')) {
+  if (stage === 'review' || (stage === 'work' && run.purpose === 'return_to_work')) {
     return run.semanticRound > 0 ? run.semanticRound : null;
   }
   return null;

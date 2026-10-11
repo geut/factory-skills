@@ -98,11 +98,11 @@ Only evidence and constraints the worker would otherwise have to rediscover.
 Task status uses one lifecycle vocabulary:
 
 ```text
-pending → working → ready_for_review → reviewing → done
-             └─────────────────────→ blocked
+pending → active (work → review) → done
+             └──────────────────→ blocked
 ```
 
-`ready_for_review` means the evidence manifest passed the lifecycle gate and review has not started. `reviewing` means a reviewer is running. A changes-requested verdict returns the task to `working`; only review approval moves it to `done`.
+An `active` task is at one per-task stage at a time: work, then review. A changes-requested verdict returns the task to work; only review approval moves it to `done`. A `blocked` task waits for a person at the stage where it stopped.
 
 Do not predesign implementation in the task unless a constraint or agreed contract makes it necessary.
 

@@ -94,35 +94,27 @@ CREATE TABLE tasks (
   task_file       TEXT NOT NULL CHECK (length(trim(task_file)) > 0),
   spec_hash       TEXT,
   status          TEXT NOT NULL CHECK (
-    status IN (
-      'pending', 'working', 'ready_for_review', 'reviewing',
-      'done', 'blocked', 'cancelled'
-    )
+    status IN ('pending', 'active', 'done', 'blocked', 'cancelled')
   ),
-  review_round    INTEGER NOT NULL DEFAULT 0 CHECK (review_round >= 0),
-  review_verdict  TEXT CHECK (
-    review_verdict IS NULL OR
-    review_verdict IN ('approve', 'changes_requested', 'blocked')
-  ),
-  finding_count   INTEGER CHECK (finding_count IS NULL OR finding_count >= 0),
-  blocking_count  INTEGER CHECK (blocking_count IS NULL OR blocking_count >= 0),
+  -- The per-task stage an active or blocked task is at, from the stage
+  -- registry (ADR-002).
+  stage           TEXT,
+  -- What each per-task stage last concluded about the task, keyed by stage:
+  -- {"review": {"round": 1, "label": "approve", "counts": {...}}}.
+  summaries_json  TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(summaries_json)),
   version         INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
   PRIMARY KEY (execution_id, task_id),
   UNIQUE (execution_id, ordinal),
-  CHECK (
-    (review_verdict IS NULL AND finding_count IS NULL AND blocking_count IS NULL) OR
-    (review_verdict IS NOT NULL AND finding_count IS NOT NULL AND blocking_count IS NOT NULL)
-  ),
-  CHECK (blocking_count IS NULL OR blocking_count <= finding_count)
+  CHECK ((status IN ('active', 'blocked')) = (stage IS NOT NULL))
 ) STRICT;
 
 -- v0 deliberately runs one task per ticket execution at a time.
 CREATE UNIQUE INDEX one_current_task_per_execution
 ON tasks(execution_id)
-WHERE status IN ('working', 'ready_for_review', 'reviewing', 'blocked');
+WHERE status IN ('active', 'blocked');
 
 CREATE INDEX task_frontier
 ON tasks(execution_id, status, ordinal);
@@ -178,10 +170,12 @@ CREATE TABLE agent_runs (
   parent_run_id      TEXT,
   purpose            TEXT NOT NULL CHECK (
     purpose IN (
-      'initial', 'validation_correction', 'human_reply', 'review_changes',
+      'initial', 'validation_correction', 'human_reply', 'return_to_work', 'reentry',
       'manual_continue', 'infrastructure_retry'
     )
   ),
+  -- For return_to_work: the per-task stage that sent the task back.
+  origin             TEXT,
   semantic_round     INTEGER NOT NULL DEFAULT 0 CHECK (semantic_round >= 0),
   status             TEXT NOT NULL CHECK (
     status IN ('prepared', 'starting', 'running', 'terminal')
@@ -723,7 +717,7 @@ BEGIN
     SELECT 1
     FROM tasks AS t
     WHERE t.execution_id = OLD.id
-      AND t.status IN ('working', 'ready_for_review', 'reviewing', 'blocked')
+      AND t.status IN ('active', 'blocked')
   ) THEN RAISE(ABORT, 'cannot supersede an execution with an active task') END;
 
   SELECT CASE WHEN EXISTS (
@@ -801,7 +795,7 @@ END;
 
 CREATE TRIGGER active_task_requires_current_execution_on_insert
 BEFORE INSERT ON tasks
-WHEN NEW.status IN ('working', 'ready_for_review', 'reviewing', 'blocked')
+WHEN NEW.status IN ('active', 'blocked')
   AND NOT EXISTS (
     SELECT 1 FROM ticket_executions AS e
     WHERE e.id = NEW.execution_id AND e.is_current = 1
@@ -812,7 +806,7 @@ END;
 
 CREATE TRIGGER active_task_requires_current_execution_on_update
 BEFORE UPDATE OF status ON tasks
-WHEN NEW.status IN ('working', 'ready_for_review', 'reviewing', 'blocked')
+WHEN NEW.status IN ('active', 'blocked')
   AND NOT EXISTS (
     SELECT 1 FROM ticket_executions AS e
     WHERE e.id = NEW.execution_id AND e.is_current = 1

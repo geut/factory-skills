@@ -29,8 +29,9 @@ export function inspectWrapupInput(input: {
   }
   for (const task of snapshot.tasks) {
     if (task.status !== 'done') {
-      failures.push(`Task ${task.taskId} is ${task.status}, not done.`);
-    } else if (task.reviewVerdict !== 'approve') {
+      const at = task.stage === null ? task.status : `at ${task.stage}`;
+      failures.push(`Task ${task.taskId} is ${at}, not done.`);
+    } else if (task.summaries.review?.label !== 'approve') {
       failures.push(`Task ${task.taskId} has no approving review.`);
     }
   }

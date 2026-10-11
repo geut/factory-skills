@@ -13,6 +13,7 @@ import {
   type RunPurpose,
   type RunRecord,
   type SessionRecord,
+  type StageName,
   type TaskRecord,
   type TaskStatus,
   type TerminalOutcome,
@@ -107,13 +108,11 @@ export function addTasks(snapshot: FactorySnapshot, count = 6, longTitles = fals
     const title = titles[index] ?? `Task ${id}`;
     snapshot.tasks.push({
       blockedBy: (dependencies[id] ?? []).map((item) => taskId(item)),
-      blockingCount: null,
-      findingCount: null,
       ordinal: index + 1,
-      reviewRound: 0,
-      reviewVerdict: null,
       specHash: null,
+      stage: null,
       status: 'pending',
+      summaries: {},
       taskFile: `tickets/dpaez-factory-dashboard-11/${id}-task.md`,
       taskId: taskId(id),
       title: longTitles
@@ -131,10 +130,15 @@ export function task(snapshot: FactorySnapshot, id: string): TaskRecord {
   return found;
 }
 
+// Where a fixture task stands: not started, finished, or at a per-task stage.
+export type TaskPosition =
+  | Extract<TaskStatus, 'pending' | 'done' | 'cancelled'>
+  | { blocked?: true; stage: StageName };
+
 export function setTask(
   snapshot: FactorySnapshot,
   id: string,
-  status: TaskStatus,
+  position: TaskPosition,
   review: {
     blocking?: number;
     findings?: number;
@@ -143,12 +147,19 @@ export function setTask(
   } | null = null,
 ): void {
   const found = task(snapshot, id);
-  found.status = status;
+  if (typeof position === 'string') {
+    found.status = position;
+    found.stage = null;
+  } else {
+    found.status = position.blocked === true ? 'blocked' : 'active';
+    found.stage = position.stage;
+  }
   if (review !== null) {
-    found.reviewRound = review.round;
-    found.reviewVerdict = review.verdict;
-    found.findingCount = review.findings ?? 0;
-    found.blockingCount = review.blocking ?? 0;
+    found.summaries.review = {
+      counts: { blocking: review.blocking ?? 0, findings: review.findings ?? 0 },
+      label: review.verdict,
+      round: review.round,
+    };
   }
 }
 
@@ -198,6 +209,7 @@ export function run(
   const round = input.round ?? 0;
   const parsed =
     owner.stage === 'review' && terminal === 'subagent_done' ? parseReview(output, round) : null;
+  const purpose = input.purpose ?? 'initial';
   const created: RunRecord = {
     baseline: null,
     description: null,
@@ -206,9 +218,11 @@ export function run(
     id: runId(`run-${owner.logicalKey}-${sequence}`),
     inputHash: null,
     paneId: `pane-${snapshot.runs.length + 1}`,
+    // Only review returns work so far.
+    origin: purpose === 'return_to_work' ? 'review' : null,
     paneName: `${owner.stage} ${snapshot.ticket.displayRef}`,
     parentRunId: input.parent?.id ?? null,
-    purpose: input.purpose ?? 'initial',
+    purpose,
     resultContract: null,
     resultError: parsed?.kind === 'invalid' ? parsed.failures.join('\n') : null,
     resultHash: null,
@@ -352,7 +366,7 @@ export function third(): FactorySnapshot {
     });
   }
   snapshot.execution.stage = 'work';
-  setTask(snapshot, '03', 'working');
+  setTask(snapshot, '03', { stage: 'work' });
   return snapshot;
 }
 
@@ -408,6 +422,7 @@ export function action(
       ...base,
       failures,
       kind,
+      origin: null,
       purpose: 'validation_correction',
       runId: null,
       stage: 'wrapup',

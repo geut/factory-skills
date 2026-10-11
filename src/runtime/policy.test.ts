@@ -59,7 +59,8 @@ test('status and task labels stay inside the herdr token limit', () => {
   assert.equal(runStatusLabel('validation_correction'), 'correction');
   assert.equal(runStatusLabel('human_reply'), 'reply');
   assert.equal(runStatusLabel('infrastructure_retry'), 'retry');
-  assert.equal(runStatusLabel('review_changes'), 'review');
+  assert.equal(runStatusLabel('return_to_work'), 'return');
+  assert.equal(runStatusLabel('reentry'), 'rerun');
   assert.equal(runStatusLabel('manual_continue'), 'continue');
   assert.equal(taskProgressText('Fix lint', 3), 'Fix lint · 3 left');
   const title = 'Implement /tickets route and the list filters';

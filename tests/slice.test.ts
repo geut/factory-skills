@@ -693,7 +693,15 @@ function launchesOf(runtime: FakeRuntime, stage: string): FakeRuntime['launches'
 function taskRow(db: ReviewHarness['db'], task = '01'): Record<string, unknown> {
   const found: unknown = db
     .prepare(
-      `SELECT status, review_round, review_verdict, finding_count, blocking_count
+      // The task as review leaves it: where it stands, and review's summary.
+      `SELECT
+         CASE WHEN status = 'active' AND stage = 'review' THEN 'reviewing'
+              WHEN status = 'active' THEN 'working'
+              ELSE status END AS status,
+         coalesce(json_extract(summaries_json, '$.review.round'), 0) AS review_round,
+         json_extract(summaries_json, '$.review.label') AS review_verdict,
+         json_extract(summaries_json, '$.review.counts.findings') AS finding_count,
+         json_extract(summaries_json, '$.review.counts.blocking') AS blocking_count
        FROM tasks WHERE task_id = ?`,
     )
     .get(task);
@@ -748,7 +756,7 @@ test('changes requested resume the same worker, then round 2 resumes the same re
   const fix = launchesOf(runtime, 'work')[1];
   assert.equal(fix?.sessionId, work.sessionId);
   assert.equal(fix?.mode, 'resume');
-  assert.equal(fix?.purpose, 'review_changes');
+  assert.equal(fix?.purpose, 'return_to_work');
   assert.equal(fix?.cwd, work.cwd);
   assert.match(fix?.prompt ?? '', /R1-1 \[major\] Filter resets on reload/);
   assert.doesNotMatch(fix?.prompt ?? '', /R1-2/);

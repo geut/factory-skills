@@ -31,8 +31,8 @@ export function prepareWorkInput({
     task !== null &&
     (action.purpose === 'initial'
       ? readyTask(snapshot)?.taskId === task.taskId
-      : action.purpose === 'validation_correction' || action.purpose === 'review_changes'
-        ? task.status === 'working'
+      : action.purpose === 'validation_correction' || action.purpose === 'return_to_work'
+        ? task.status === 'active' && task.stage === 'work'
         : task.status === 'blocked');
   const inspection =
     task === null ||

@@ -21,7 +21,6 @@ import {
   type IdSource,
   type Policy,
   type ReplyRecord,
-  type ReviewVerdict,
   type RunId,
   type RunRecord,
   type SessionRecord,
@@ -236,22 +235,14 @@ function optionalOneOf<T extends string>(
   return oneOf(value, allowed, label);
 }
 
-const taskStatuses = [
-  'pending',
-  'working',
-  'ready_for_review',
-  'reviewing',
-  'done',
-  'blocked',
-  'cancelled',
-] as const;
-const reviewVerdicts: ReadonlyArray<ReviewVerdict> = ['approve', 'changes_requested', 'blocked'];
+const taskStatuses = ['pending', 'active', 'done', 'blocked', 'cancelled'] as const;
 const sessionStatuses = ['prepared', 'open', 'completed', 'abandoned'] as const;
 const runPurposes = [
   'initial',
   'validation_correction',
   'human_reply',
-  'review_changes',
+  'return_to_work',
+  'reentry',
   'manual_continue',
   'infrastructure_retry',
 ] as const;
@@ -289,6 +280,40 @@ function inputStage(value: string): InputStage {
     throw new FactoryDatabaseError(`the ${stage} stage prepares no input`);
   }
   return stage;
+}
+
+// A stage a task can be at: one that runs per task.
+function taskStage(value: string): StageName {
+  const stage = stageName(value);
+  if (stages[stage].scope !== 'task') {
+    throw new FactoryDatabaseError(`the ${stage} stage does not run per task`);
+  }
+  return stage;
+}
+
+function taskSummaries(json: string): TaskRecord['summaries'] {
+  const parsed: unknown = JSON.parse(json);
+  if (!isRecord(parsed)) {
+    throw new FactoryDatabaseError('task summaries must be an object');
+  }
+  const summaries: TaskRecord['summaries'] = {};
+  for (const [stage, value] of Object.entries(parsed)) {
+    if (
+      !isRecord(value) ||
+      typeof value['label'] !== 'string' ||
+      typeof value['round'] !== 'number' ||
+      !isRecord(value['counts']) ||
+      !Object.values(value['counts']).every((count) => typeof count === 'number')
+    ) {
+      throw new FactoryDatabaseError(`the ${stage} task summary is malformed`);
+    }
+    summaries[taskStage(stage)] = {
+      counts: value['counts'] as Record<string, number>,
+      label: value['label'],
+      round: value['round'],
+    };
+  }
+  return summaries;
 }
 
 // A per-task stage's session belongs to a task; a per-ticket one does not.
@@ -461,21 +486,14 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
         'SELECT depends_on_task_id FROM task_dependencies WHERE execution_id = ? AND task_id = ? ORDER BY depends_on_task_id',
       )
       .all(execution, id);
-    const findings = record['finding_count'];
-    const blocking = record['blocking_count'];
+    const stage = nullableText(record, 'stage');
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
-      blockingCount: typeof blocking === 'number' ? blocking : null,
-      findingCount: typeof findings === 'number' ? findings : null,
       ordinal: integer(record, 'ordinal'),
-      reviewRound: integer(record, 'review_round'),
-      reviewVerdict: optionalOneOf(
-        nullableText(record, 'review_verdict'),
-        reviewVerdicts,
-        'review verdict',
-      ),
       specHash: nullableText(record, 'spec_hash'),
+      stage: stage === null ? null : taskStage(stage),
       status: oneOf(text(record, 'status'), taskStatuses, 'task status'),
+      summaries: taskSummaries(text(record, 'summaries_json')),
       taskFile: text(record, 'task_file'),
       taskId: id,
       title: nullableText(record, 'title') ?? id,
@@ -513,6 +531,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
     .map((item) => {
       const record = row(item);
       const parent = nullableText(record, 'parent_run_id');
+      const origin = nullableText(record, 'origin');
       return {
         baseline: baselineFromLifecycle(nullableText(record, 'lifecycle_json')),
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
@@ -520,6 +539,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
         endedAt: nullableText(record, 'ended_at'),
         id: runId(text(record, 'id')),
         inputHash: nullableText(record, 'input_hash'),
+        origin: origin === null ? null : taskStage(origin),
         paneId: nullableText(record, 'pane_id'),
         paneName: nullableText(record, 'pane_name'),
         parentRunId: parent === null ? null : runId(parent),
@@ -659,10 +679,11 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
     kind === 'prepare_input' &&
     typeof payload['stage'] === 'string' &&
     (payload['taskId'] === null || typeof payload['taskId'] === 'string') &&
+    (payload['origin'] === null || typeof payload['origin'] === 'string') &&
     (payload['purpose'] === 'initial' ||
       payload['purpose'] === 'validation_correction' ||
       payload['purpose'] === 'human_reply' ||
-      payload['purpose'] === 'review_changes') &&
+      payload['purpose'] === 'return_to_work') &&
     Array.isArray(payload['failures']) &&
     payload['failures'].every((item) => typeof item === 'string')
   ) {
@@ -676,6 +697,7 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       attentionRequestId: null,
       failures: payload['failures'],
       kind,
+      origin: payload['origin'] === null ? null : taskStage(payload['origin']),
       purpose,
       runId: null,
       stage,
@@ -742,6 +764,7 @@ function payloadJson(action: ActionRecord): string {
     case 'prepare_input':
       return jsonText({
         failures: action.failures,
+        origin: action.origin,
         purpose: action.purpose,
         stage: action.stage,
         taskId: action.taskId,
@@ -873,8 +896,9 @@ function updateExecution(
 function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, now: string): void {
   db.prepare(
     `INSERT INTO tasks
-      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution,
     task.taskId,
@@ -883,6 +907,8 @@ function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, 
     task.taskFile,
     task.specHash,
     task.status,
+    task.stage,
+    jsonText(task.summaries),
     now,
     now,
   );
@@ -960,11 +986,11 @@ function descriptionFromLifecycle(raw: string | null): string | null {
 function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now: string): void {
   db.prepare(
     `INSERT INTO agent_runs
-      (id, execution_id, session_id, sequence, parent_run_id, purpose, semantic_round, status,
-       terminal_kind, subagent_id, pane_id, pane_name, input_hash, diff_hash, result_contract,
-       result_status, result_json, result_hash, result_error, lifecycle_json, created_at, started_at,
-       updated_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, execution_id, session_id, sequence, parent_run_id, purpose, origin, semantic_round,
+       status, terminal_kind, subagent_id, pane_id, pane_name, input_hash, diff_hash,
+       result_contract, result_status, result_json, result_hash, result_error, lifecycle_json,
+       created_at, started_at, updated_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     run.id,
     execution,
@@ -972,6 +998,7 @@ function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now
     run.sequence,
     run.parentRunId,
     run.purpose,
+    run.origin,
     run.semanticRound,
     run.status,
     run.terminalKind,
@@ -1184,15 +1211,12 @@ function persist(
     } else if (!same(previous, task)) {
       db.prepare(
         `UPDATE tasks
-         SET status = ?, review_round = ?, review_verdict = ?, finding_count = ?,
-             blocking_count = ?, version = version + 1, updated_at = ?
+         SET status = ?, stage = ?, summaries_json = ?, version = version + 1, updated_at = ?
          WHERE execution_id = ? AND task_id = ?`,
       ).run(
         task.status,
-        task.reviewRound,
-        task.reviewVerdict,
-        task.findingCount,
-        task.blockingCount,
+        task.stage,
+        jsonText(task.summaries),
         now,
         after.execution.id,
         task.taskId,

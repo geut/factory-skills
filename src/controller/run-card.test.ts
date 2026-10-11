@@ -23,7 +23,8 @@ const finished = {
 
 test('retries, replies, and corrections are named; first runs and review rounds are not', () => {
   assert.equal(purposeSegment({ purpose: 'initial', semanticRound: 0 }), null);
-  assert.equal(purposeSegment({ purpose: 'review_changes', semanticRound: 2 }), null);
+  assert.equal(purposeSegment({ purpose: 'return_to_work', semanticRound: 2 }), null);
+  assert.equal(purposeSegment({ purpose: 'reentry', semanticRound: 2 }), null);
   assert.equal(
     purposeSegment({ purpose: 'validation_correction', semanticRound: 2 }),
     'correction',

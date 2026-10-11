@@ -14,7 +14,8 @@ const runStatusLabels = {
   infrastructure_retry: 'retry',
   initial: 'initial',
   manual_continue: 'continue',
-  review_changes: 'review',
+  reentry: 'rerun',
+  return_to_work: 'return',
   validation_correction: 'correction',
 } as const;
 

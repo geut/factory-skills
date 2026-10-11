@@ -115,21 +115,17 @@ export type ExecutionStatus =
   | 'ready_for_handoff'
   | 'complete'
   | 'cancelled';
-export type TaskStatus =
-  | 'pending'
-  | 'working'
-  | 'ready_for_review'
-  | 'reviewing'
-  | 'done'
-  | 'blocked'
-  | 'cancelled';
+export type TaskStatus = 'pending' | 'active' | 'done' | 'blocked' | 'cancelled';
 export type SessionStatus = 'prepared' | 'open' | 'completed' | 'abandoned';
 export type RunStatus = 'prepared' | 'starting' | 'running' | 'terminal';
 export type RunPurpose =
   | 'initial'
   | 'validation_correction'
   | 'human_reply'
-  | 'review_changes'
+  // Work fixing what a later stage found; `origin` names that stage.
+  | 'return_to_work'
+  // A later stage running again on a task whose work was returned.
+  | 'reentry'
   | 'manual_continue'
   | 'infrastructure_retry';
 export type TerminalKind =
@@ -147,7 +143,7 @@ export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'c
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
 // Why a stage's input is being prepared: the run it is for.
-export type InputPurpose = 'initial' | 'validation_correction' | 'human_reply' | 'review_changes';
+export type InputPurpose = 'initial' | 'validation_correction' | 'human_reply' | 'return_to_work';
 export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
 export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
@@ -373,15 +369,18 @@ export type ExecutionRecord = {
   worktreeStatus: WorktreeStatus | null;
 };
 
+// What one per-task stage last concluded about a task, for display and for
+// later stages: the round it reached, a short label, and counts behind it.
+export type TaskSummary = { counts: Record<string, number>; label: string; round: number };
+
 export type TaskRecord = {
   blockedBy: Array<TaskId>;
-  blockingCount: number | null;
-  findingCount: number | null;
   ordinal: number;
-  reviewRound: number;
-  reviewVerdict: ReviewVerdict | null;
   specHash: string | null;
+  // The per-task stage the task is at; set exactly while active or blocked.
+  stage: StageName | null;
   status: TaskStatus;
+  summaries: Partial<Record<StageName, TaskSummary>>;
   taskFile: string;
   taskId: TaskId;
   title: string;
@@ -407,6 +406,8 @@ export type RunRecord = {
   endedAt: string | null;
   id: RunId;
   inputHash: string | null;
+  // For a return_to_work run: the per-task stage that sent the task back.
+  origin: StageName | null;
   paneId: string | null;
   paneName: string | null;
   parentRunId: RunId | null;
@@ -483,6 +484,8 @@ export type ActionRecord =
       // What the run this input is for must fix, when it is a correction.
       failures: Array<string>;
       kind: 'prepare_input';
+      // For a return to work: the per-task stage that sent the task back.
+      origin: StageName | null;
       purpose: InputPurpose;
       runId: null;
       stage: InputStage;

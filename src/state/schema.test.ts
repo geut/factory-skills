@@ -106,9 +106,17 @@ function addTask(
   }: { execution?: string; id?: string; ordinal?: number; status?: string } = {},
 ): void {
   db.prepare(
-    `INSERT INTO tasks (execution_id, task_id, ordinal, task_file, status)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(execution, id, ordinal, `${id}-task.md`, status);
+    `INSERT INTO tasks (execution_id, task_id, ordinal, task_file, status, stage)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    execution,
+    id,
+    ordinal,
+    `${id}-task.md`,
+    status,
+    // An active or blocked task is at a per-task stage.
+    status === 'active' || status === 'blocked' ? 'work' : null,
+  );
 }
 
 function addSession(
@@ -347,13 +355,13 @@ test('derives the ready task frontier and prevents parallel active tasks', () =>
   );
 
   db.prepare(
-    "UPDATE tasks SET status = 'working' WHERE execution_id = 'exec-1' AND task_id = '01'",
+    "UPDATE tasks SET status = 'active', stage = 'work' WHERE execution_id = 'exec-1' AND task_id = '01'",
   ).run();
   assert.throws(
     () =>
       db
         .prepare(
-          "UPDATE tasks SET status = 'working' WHERE execution_id = 'exec-1' AND task_id = '02'",
+          "UPDATE tasks SET status = 'active', stage = 'work' WHERE execution_id = 'exec-1' AND task_id = '02'",
         )
         .run(),
     /UNIQUE constraint failed/,
@@ -413,7 +421,7 @@ test('cannot supersede an execution until tasks, runs, and actions are quiescent
   const db = openStateDatabase(root, { create: true });
   addTicket(db);
   addExecution(db);
-  addTask(db, { status: 'working' });
+  addTask(db, { status: 'active' });
   addSession(db, { id: 'work-session', key: 'work:01', stage: 'work', task: '01' });
   addRun(db, { session: 'work-session' });
 
@@ -430,7 +438,9 @@ test('cannot supersede an execution until tasks, runs, and actions are quiescent
     () => db.prepare("UPDATE ticket_executions SET is_current = 0 WHERE id = 'exec-1'").run(),
     /active task/,
   );
-  db.prepare("UPDATE tasks SET status = 'cancelled' WHERE execution_id = 'exec-1'").run();
+  db.prepare(
+    "UPDATE tasks SET status = 'cancelled', stage = NULL WHERE execution_id = 'exec-1'",
+  ).run();
   db.prepare(
     `INSERT INTO actions
       (id, execution_id, kind, status, idempotency_key)
@@ -861,7 +871,7 @@ test('running children carry the task title and how many tasks are not done', ()
   const db = openStateDatabase(root, { create: true });
   addTicket(db);
   addExecution(db);
-  addTask(db, { id: '01', ordinal: 1, status: 'working' });
+  addTask(db, { id: '01', ordinal: 1, status: 'active' });
   addTask(db, { id: '02', ordinal: 2, status: 'pending' });
   addTask(db, { id: '03', ordinal: 3, status: 'done' });
   db.prepare("UPDATE tasks SET title = 'Implement /tickets route' WHERE task_id = '01'").run();
