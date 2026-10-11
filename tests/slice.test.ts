@@ -270,6 +270,7 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     pullRequests: false,
+    stages: {},
     validation: { work: { commands: [] }, wrapup: { generated: [] } },
   };
   applyControllerEvent(db, {

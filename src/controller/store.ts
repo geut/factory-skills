@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_LIMITS, type InternalLabel } from '../config.ts';
+import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
   actionId,
   attentionId,
@@ -159,8 +159,6 @@ function parsePolicy(raw: string): Policy {
     typeof models['plan'] !== 'string' ||
     typeof models['work'] !== 'string' ||
     typeof models['review'] !== 'string' ||
-    typeof limits['planCorrections'] !== 'number' ||
-    typeof limits['workCorrections'] !== 'number' ||
     typeof limits['infrastructureRetries'] !== 'number' ||
     !isRecord(labels['map']) ||
     !isRecord(validation['work'])
@@ -170,27 +168,30 @@ function parsePolicy(raw: string): Policy {
   return {
     codeRoot: value['codeRoot'],
     labels: parseLabelMap(labels['map']),
-    limits: {
-      infrastructureRetries: limits['infrastructureRetries'],
-      planCorrections: limits['planCorrections'],
-      // Executions started before the review limits existed keep the defaults.
-      reviewCorrections:
-        typeof limits['reviewCorrections'] === 'number'
-          ? limits['reviewCorrections']
-          : DEFAULT_LIMITS.reviewCorrections,
-      reviewRounds:
-        typeof limits['reviewRounds'] === 'number'
-          ? limits['reviewRounds']
-          : DEFAULT_LIMITS.reviewRounds,
-      workCorrections: limits['workCorrections'],
-    },
+    // A limit the execution's policy does not name keeps its default.
+    limits: Object.fromEntries(
+      Object.entries(DEFAULT_LIMITS).map(([key, fallback]) => {
+        const stored = limits[key];
+        return [key, typeof stored === 'number' ? stored : fallback];
+      }),
+    ) as Limits,
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
     pullRequests: value['pullRequests'] === true,
+    stages: storedStageSettings(value['stages']),
     validation: {
       work: { commands: parseCommands(validation['work']['commands']) },
       wrapup: { generated: parseGenerated(validation['wrapup']) },
     },
   };
+}
+
+// Settings snapshotted at start are read again by their stages.
+function storedStageSettings(value: unknown): Policy['stages'] {
+  const read = readStageSettings(value);
+  if (read.kind === 'error') {
+    throw new FactoryDatabaseError(`execution policy is invalid: ${read.message}`);
+  }
+  return read.stages;
 }
 
 function stringList(value: unknown): Array<string> {

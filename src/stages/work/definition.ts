@@ -1,4 +1,4 @@
-import { defineStage } from '../definition.ts';
+import { defineStage, type LimitSpec } from '../definition.ts';
 import { runOutput } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 
@@ -27,6 +27,12 @@ export type WorkInput = {
 const skill = 'factory-work';
 const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
+
+// The FACTORY.json limits this stage reads.
+export const workLimits = { workCorrections: { default: 3, min: 0 } } as const satisfies Record<
+  string,
+  LimitSpec
+>;
 
 export const work = defineStage<WorkInput, 'work', WorkPrepared>({
   conclude: (_view, run, report) =>

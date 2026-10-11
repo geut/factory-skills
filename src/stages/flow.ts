@@ -18,8 +18,8 @@ export type Step =
   | { kind: 'handoff' };
 
 // An optional stage runs only when the execution's policy turns it on.
-export function stageEnabled(_policy: Policy, stage: StageName): boolean {
-  return !stages[stage].optional;
+export function stageEnabled(policy: Policy, stage: StageName): boolean {
+  return !stages[stage].optional || policy.stages[stage]?.enabled === true;
 }
 
 function enabled(policy: Policy, list: ReadonlyArray<StageName>): Array<StageName> {

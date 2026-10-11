@@ -74,6 +74,16 @@ export type ParsedOutput =
   | { error: string; json: string; kind: 'invalid' }
   | { json: string; kind: 'unchecked' };
 
+// An optional stage's FACTORY.json settings, under `stages.<name>`.
+export type StageSettings = { enabled: boolean } & Record<string, unknown>;
+
+export type SettingsResult =
+  | { kind: 'ok'; settings: StageSettings }
+  | { kind: 'error'; message: string };
+
+// One FACTORY.json limit a stage declares: its default and its least value.
+export type LimitSpec = { default: number; min: number };
+
 // How a stage's agent corrects output its validator failed.
 export type CorrectionPolicy = {
   // The limit in the execution policy, or null for corrections without limit.
@@ -120,6 +130,9 @@ export type StageDefinition<
   runBaseline?: (prepared: Prepared) => string | null;
   // `task` stages run once per task and need a task id on their session.
   scope: 'ticket' | 'task';
+  // An optional stage's reading of its FACTORY.json settings; undefined
+  // (no settings) must read as disabled.
+  settings?: (raw: unknown) => SettingsResult;
   skill: string;
   spawning: false;
   thinking: string;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput } from './stages/index.ts';
 import type { ValidationReport } from './validation/report.ts';
 
@@ -154,6 +155,8 @@ export type Policy = {
   models: { plan: string; review: string; work: string };
   // `github.pullRequests`: wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
+  // Optional stages' settings, by stage name; a stage absent here is off.
+  stages: Record<string, StageSettings>;
   validation: Validation;
 };
 

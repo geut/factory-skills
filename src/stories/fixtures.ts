@@ -70,6 +70,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         limits: { ...DEFAULT_LIMITS },
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },
         pullRequests: false,
+        stages: {},
         validation: { work: { commands: [] }, wrapup: { generated: [] } },
       },
       retry: null,

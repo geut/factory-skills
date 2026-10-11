@@ -254,6 +254,7 @@ export function createFactoryService(input: {
       limits: config.config.limits,
       models: config.config.models,
       pullRequests: config.config.github?.pullRequests ?? false,
+      stages: config.config.stages,
       validation: config.config.validation,
     };
   }

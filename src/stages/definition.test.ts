@@ -33,3 +33,9 @@ test('a stage prepares input exactly when its effects can', () => {
     assert.equal(stage.preparesInput, 'prepareInput' in effects[stage.name], name);
   }
 });
+
+test('a stage has FACTORY.json settings exactly when it is optional', () => {
+  for (const stage of Object.values(stages)) {
+    assert.equal(stage.optional, stage.settings !== undefined, stage.name);
+  }
+});

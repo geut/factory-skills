@@ -1,5 +1,5 @@
 import type { ReviewResult } from '../../domain.ts';
-import { defineStage, type Outcome, type StageView } from '../definition.ts';
+import { defineStage, type LimitSpec, type Outcome, type StageView } from '../definition.ts';
 import { runOutput } from '../output.ts';
 import { childInstructions } from '../prompt.ts';
 import { formatFinding, parseReview } from './parse.ts';
@@ -73,6 +73,12 @@ function verdictOutcome({ snapshot, task }: StageView, result: ReviewResult): Ou
 
 const skill = 'factory-review';
 const contract = 'factory.review.v4';
+
+// The FACTORY.json limits this stage reads.
+export const reviewLimits = {
+  reviewCorrections: { default: 3, min: 0 },
+  reviewRounds: { default: 3, min: 1 },
+} as const satisfies Record<string, LimitSpec>;
 
 export const review = defineStage<ReviewInput, 'review'>({
   conclude: (view, run, report) => {

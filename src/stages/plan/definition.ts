@@ -1,10 +1,16 @@
-import { defineStage } from '../definition.ts';
+import { defineStage, type LimitSpec } from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
 
 export type PlanInput = { body: string; displayRef: string; factoryDir: string; title: string };
 
 const skill = 'factory-plan';
 const contract = 'factory.plan.v3';
+
+// The FACTORY.json limits this stage reads.
+export const planLimits = { planCorrections: { default: 3, min: 0 } } as const satisfies Record<
+  string,
+  LimitSpec
+>;
 
 export const plan = defineStage<PlanInput, 'plan'>({
   conclude: (_view, _run, report) =>
