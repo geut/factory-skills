@@ -53,6 +53,13 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
       adrPath: inspection.adrPath,
       baseline,
       contextPath: inspection.contextPath,
+      screenshots: deps
+        .passedChecks('qa')
+        .flatMap((check) =>
+          check.evidencePath === null || check.taskId === null
+            ? []
+            : [{ name: check.name, path: check.evidencePath, taskId: check.taskId }],
+        ),
       usage: deps.usage(),
       verification: deps
         .passedChecks('work')

@@ -852,10 +852,18 @@ function begin(
         return 'Preparing the worktree.';
       }
       if (isInputStage(step.stage)) {
-        const key = task === null ? '' : `${task.taskId}:`;
+        // A stage with rounds is entered again after each return to work.
+        const entries = snapshot.actions.filter(
+          (action) =>
+            action.kind === 'prepare_input' &&
+            action.stage === step.stage &&
+            action.taskId === step.taskId &&
+            action.purpose === 'initial',
+        ).length;
+        const key = `${task === null ? '' : `${task.taskId}:`}initial${entries === 0 ? '' : `:${entries + 1}`}`;
         enqueueInput(snapshot, step.stage, {
           failures: [],
-          idempotencyKey: `${step.stage}-input:${snapshot.execution.id}:${key}initial`,
+          idempotencyKey: `${step.stage}-input:${snapshot.execution.id}:${key}`,
           ids,
           purpose: 'initial',
           ...(task === null ? {} : { taskId: task.taskId }),
@@ -1116,7 +1124,7 @@ function inputReady(
   const title = task?.title ?? snapshot.ticket.title;
   const forTask = task === null ? '' : ` for task ${task.taskId}`;
   if (action.purpose === 'initial') {
-    if (session !== null) {
+    if (session !== null && !definition.rounds) {
       return unchanged(existing, `${definition.label} already started.`);
     }
     return finish(

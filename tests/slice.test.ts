@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { DEFAULT_LIMITS } from '../src/config.ts';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent } from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
@@ -261,13 +262,7 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
   const policy: Policy = {
     codeRoot,
     labels: { map: {} },
-    limits: {
-      infrastructureRetries: 3,
-      planCorrections: 3,
-      reviewCorrections: 3,
-      reviewRounds: 3,
-      workCorrections: 3,
-    },
+    limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     pullRequests: false,
     stages: {},
@@ -1474,5 +1469,123 @@ test('restart validates a finished wrap-up once and opens its panes once', async
     .prepare('SELECT count(*) AS n FROM validation_runs WHERE run_id = ?')
     .get(wrapup.runId);
   assert.deepEqual({ ...(validations ?? {}) }, { n: 1 });
+  await closeWhenIdle(db);
+});
+
+test('QA corrects its own output, returns a failing product to work, then hands review the tested diff', async () => {
+  const qa = {
+    commands: [
+      {
+        argv: [
+          process.execPath,
+          '-e',
+          "process.exit(require('node:fs').existsSync('product-ok.txt') ? 0 : 1)",
+        ],
+        name: 'e2e',
+      },
+    ],
+    enabled: true,
+  };
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      models: { review: 'review-model', work: 'work-model' },
+      stages: { qa },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, db, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  const nth = (stage: string, index: number) => {
+    const found = launchesOf(runtime, stage)[index];
+    if (found === undefined) {
+      throw new Error(`missing ${stage} run ${index + 1}`);
+    }
+    return found;
+  };
+  runtime.emit(nth('plan', 0).runId, {
+    kind: 'subagent_done',
+    output: 'files',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 1);
+  const work = launchesOf(runtime, 'work')[0];
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+
+  // QA is asked to prove AC1, then corrected for the files it did not write.
+  await waitFor(() => launchesOf(runtime, 'qa').length === 1);
+  const first = nth('qa', 0);
+  assert.match(first.prompt, /AC1: The filter survives a reload\./);
+  assert.equal(first.cwd, work.cwd);
+  runtime.emit(first.runId, { kind: 'subagent_done', output: 'tested', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'qa').length === 2);
+  const correction = launchesOf(runtime, 'qa')[1];
+  assert.match(correction?.prompt ?? '', /test-plan\.md is missing/);
+  assert.match(correction?.prompt ?? '', /AC1 \(The filter survives a reload\.\) has no test/);
+
+  // Now complete: the product still fails the e2e command, so work gets it back.
+  const qaDir = path.join(directory, 'qa', '01');
+  mkdirSync(path.join(qaDir, 'screenshots'), { recursive: true });
+  writeFileSync(
+    path.join(qaDir, 'test-plan.md'),
+    '| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC1 | e2e › AC1: filter survives a reload | screenshots/ac1.png |\n',
+  );
+  writeFileSync(path.join(qaDir, 'ledger.md'), '- Mobile layouts are not covered.\n');
+  writeFileSync(path.join(qaDir, 'screenshots', 'ac1.png'), 'png');
+  writeFileSync(path.join(work.cwd, 'filter.e2e.txt'), 'AC1 test\n');
+  runtime.emit(nth('qa', 1).runId, {
+    kind: 'subagent_done',
+    output: 'tested',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const returned = launchesOf(runtime, 'work')[1];
+  assert.equal(returned?.mode, 'resume');
+  assert.match(returned?.prompt ?? '', /QA round 1 requested changes/);
+  assert.match(returned?.prompt ?? '', /e2e \(.*\) failed/);
+
+  // Work fixes the product; QA runs again on the same session and passes.
+  writeFileSync(path.join(work.cwd, 'product-ok.txt'), 'ok\n');
+  runtime.emit(nth('work', 1).runId, {
+    kind: 'subagent_done',
+    output: 'fixed',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'qa').length === 3);
+  const again = launchesOf(runtime, 'qa')[2];
+  assert.equal(again?.mode, 'resume');
+  assert.match(again?.prompt ?? '', /QA round: 2/);
+  runtime.emit(nth('qa', 2).runId, {
+    kind: 'subagent_done',
+    output: 'passed',
+    usage: sampleUsage(),
+  });
+
+  // Review is given the diff QA left, tests included.
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  const review = launchesOf(runtime, 'review')[0];
+  assert.match(review?.prompt ?? '', /filter\.e2e\.txt/);
+  assert.match(review?.prompt ?? '', /screenshot AC1: passed/);
+  runtime.emit(nth('review', 0).runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+
+  // Wrap-up is told about the screenshot for the pull request.
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.match(
+    launchesOf(runtime, 'wrapup')[0]?.prompt ?? '',
+    /QA screenshots[\s\S]*Task 01 screenshot AC1: .*qa\/01\/screenshots\/ac1\.png/,
+  );
   await closeWhenIdle(db);
 });

@@ -12,6 +12,8 @@ export type WrapupPrepared = {
   // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
   baseline: string;
   contextPath: string | null;
+  // QA's screenshots from each task's latest passed QA validation.
+  screenshots: Array<{ name: string; path: string; taskId: string }>;
   // The all-stage usage table so far, excluding wrap-up.
   usage: string;
   // One line per passing work-validation check, per task.
@@ -29,6 +31,7 @@ export type WrapupInput = {
   model: string;
   planPath: string;
   pullRequests: boolean;
+  screenshots: WrapupPrepared['screenshots'];
   tasks: Array<{
     status: string;
     taskFile: string;
@@ -101,6 +104,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       model: execution.policy.models.work,
       planPath: execution.planPath ?? '',
       pullRequests: execution.policy.pullRequests,
+      screenshots: prepared.screenshots,
       tasks: snapshot.tasks.map((task) => ({
         status: task.status,
         taskFile: `${execution.factoryDir}/${task.taskFile}`,
@@ -168,6 +172,15 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           ? ['- none recorded']
           : input.verification.map((line) => `- ${line}`)),
         '',
+        ...(input.screenshots.length === 0
+          ? []
+          : [
+              'QA screenshots (add a ## Screenshots section to the PR summary with each one):',
+              ...input.screenshots.map(
+                (shot) => `- Task ${shot.taskId} ${shot.name}: ${shot.path}`,
+              ),
+              '',
+            ]),
         'Non-blocking review findings:',
         ...(input.minorFindings.length === 0
           ? ['none']

@@ -15,7 +15,7 @@ export const WORK_VALIDATOR_VERSION = 'work.v1';
 export const COMMAND_OUTPUT_LIMIT = 16_384;
 const VALIDATION_LEASE_MARGIN_MS = 30_000;
 
-function validationLeaseMs(commands: Array<Pick<WorkCommand, 'timeoutMs'>>): number {
+export function validationLeaseMs(commands: Array<Pick<WorkCommand, 'timeoutMs'>>): number {
   const budget = commands.reduce((total, command) => total + command.timeoutMs, 0);
   return budget + VALIDATION_LEASE_MARGIN_MS;
 }
@@ -193,7 +193,11 @@ export function runCommand(command: WorkCommand, cwd: string): Promise<CommandRe
   });
 }
 
-function commandCheck(command: WorkCommand, cwd: string, result: CommandResult): ValidationCheck {
+export function commandCheck(
+  command: WorkCommand,
+  cwd: string,
+  result: CommandResult,
+): ValidationCheck {
   const location = `cwd ${cwd}`;
   if (result.timedOut) {
     const details = `${location}; timed out after ${command.timeoutMs}ms`;

@@ -60,3 +60,36 @@ test('an unreadable ticket directory is a validator error, not a correction', as
 test('a plan run without a result is not validated', async () => {
   await assert.rejects(planValidator.validate(validationContext('plan')), /missing a plan result/);
 });
+
+test('with QA enabled, every task file must list acceptance criteria', async () => {
+  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const withQa = () =>
+    planValidator.validate(
+      validationContext('plan', (snapshot, finished) => {
+        snapshot.execution.factoryDir = factoryDir;
+        snapshot.execution.policy.stages = {
+          qa: { commands: [{ argv: ['npx', 'playwright', 'test'], name: 'e2e' }], enabled: true },
+        };
+        finished.resultHash = 'result-hash';
+      }),
+    );
+  try {
+    writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), '# Store\n\nBlocked by: none\n');
+    const missing = await withQa();
+    assert.equal(missing.status, 'failed');
+    if (missing.status === 'failed') {
+      assert.match(missing.summary, /01-task-store\.md lists no acceptance criteria/);
+    }
+    writeFileSync(
+      path.join(factoryDir, '01-task-store.md'),
+      '# Store\n\nBlocked by: none\n\n## Acceptance criteria\n\n- [ ] The filter is kept.\n',
+    );
+    assert.equal((await withQa()).status, 'passed');
+    // Without QA the same plan never needed criteria.
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), '# Store\n\nBlocked by: none\n');
+    assert.equal((await validate(factoryDir)).status, 'passed');
+  } finally {
+    rmSync(factoryDir, { force: true, recursive: true });
+  }
+});

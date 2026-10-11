@@ -5,7 +5,8 @@ import { stages } from './index.ts';
 // per-task stages for each task in dependency order, then the closing stages.
 export const flow = {
   closing: ['wrapup'],
-  task: ['work', 'review'],
+  // QA is optional: it runs only when FACTORY.json stages.qa enables it.
+  task: ['work', 'qa', 'review'],
   ticket: ['plan'],
 } as const satisfies Record<'closing' | 'task' | 'ticket', ReadonlyArray<StageName>>;
 

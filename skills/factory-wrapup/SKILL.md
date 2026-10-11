@@ -64,6 +64,8 @@ EOF
 )"
 ```
 
+When the prompt lists QA screenshots, add a `## Screenshots` section to the pull request summary that names each one by task and criterion with its path. GitHub takes images only through its web upload, so the handoff also tells the human which files to drop into the pull request.
+
 If push or `gh` fails, report the command and its error. Do not claim a pull request exists. Put the pull request URL in the Merge commands section of the handoff.
 
 ## Prepare merge commands

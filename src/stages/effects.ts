@@ -5,6 +5,7 @@ import { reviewValidator } from '../validation/review.ts';
 import { workValidator } from '../validation/work.ts';
 import { wrapupValidator } from '../validation/wrapup.ts';
 import type { InputStage, PreparedInput } from './index.ts';
+import { prepareQaInput, qaValidator } from './qa/effects.ts';
 import { prepareWorkInput } from './work/effects.ts';
 import { prepareWrapupInput } from './wrapup/effects.ts';
 
@@ -37,6 +38,7 @@ export type StageEffects<S extends StageName> = {
 // reducer must not import this module.
 export const effects: { [S in StageName]: StageEffects<S> } = {
   plan: { validator: planValidator },
+  qa: { prepareInput: prepareQaInput, validator: qaValidator },
   review: { validator: reviewValidator },
   work: { prepareInput: prepareWorkInput, validator: workValidator },
   wrapup: { prepareInput: prepareWrapupInput, validator: wrapupValidator },

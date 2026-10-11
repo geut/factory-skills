@@ -125,7 +125,7 @@ export type InputReady = {
 
 export type Stage = StageName | 'done';
 // A stage an agent runs; `done` is only an execution's position after the last one.
-export type StageName = 'plan' | 'work' | 'review' | 'wrapup';
+export type StageName = 'plan' | 'work' | 'qa' | 'review' | 'wrapup';
 export type ExecutionStatus =
   | 'queued'
   | 'active'
