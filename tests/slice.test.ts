@@ -468,6 +468,55 @@ test('failed work validation resumes the same session and the limit pauses', asy
   assert.equal(runtime.launches.filter((launch) => launch.stage === 'work').length, 2);
 });
 
+test('at the work correction limit a reply resumes the worker with the answer', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      limits: { workCorrections: 0 },
+      models: { review: 'review-model', work: 'work-model' },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const first = runtime.launches.find((launch) => launch.stage === 'work');
+  if (first === undefined) {
+    throw new Error('missing work run');
+  }
+  runtime.emit(first.runId, { kind: 'subagent_done', output: 'no diff', usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  // The notice names the worker's run, so the hint offers a reply.
+  await waitFor(() => notified.some((message) => message.includes('Reply to resume the agent')));
+  assert.ok(notified.some((message) => message.includes('next: /factory reply proj-123.md')));
+  await service.command('reply proj-123 "Commit nothing; write the filter in src/store.ts"');
+  await waitFor(
+    () =>
+      runtime.launches.filter((launch) => launch.stage === 'work' && launch.mode === 'resume')
+        .length === 1,
+  );
+  const resumed = runtime.launches.filter((launch) => launch.stage === 'work').at(-1);
+  assert.match(resumed?.prompt ?? '', /The user answered:\nCommit nothing/);
+  assert.equal(resumed?.cwd, first.cwd);
+});
+
 test('work caller_ping resumes that work session and a failed resume keeps the answer', async () => {
   const { runtime, service, workCwd, workRunId } = await reachWork();
   runtime.emit(workRunId, {

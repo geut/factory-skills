@@ -18,6 +18,12 @@ const contract = 'factory.review.v4';
 
 export const review = defineStage<ReviewInput, 'review'>({
   contract,
+  corrections: {
+    // A malformed verdict never spends a review round.
+    limit: 'reviewCorrections',
+    limitNotice: 'The review result is still malformed after the correction limit:',
+    per: 'round',
+  },
   emoji: '👀',
   label: 'Review',
   model: 'review',

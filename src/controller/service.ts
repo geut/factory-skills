@@ -33,6 +33,7 @@ import {
   firstSummaryLine,
   runListLabel,
   runOutcome,
+  correctsRun,
   runsInStartOrder,
   runStage,
   type RunOutcome,
@@ -457,12 +458,7 @@ export function terminalSummary(
   }
   const outcome = runOutcome(snapshot, run);
   if (outcome === 'correcting' || outcome === 'paused') {
-    const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
-    const queued = snapshot.actions.find(
-      (action) =>
-        action.kind === 'prepare_input' &&
-        prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
-    );
+    const queued = snapshot.actions.find((action) => correctsRun(action, runId));
     const failure = queued?.kind === 'prepare_input' ? queued.failures[0] : undefined;
     if (failure !== undefined && failure.length > 0) {
       return failure;

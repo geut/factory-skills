@@ -44,6 +44,11 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 
 export const wrapup = defineStage<WrapupInput, 'wrapup'>({
   contract,
+  corrections: {
+    limit: null,
+    limitNotice: 'Wrap-up validation is still failing:',
+    per: 'session',
+  },
   emoji: '📦',
   label: 'Wrap-up',
   // Wrap-up runs on the work model; it has no model setting of its own.

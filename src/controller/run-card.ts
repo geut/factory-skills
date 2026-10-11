@@ -1,4 +1,5 @@
 import type {
+  ActionRecord,
   FactorySnapshot,
   ReviewVerdict,
   RunId,
@@ -137,22 +138,23 @@ export function correctionScheduled(snapshot: FactorySnapshot, runId: RunId): bo
   if (child) {
     return true;
   }
-  const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
-  return snapshot.actions.some((action) =>
-    prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
+  return snapshot.actions.some((action) => correctsRun(action, runId));
+}
+
+// A stage pauses at its correction limit, or at its round limit.
+const limitCode = /_(correction|round)_limit$/;
+
+// Input prepared for a correction of `runId`, before that run exists.
+export function correctsRun(action: ActionRecord, runId: RunId): boolean {
+  return (
+    action.kind === 'prepare_input' &&
+    action.idempotencyKey.startsWith(`${action.stage}-input:${runId}:correction`)
   );
 }
 
-const limitCodes = new Set([
-  'plan_correction_limit',
-  'review_correction_limit',
-  'review_round_limit',
-  'work_correction_limit',
-]);
-
 export function limitPaused(snapshot: FactorySnapshot, run: RunRecord): boolean {
   const code = snapshot.execution.statusReasonCode;
-  if (snapshot.execution.status !== 'paused' || code === null || !limitCodes.has(code)) {
+  if (snapshot.execution.status !== 'paused' || code === null || !limitCode.test(code)) {
     return false;
   }
   // The pause is about the run its notice names, else the latest run.

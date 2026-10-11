@@ -27,7 +27,7 @@ import {
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
 import type { StageDefinition } from '../stages/definition.ts';
-import { stages, type InputStage, type PreparedInput } from '../stages/index.ts';
+import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import { formatFinding, parseReview } from '../stages/review/parse.ts';
 import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
 
@@ -255,22 +255,6 @@ function pauseWithNotice(
   });
 }
 
-function pauseForLimit(
-  snapshot: FactorySnapshot,
-  stage: 'plan' | 'work',
-  failures: Array<string>,
-  ids: IdSource,
-): void {
-  const label = stage === 'work' ? 'Work' : 'Plan';
-  pauseWithNotice(snapshot, {
-    code: stage === 'work' ? 'work_correction_limit' : 'plan_correction_limit',
-    failures,
-    ids,
-    question: `${label} validation is still failing after the correction limit:\n${failures.map((failure) => `- ${failure}`).join('\n')}`,
-    retry: null,
-  });
-}
-
 // A prepared session for one stage, launched with that stage's model and thinking.
 function newSession(
   policy: Policy,
@@ -370,40 +354,67 @@ function enqueueInput(
   });
 }
 
-function scheduleCorrection(
+// Asks the stage's agent to fix what its validator failed, within the
+// stage's correction budget. At the limit the ticket pauses on the run, so a
+// reply resumes that agent with the person's guidance.
+function correct(
   snapshot: FactorySnapshot,
   session: SessionRecord,
   parent: RunRecord,
   failures: Array<string>,
   ids: IdSource,
-): void {
+): 'correcting' | 'paused' {
+  const stage = stages[session.stage];
+  const policy = stage.corrections;
   const count = snapshot.runs.filter(
-    (run) => run.sessionId === session.id && run.purpose === 'validation_correction',
+    (run) =>
+      run.sessionId === session.id &&
+      run.purpose === 'validation_correction' &&
+      (policy.per === 'session' || run.semanticRound === parent.semanticRound),
   ).length;
-  const limit =
-    session.stage === 'work'
-      ? snapshot.execution.policy.limits.workCorrections
-      : snapshot.execution.policy.limits.planCorrections;
-  if (count >= limit) {
-    pauseForLimit(snapshot, session.stage === 'work' ? 'work' : 'plan', failures, ids);
-    return;
-  }
-  if (session.stage === 'work' && session.taskId !== null) {
-    enqueueInput(snapshot, 'work', {
+  const task = session.taskId === null ? null : taskById(snapshot, session.taskId);
+  if (policy.limit !== null && count >= snapshot.execution.policy.limits[policy.limit]) {
+    if (task !== null) {
+      task.status = 'blocked';
+    }
+    pauseWithNotice(snapshot, {
+      code: `${session.stage}_correction_limit`,
       failures,
-      idempotencyKey: `work-input:${parent.id}:correction:${count + 1}`,
+      ids,
+      question: [
+        policy.limitNotice,
+        ...failures.map((failure) => `- ${failure}`),
+        'Reply to resume the agent with what it needs.',
+      ].join('\n'),
+      retry: null,
+      runId: parent.id,
+    });
+    return 'paused';
+  }
+  snapshot.execution.status = 'active';
+  if (isInputStage(session.stage)) {
+    enqueueInput(snapshot, session.stage, {
+      failures,
+      idempotencyKey: `${session.stage}-input:${parent.id}:correction:${count + 1}`,
       ids,
       purpose: 'validation_correction',
-      taskId: session.taskId,
+      ...(session.taskId === null ? {} : { taskId: session.taskId }),
     });
-    snapshot.execution.status = 'active';
-    return;
+    return 'correcting';
   }
-  const prompt = stages[session.stage].turn({ failures, kind: 'correction' });
-  const run = addRun(snapshot, session, parent, 'validation_correction', count + 1, ids, prompt);
-  run.description = parent.description ?? childDescription(snapshot.ticket.title);
-  launchAction(snapshot, run, prompt, 'resume', ids, sessionCwd(snapshot, session));
-  snapshot.execution.status = 'active';
+  const prompt = stage.turn({ failures, kind: 'correction' });
+  const round = policy.per === 'round' ? parent.semanticRound : count + 1;
+  const run = addRun(snapshot, session, parent, 'validation_correction', round, ids, prompt);
+  run.description = parent.description ?? childDescription(task?.title ?? snapshot.ticket.title);
+  launchAction(
+    snapshot,
+    run,
+    prompt,
+    session.sessionFile === null ? 'launch' : 'resume',
+    ids,
+    sessionCwd(snapshot, session),
+  );
+  return 'correcting';
 }
 
 function scheduleInfrastructure(
@@ -702,7 +713,7 @@ function finishWorkValidation(
   }
   action.status = 'succeeded';
   if (report.status === 'failed') {
-    scheduleCorrection(snapshot, session, run, report.failures, ids);
+    correct(snapshot, session, run, report.failures, ids);
     return finish(snapshot, 'Work validation failed.');
   }
   const task = taskById(snapshot, session.taskId);
@@ -920,55 +931,13 @@ function applyVerdict(
 function correctReview(
   snapshot: FactorySnapshot,
   session: SessionRecord,
-  task: TaskRecord,
   parent: RunRecord,
   failures: Array<string>,
   ids: IdSource,
 ): Reduction {
-  // Malformed results are budgeted per round and never consume the round.
-  const count = snapshot.runs.filter(
-    (item) =>
-      item.sessionId === session.id &&
-      item.purpose === 'validation_correction' &&
-      item.semanticRound === parent.semanticRound,
-  ).length;
-  if (count >= snapshot.execution.policy.limits.reviewCorrections) {
-    task.status = 'blocked';
-    pauseWithNotice(snapshot, {
-      code: 'review_correction_limit',
-      failures,
-      ids,
-      question: [
-        'The review result is still malformed after the correction limit:',
-        ...failures.map((failure) => `- ${failure}`),
-        'Reply to resume the reviewer.',
-      ].join('\n'),
-      retry: null,
-      runId: parent.id,
-    });
-    return finish(snapshot, 'Review correction limit reached.');
-  }
-  const prompt = stages.review.turn({ failures, kind: 'correction' });
-  const run = addRun(
-    snapshot,
-    session,
-    parent,
-    'validation_correction',
-    parent.semanticRound,
-    ids,
-    prompt,
-  );
-  run.description = parent.description ?? childDescription(task.title);
-  launchAction(
-    snapshot,
-    run,
-    prompt,
-    session.sessionFile === null ? 'launch' : 'resume',
-    ids,
-    sessionCwd(snapshot, session),
-  );
-  snapshot.execution.status = 'active';
-  return finish(snapshot, 'Review result is malformed. Resuming the reviewer.');
+  return correct(snapshot, session, parent, failures, ids) === 'paused'
+    ? finish(snapshot, 'Review correction limit reached.')
+    : finish(snapshot, 'Review result is malformed. Resuming the reviewer.');
 }
 
 function latestWorkRun(snapshot: FactorySnapshot, taskId: TaskId): RunRecord | null {
@@ -1060,7 +1029,7 @@ function finishReviewValidation(
   if (report.status === 'passed') {
     const parsed = parseReview(runOutput(run), run.semanticRound);
     if (parsed.kind === 'invalid') {
-      return correctReview(snapshot, session, task, run, parsed.failures, ids);
+      return correctReview(snapshot, session, run, parsed.failures, ids);
     }
     return applyVerdict(snapshot, task, run, parsed.result, ids);
   }
@@ -1082,7 +1051,7 @@ function finishReviewValidation(
     case 'stale':
       return revalidateWork(snapshot, existing, task, run, ids);
     case 'malformed':
-      return correctReview(snapshot, session, task, run, report.failures, ids);
+      return correctReview(snapshot, session, run, report.failures, ids);
     default: {
       const _exhaustive: never = report.detail.reason;
       return _exhaustive;
@@ -1223,13 +1192,11 @@ function finishWrapupValidation(
 ): Reduction {
   action.status = 'succeeded';
   if (report.status === 'failed') {
-    enqueueInput(snapshot, 'wrapup', {
-      failures: report.failures,
-      idempotencyKey: `wrapup-input:${run.id}:correction`,
-      ids,
-      purpose: 'validation_correction',
-    });
-    snapshot.execution.status = 'active';
+    const session = wrapupSession(snapshot);
+    if (session === null) {
+      return reject(snapshot, 'Wrap-up session is missing.');
+    }
+    correct(snapshot, session, run, report.failures, ids);
     return finish(snapshot, 'Wrap-up validation failed.');
   }
   // Passed: the human takes it from here. The session stays open for reading.
@@ -1496,7 +1463,7 @@ export function reduce(input: {
         if (session === null) {
           return reject(existing, 'Plan session is missing.');
         }
-        scheduleCorrection(snapshot, session, run, report.failures, ids);
+        correct(snapshot, session, run, report.failures, ids);
         return finish(snapshot, 'Plan validation failed.');
       }
       snapshot.tasks = report.detail.tasks.map((task) => ({

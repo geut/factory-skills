@@ -8,6 +8,11 @@ const contract = 'factory.plan.v3';
 
 export const plan = defineStage<PlanInput, 'plan'>({
   contract,
+  corrections: {
+    limit: 'planCorrections',
+    limitNotice: 'Plan validation is still failing after the correction limit:',
+    per: 'session',
+  },
   emoji: '🔎',
   label: 'Plan',
   model: 'plan',

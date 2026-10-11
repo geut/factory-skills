@@ -1,3 +1,4 @@
+import type { Limits } from '../config.ts';
 import type { Policy, StageName } from '../domain.ts';
 import { childInstructions } from './prompt.ts';
 
@@ -16,9 +17,20 @@ export type ParsedOutput =
   | { error: string; json: string; kind: 'invalid' }
   | { json: string; kind: 'unchecked' };
 
+// How a stage's agent corrects output its validator failed.
+export type CorrectionPolicy = {
+  // The limit in the execution policy, or null for corrections without limit.
+  limit: keyof Limits | null;
+  // The notice's first line when the limit is reached.
+  limitNotice: string;
+  // `round` budgets corrections per round of the stage, `session` across it.
+  per: 'round' | 'session';
+};
+
 export type StageDefinition<Input = unknown, Name extends StageName = StageName> = {
   autoExit: true;
   contract: string;
+  corrections: CorrectionPolicy;
   emoji: string;
   // The stage's name in prose, such as "Wrap-up".
   label: string;

@@ -29,6 +29,11 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
 export const work = defineStage<WorkInput, 'work'>({
   contract,
+  corrections: {
+    limit: 'workCorrections',
+    limitNotice: 'Work validation is still failing after the correction limit:',
+    per: 'session',
+  },
   emoji: '🛠',
   label: 'Work',
   model: 'work',
