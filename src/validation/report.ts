@@ -9,6 +9,8 @@ export type ValidationCheck = {
   command?: string | null;
   details: string;
   durationMs?: number | null;
+  // A file the check stands on, such as a screenshot, for later stages to use.
+  evidencePath?: string | null;
   exitCode?: number | null;
   kind: 'artifact' | 'schema' | 'policy' | 'command' | 'diff';
   name: string;

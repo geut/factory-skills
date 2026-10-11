@@ -106,7 +106,15 @@ function rows(db: DatabaseSync, sql: string): Array<Record<string, unknown>> {
 
 const failure = failedReport(
   'plan.v3',
-  [{ details: 'plan.md is missing.', kind: 'artifact', name: 'plan.md', status: 'failed' }],
+  [
+    {
+      details: 'plan.md is missing.',
+      evidencePath: 'tickets/demo/plan.md',
+      kind: 'artifact',
+      name: 'plan.md',
+      status: 'failed',
+    },
+  ],
   ['plan.md is missing.'],
   null,
 );
@@ -129,9 +137,18 @@ test('a report is written with its checks and applied in one step', () => {
       },
     ],
   );
-  assert.deepEqual(rows(harness.db, 'SELECT ordinal, name, kind, status FROM validation_checks'), [
-    { kind: 'artifact', name: 'plan.md', ordinal: 1, status: 'failed' },
-  ]);
+  assert.deepEqual(
+    rows(harness.db, 'SELECT ordinal, name, kind, status, evidence_path FROM validation_checks'),
+    [
+      {
+        evidence_path: 'tickets/demo/plan.md',
+        kind: 'artifact',
+        name: 'plan.md',
+        ordinal: 1,
+        status: 'failed',
+      },
+    ],
+  );
   // The controller took the failure: the action finished and a correction is queued.
   const snapshot = loadCurrentByTicketKey(harness.db, harness.ticketId);
   const action = snapshot?.actions.find((item: ActionRecord) => item.id === harness.action.id);

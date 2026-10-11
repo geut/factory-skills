@@ -98,8 +98,8 @@ function writeValidation(
     db.prepare(
       `INSERT INTO validation_checks
         (validation_id, ordinal, name, kind, status, command, exit_code, duration_ms,
-         output_excerpt, details_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         evidence_path, output_excerpt, details_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.id,
       index + 1,
@@ -109,6 +109,7 @@ function writeValidation(
       check.command ?? null,
       check.exitCode ?? null,
       check.durationMs ?? null,
+      check.evidencePath ?? null,
       check.outputExcerpt ?? null,
       JSON.stringify({ details: check.details }),
     );
