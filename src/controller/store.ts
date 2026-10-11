@@ -25,17 +25,16 @@ import {
   type RunId,
   type RunRecord,
   type SessionRecord,
+  type InputPurpose,
   type Stage,
   type StageName,
   type TaskRecord,
   type TicketRecord,
   type UsageTotals,
   type UsageWrite,
-  type WorkInputPurpose,
-  type WrapupInputPurpose,
   type WorktreeStatus,
 } from '../domain.ts';
-import { stages } from '../stages/index.ts';
+import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import { card, encodeCard } from './card.ts';
@@ -282,6 +281,14 @@ function stageName(value: string): StageName {
 
 function stage(value: string): Stage {
   return value === 'done' ? value : stageName(value);
+}
+
+function inputStage(value: string): InputStage {
+  const stage = stageName(value);
+  if (!isInputStage(stage)) {
+    throw new FactoryDatabaseError(`the ${stage} stage prepares no input`);
+  }
+  return stage;
 }
 
 // A per-task stage's session belongs to a task; a per-ticket one does not.
@@ -649,8 +656,9 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
     return { ...base, attentionReplyId: null, attentionRequestId: null, kind, runId: runId(run) };
   }
   if (
-    kind === 'prepare_work_input' &&
-    typeof payload['taskId'] === 'string' &&
+    kind === 'prepare_input' &&
+    typeof payload['stage'] === 'string' &&
+    (payload['taskId'] === null || typeof payload['taskId'] === 'string') &&
     (payload['purpose'] === 'initial' ||
       payload['purpose'] === 'validation_correction' ||
       payload['purpose'] === 'human_reply' ||
@@ -658,7 +666,10 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
     Array.isArray(payload['failures']) &&
     payload['failures'].every((item) => typeof item === 'string')
   ) {
-    const purpose: WorkInputPurpose = payload['purpose'];
+    const stage = inputStage(payload['stage']);
+    const purpose: InputPurpose = payload['purpose'];
+    const task = payload['taskId'] === null ? null : taskId(payload['taskId']);
+    assertSessionScope(stage, task);
     return {
       ...base,
       attentionReplyId: null,
@@ -667,26 +678,8 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       kind,
       purpose,
       runId: null,
-      taskId: taskId(payload['taskId']),
-    };
-  }
-  if (
-    kind === 'prepare_wrapup_input' &&
-    (payload['purpose'] === 'initial' ||
-      payload['purpose'] === 'validation_correction' ||
-      payload['purpose'] === 'human_reply') &&
-    Array.isArray(payload['failures']) &&
-    payload['failures'].every((item) => typeof item === 'string')
-  ) {
-    const purpose: WrapupInputPurpose = payload['purpose'];
-    return {
-      ...base,
-      attentionReplyId: null,
-      attentionRequestId: null,
-      failures: payload['failures'],
-      kind,
-      purpose,
-      runId: null,
+      stage,
+      taskId: task,
     };
   }
   if (kind === 'open_pane' && run !== null && typeof payload['name'] === 'string') {
@@ -746,14 +739,13 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ cwd: action.cwd, prompt: action.prompt });
     case 'validate_run':
       return '{}';
-    case 'prepare_work_input':
+    case 'prepare_input':
       return jsonText({
         failures: action.failures,
         purpose: action.purpose,
+        stage: action.stage,
         taskId: action.taskId,
       });
-    case 'prepare_wrapup_input':
-      return jsonText({ failures: action.failures, purpose: action.purpose });
     case 'open_pane':
       return jsonText({ name: action.name });
     case 'open_diff':
@@ -1279,10 +1271,8 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
-    case 'work_input_ready':
-    case 'work_input_failed':
-    case 'wrapup_input_ready':
-    case 'wrapup_input_failed':
+    case 'input_ready':
+    case 'input_failed':
       return loadByAction(db, event.actionId);
     default: {
       const _exhaustive: never = event;
@@ -1320,10 +1310,8 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'retry':
     case 'worktree_ready':
     case 'worktree_failed':
-    case 'work_input_ready':
-    case 'work_input_failed':
-    case 'wrapup_input_ready':
-    case 'wrapup_input_failed':
+    case 'input_ready':
+    case 'input_failed':
     case 'complete':
       return null;
     default: {

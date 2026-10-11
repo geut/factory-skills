@@ -310,10 +310,9 @@ CREATE TABLE actions (
   retry_of_action_id   TEXT,
   kind                 TEXT NOT NULL CHECK (
     kind IN (
-      'fetch_ticket', 'prepare_worktree', 'prepare_work_input', 'launch_run', 'resume_run',
+      'fetch_ticket', 'prepare_worktree', 'prepare_input', 'launch_run', 'resume_run',
       'interrupt_run', 'validate_run', 'notify_attention',
-      'publish_projection', 'update_ticket_source', 'open_diff',
-      'prepare_wrapup_input', 'open_pane'
+      'publish_projection', 'update_ticket_source', 'open_diff', 'open_pane'
     )
   ),
   status               TEXT NOT NULL CHECK (

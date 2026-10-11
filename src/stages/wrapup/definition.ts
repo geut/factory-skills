@@ -2,6 +2,18 @@ import { defineStage } from '../definition.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
+// What wrap-up's input preparation captured before the agent runs.
+export type WrapupPrepared = {
+  adrPath: string | null;
+  // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
+  baseline: string;
+  contextPath: string | null;
+  // The all-stage usage table so far, excluding wrap-up.
+  usage: string;
+  // One line per passing work-validation check, per task.
+  verification: Array<string>;
+};
+
 export type WrapupInput = {
   adrPath: string | null;
   baseBranch: string | null;
@@ -33,6 +45,7 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 export const wrapup = defineStage<WrapupInput, 'wrapup'>({
   contract,
   emoji: '📦',
+  label: 'Wrap-up',
   // Wrap-up runs on the work model; it has no model setting of its own.
   model: 'work',
   name: 'wrapup',
@@ -49,6 +62,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup'>({
           kind: 'invalid',
         };
   },
+  preparesInput: true,
   prompts: {
     correction: (failures) =>
       [

@@ -1124,7 +1124,9 @@ test('wrap-up launches from checked input with the tasks, findings, verification
   assert.doesNotMatch(wrapup.prompt, /^Wrap-up/m);
   assert.match(wrapup.prompt, /github\.pullRequests: false/);
   const prepared: unknown = db
-    .prepare("SELECT status FROM actions WHERE kind = 'prepare_wrapup_input'")
+    .prepare(
+      "SELECT status FROM actions WHERE kind = 'prepare_input' AND json_extract(payload_json, '$.stage') = 'wrapup'",
+    )
     .get();
   assert.deepEqual({ ...(prepared ?? {}) }, { status: 'succeeded' });
   await closeWhenIdle(db);

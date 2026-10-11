@@ -9,28 +9,28 @@ import {
   finishLeasedAction,
   loadSnapshotByExecution,
   loadSnapshotByRun,
+  passedWorkChecks,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
 import type {
   ActionRecord,
   FactorySnapshot,
   IdSource,
+  InputReady,
   RunId,
   RunRecord,
   SessionRecord,
-  TaskRecord,
   TerminalOutcome,
 } from '../domain.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
+import { effects } from '../stages/effects.ts';
 import { stageTools } from '../stages/index.ts';
-import { validators } from '../validation/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
-import { inspectWorkInput } from './work-input.ts';
 import { prepareWorktree } from './worktree.ts';
-import { openHandoffPane, prepareWrapupInput } from './wrapup.ts';
+import { openHandoffPane } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
   if (
@@ -142,10 +142,8 @@ async function perform(
       return launch(input, action, snapshot);
     case 'validate_run':
       return runValidation(input, action, snapshot);
-    case 'prepare_work_input':
+    case 'prepare_input':
       return prepareInput(input, action, snapshot);
-    case 'prepare_wrapup_input':
-      return prepareWrapupInput(input, action, snapshot);
     case 'open_pane':
     case 'open_diff':
       return openHandoffPane(input, action, snapshot);
@@ -266,7 +264,7 @@ function worktree(
 function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
   const run = snapshot.runs.find((item) => item.id === runId) ?? null;
   const stage = run === null ? null : (sessionForRun(snapshot, run)?.stage ?? null);
-  return stage === null ? null : validators[stage];
+  return stage === null ? null : effects[stage].validator;
 }
 
 // Runs the validator for the run's stage and records its report. A
@@ -282,7 +280,7 @@ async function runValidation(
     throw new Error('validate action is missing its run');
   }
   const stage = session.stage;
-  const validator = validators[stage];
+  const validator = effects[stage].validator;
   const leaseMs = validator.leaseMs?.(snapshot);
   if (leaseMs !== undefined) {
     extendActionLease(input.db, action.id, input.now(), leaseMs);
@@ -308,78 +306,41 @@ async function runValidation(
   return null;
 }
 
-function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
-  const done = new Set(
-    snapshot.tasks.filter((task) => task.status === 'done').map((task) => task.taskId),
-  );
-  const ready = snapshot.tasks
-    .filter((task) => task.status === 'pending' && task.blockedBy.every((id) => done.has(id)))
-    .sort((left, right) => left.ordinal - right.ordinal);
-  return ready[0] ?? null;
-}
-
-function dependenciesDone(snapshot: FactorySnapshot, task: TaskRecord): boolean {
-  return task.blockedBy.every((id) =>
-    snapshot.tasks.some((item) => item.taskId === id && item.status === 'done'),
-  );
-}
-
+// Prepares a stage's input outside the controller transaction and hands the
+// reducer what it found, or why the stage cannot start.
 function prepareInput(
   input: { db: DatabaseSync; ids: IdSource; now: () => string },
-  action: Extract<ActionRecord, { kind: 'prepare_work_input' }>,
+  action: Extract<ActionRecord, { kind: 'prepare_input' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
-  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
-  const task = snapshot.tasks.find((item) => item.taskId === action.taskId) ?? null;
-  const selected =
-    task !== null &&
-    (action.purpose === 'initial'
-      ? readyTask(snapshot)?.taskId === task.taskId
-      : action.purpose === 'validation_correction' || action.purpose === 'review_changes'
-        ? task.status === 'working'
-        : task.status === 'blocked');
-  const inspection =
-    task === null ||
-    snapshot.execution.worktreePath === null ||
-    snapshot.execution.worktreeBranch === null
-      ? { failures: ['The worktree is not ready for this execution.'], kind: 'failed' as const }
-      : inspectWorkInput({
-          activeChild: snapshot.runs.some((run) => run.status !== 'terminal'),
-          dependenciesDone: dependenciesDone(snapshot, task),
-          executionCurrent: executionIsCurrent(input.db, snapshot.execution.id),
-          expectedBranch: snapshot.execution.worktreeBranch,
-          factoryDir: snapshot.execution.factoryDir,
-          factoryRoot,
-          planPath:
-            snapshot.execution.planPath ?? path.join(snapshot.execution.factoryDir, 'plan.md'),
-          selectedTask: selected,
-          taskFile: task.taskFile,
-          worktreePath: snapshot.execution.worktreePath,
-          worktreeReady: snapshot.execution.worktreeStatus === 'ready',
-        });
-  if (inspection.kind === 'failed') {
+  const executionId = snapshot.execution.id;
+  const result = effects[action.stage].prepareInput({
+    action,
+    deps: {
+      executionCurrent: executionIsCurrent(input.db, executionId),
+      usage: () => usageTable(input.db, executionId, { includeWrapup: false }),
+      workChecks: () => passedWorkChecks(input.db, executionId),
+    },
+    snapshot,
+  });
+  if (result.kind === 'failed') {
+    applyActionEvent(
+      input,
+      { actionId: action.id, kind: 'input_failed', message: result.message },
+      `input-failed:${action.id}`,
+    );
+  } else {
     applyActionEvent(
       input,
       {
         actionId: action.id,
-        kind: 'work_input_failed',
-        message: inspection.failures.join('\n'),
-      },
-      `work-input-failed:${action.id}`,
+        input: result.input,
+        kind: 'input_ready',
+        stage: action.stage,
+      } as InputReady,
+      `input-ready:${action.id}`,
     );
-    return Promise.resolve(null);
   }
-  applyActionEvent(
-    input,
-    {
-      actionId: action.id,
-      adrPath: inspection.adrPath,
-      contextPath: inspection.contextPath,
-      kind: 'work_input_ready',
-      taskType: inspection.taskType,
-    },
-    `work-input-ready:${action.id}`,
-  );
   return Promise.resolve(null);
 }
 

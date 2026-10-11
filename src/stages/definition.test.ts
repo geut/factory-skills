@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { effects } from './effects.ts';
 import { stages } from './index.ts';
 
 test('every stage builds its prompts from its own skill and contract', () => {
@@ -24,5 +25,11 @@ test('only work takes a return to work', () => {
       () => stage.turn({ kind: 'return', problems: [], round: 1 }),
       /cannot take a return to work/,
     );
+  }
+});
+
+test('a stage prepares input exactly when its effects can', () => {
+  for (const [name, stage] of Object.entries(stages)) {
+    assert.equal(stage.preparesInput, 'prepareInput' in effects[stage.name], name);
   }
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { InputStage, PreparedInput } from './stages/index.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -95,6 +96,11 @@ export function sequentialIds(prefix: string): IdSource {
   };
 }
 
+// A prepared input, typed by the stage that asked for it.
+export type InputReady = {
+  [S in InputStage]: { actionId: ActionId; input: PreparedInput[S]; kind: 'input_ready'; stage: S };
+}[InputStage];
+
 export type Stage = StageName | 'done';
 // A stage an agent runs; `done` is only an execution's position after the last one.
 export type StageName = 'plan' | 'work' | 'review' | 'wrapup';
@@ -140,13 +146,8 @@ export type AttentionKind = 'agent_question' | 'policy_limit' | 'manual_approval
 export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'cancelled';
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
-export type WrapupInputPurpose = 'initial' | 'validation_correction' | 'human_reply';
-
-export type WorkInputPurpose =
-  | 'initial'
-  | 'validation_correction'
-  | 'human_reply'
-  | 'review_changes';
+// Why a stage's input is being prepared: the run it is for.
+export type InputPurpose = 'initial' | 'validation_correction' | 'human_reply' | 'review_changes';
 export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
 export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
@@ -286,27 +287,8 @@ export type ControllerEvent =
       runId: RunId;
       stage: 'review';
     }
-  | {
-      actionId: ActionId;
-      adrPath: string | null;
-      contextPath: string | null;
-      kind: 'work_input_ready';
-      taskType: string | null;
-    }
-  | { actionId: ActionId; kind: 'work_input_failed'; message: string }
-  | {
-      actionId: ActionId;
-      adrPath: string | null;
-      // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
-      baseline: string;
-      contextPath: string | null;
-      kind: 'wrapup_input_ready';
-      // The all-stage usage table so far, excluding wrap-up.
-      usage: string;
-      // One line per passing work-validation check, per task.
-      verification: Array<string>;
-    }
-  | { actionId: ActionId; kind: 'wrapup_input_failed'; message: string }
+  | InputReady
+  | { actionId: ActionId; kind: 'input_failed'; message: string }
   | {
       actionId: ActionId;
       kind: 'validation_finished';
@@ -498,19 +480,14 @@ export type ActionRecord =
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;
+      // What the run this input is for must fix, when it is a correction.
       failures: Array<string>;
-      kind: 'prepare_work_input';
-      purpose: WorkInputPurpose;
+      kind: 'prepare_input';
+      purpose: InputPurpose;
       runId: null;
-      taskId: TaskId;
-    })
-  | (ActionBase & {
-      attentionReplyId: null;
-      attentionRequestId: null;
-      failures: Array<string>;
-      kind: 'prepare_wrapup_input';
-      purpose: WrapupInputPurpose;
-      runId: null;
+      stage: InputStage;
+      // Set exactly when the stage runs per task.
+      taskId: TaskId | null;
     })
   | (ActionBase & {
       attentionReplyId: null;

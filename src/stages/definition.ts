@@ -20,11 +20,15 @@ export type StageDefinition<Input = unknown, Name extends StageName = StageName>
   autoExit: true;
   contract: string;
   emoji: string;
+  // The stage's name in prose, such as "Wrap-up".
+  label: string;
   // The policy model this stage's agent runs on.
   model: keyof Policy['models'];
   name: Name;
   // Pure: the run's output read against the stage's contract.
   parse: (output: string, round: number) => ParsedOutput;
+  // Whether runs wait for the stage's input preparation (its effects).
+  preparesInput: boolean;
   // `task` stages run once per task and need a task id on their session.
   scope: 'ticket' | 'task';
   skill: string;

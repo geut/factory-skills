@@ -460,13 +460,10 @@ export function terminalSummary(
     const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
     const queued = snapshot.actions.find(
       (action) =>
-        (action.kind === 'prepare_work_input' || action.kind === 'prepare_wrapup_input') &&
+        action.kind === 'prepare_input' &&
         prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
     );
-    const failure =
-      queued?.kind === 'prepare_work_input' || queued?.kind === 'prepare_wrapup_input'
-        ? queued.failures[0]
-        : undefined;
+    const failure = queued?.kind === 'prepare_input' ? queued.failures[0] : undefined;
     if (failure !== undefined && failure.length > 0) {
       return failure;
     }

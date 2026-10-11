@@ -7,6 +7,7 @@ import {
   type ExecutionStatus,
   type FactorySnapshot,
   type IdSource,
+  type InputPurpose,
   type Reduction,
   type ReviewResult,
   type ReviewValidationReport,
@@ -19,15 +20,13 @@ import {
   type TaskRecord,
   type TerminalOutcome,
   type UsageWrite,
-  type WorkInputPurpose,
   type WorkValidationReport,
-  type WrapupInputPurpose,
   type WrapupValidationReport,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
 import type { StageDefinition } from '../stages/definition.ts';
-import { stages } from '../stages/index.ts';
+import { stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import { formatFinding, parseReview } from '../stages/review/parse.ts';
 import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
 
@@ -323,14 +322,17 @@ function enqueueValidation(
   });
 }
 
-function enqueueWorkInput(
+type PrepareInputAction = Extract<ActionRecord, { kind: 'prepare_input' }>;
+
+function enqueueInput(
   snapshot: FactorySnapshot,
+  stage: InputStage,
   input: {
     failures: Array<string>;
     idempotencyKey: string;
     ids: IdSource;
-    purpose: WorkInputPurpose;
-    taskId: TaskId;
+    purpose: InputPurpose;
+    taskId?: TaskId;
   },
 ): void {
   snapshot.actions.push({
@@ -340,14 +342,15 @@ function enqueueWorkInput(
     failures: input.failures,
     id: input.ids.action(),
     idempotencyKey: input.idempotencyKey,
-    kind: 'prepare_work_input',
+    kind: 'prepare_input',
     lastError: null,
     maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
     purpose: input.purpose,
     retryOfActionId: null,
     runId: null,
+    stage,
     status: 'pending',
-    taskId: input.taskId,
+    taskId: input.taskId ?? null,
   });
 }
 
@@ -370,7 +373,7 @@ function scheduleCorrection(
     return;
   }
   if (session.stage === 'work' && session.taskId !== null) {
-    enqueueWorkInput(snapshot, {
+    enqueueInput(snapshot, 'work', {
       failures,
       idempotencyKey: `work-input:${parent.id}:correction:${count + 1}`,
       ids,
@@ -771,38 +774,12 @@ function minorFindings(snapshot: FactorySnapshot): Array<string> {
   return findings;
 }
 
-function enqueueWrapupInput(
-  snapshot: FactorySnapshot,
-  input: {
-    failures: Array<string>;
-    idempotencyKey: string;
-    ids: IdSource;
-    purpose: WrapupInputPurpose;
-  },
-): void {
-  snapshot.actions.push({
-    attempts: 0,
-    attentionReplyId: null,
-    attentionRequestId: null,
-    failures: input.failures,
-    id: input.ids.action(),
-    idempotencyKey: input.idempotencyKey,
-    kind: 'prepare_wrapup_input',
-    lastError: null,
-    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-    purpose: input.purpose,
-    retryOfActionId: null,
-    runId: null,
-    status: 'pending',
-  });
-}
-
 // Wrap-up starts with a checked input; the session and run are created when
 // that input is ready.
 function queueWrapup(snapshot: FactorySnapshot, ids: IdSource): void {
   snapshot.execution.stage = 'wrapup';
   snapshot.execution.status = 'active';
-  enqueueWrapupInput(snapshot, {
+  enqueueInput(snapshot, 'wrapup', {
     failures: [],
     idempotencyKey: `wrapup-input:${snapshot.execution.id}:initial`,
     ids,
@@ -821,7 +798,7 @@ function advanceAfterApproval(
   if (next !== null) {
     snapshot.execution.stage = 'work';
     snapshot.execution.status = 'active';
-    enqueueWorkInput(snapshot, {
+    enqueueInput(snapshot, 'work', {
       failures: [],
       idempotencyKey: `work-input:${snapshot.execution.id}:${next.taskId}:initial`,
       ids,
@@ -888,7 +865,7 @@ function applyVerdict(
       task.status = 'working';
       snapshot.execution.stage = 'work';
       snapshot.execution.status = 'active';
-      enqueueWorkInput(snapshot, {
+      enqueueInput(snapshot, 'work', {
         failures: lines,
         idempotencyKey: `work-input:${run.id}:review:${result.round}`,
         ids,
@@ -1101,16 +1078,10 @@ function wrapupSession(snapshot: FactorySnapshot): SessionRecord | null {
 function wrapupInputReady(
   snapshot: FactorySnapshot,
   existing: FactorySnapshot,
-  event: Extract<ControllerEvent, { kind: 'wrapup_input_ready' }>,
+  action: PrepareInputAction,
+  event: PreparedInput['wrapup'],
   ids: IdSource,
 ): Reduction {
-  const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
-  if (action === null || action.kind !== 'prepare_wrapup_input') {
-    return reject(existing, 'Wrap-up input result does not match an action.');
-  }
-  if (action.status === 'succeeded') {
-    return unchanged(existing, 'Duplicate wrap-up input event ignored.');
-  }
   const worktree = snapshot.execution.worktreePath;
   if (snapshot.execution.stage !== 'wrapup' || worktree === null) {
     return reject(existing, 'The execution is not in wrap-up.');
@@ -1233,7 +1204,7 @@ function finishWrapupValidation(
 ): Reduction {
   action.status = 'succeeded';
   if (report.status === 'failed') {
-    enqueueWrapupInput(snapshot, {
+    enqueueInput(snapshot, 'wrapup', {
       failures: report.failures,
       idempotencyKey: `wrapup-input:${run.id}:correction`,
       ids,
@@ -1308,6 +1279,135 @@ function finishWrapupValidation(
     });
   }
   return finish(snapshot, `${ref} is ready for handoff.`);
+}
+
+// Work starts, corrects, or resumes once its input is checked; the session
+// and run are created here so they exist only for a ready input.
+function workInputReady(
+  snapshot: FactorySnapshot,
+  existing: FactorySnapshot,
+  action: PrepareInputAction,
+  event: PreparedInput['work'],
+  ids: IdSource,
+): Reduction {
+  const task = action.taskId === null ? null : taskById(snapshot, action.taskId);
+  const worktree = snapshot.execution.worktreePath;
+  if (task === null || worktree === null) {
+    return reject(existing, 'Work task is missing.');
+  }
+  action.status = 'succeeded';
+  if (action.purpose === 'initial') {
+    task.status = 'working';
+    const session = newSession(snapshot.execution.policy, 'work', task.taskId, ids);
+    snapshot.sessions.push(session);
+    const prompt = stages.work.turn({
+      input: {
+        adrPath: event.adrPath,
+        commands: snapshot.execution.policy.validation.work.commands,
+        contextPath: event.contextPath,
+        dependencies: task.blockedBy.map((id) => ({
+          status: taskById(snapshot, id)?.status ?? 'missing',
+          taskId: id,
+        })),
+        displayRef: snapshot.ticket.displayRef,
+        planPath: snapshot.execution.planPath ?? '',
+        taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+        taskId: task.taskId,
+        taskType: event.taskType,
+        title: task.title,
+        worktree,
+        worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+      },
+      kind: 'initial',
+    });
+    const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
+    run.description = childDescription(task.title);
+    launchAction(snapshot, run, prompt, 'launch', ids, worktree);
+    return finish(snapshot, `Work queued for task ${task.taskId}.`);
+  }
+  const session =
+    snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === task.taskId) ?? null;
+  if (session === null) {
+    return reject(existing, 'Work session is missing.');
+  }
+  if (action.purpose === 'validation_correction' || action.purpose === 'review_changes') {
+    const review = action.purpose === 'review_changes';
+    const prompt = review
+      ? stages.work.turn({ kind: 'return', problems: action.failures, round: task.reviewRound })
+      : stages.work.turn({ failures: action.failures, kind: 'correction' });
+    const parent =
+      [...snapshot.runs]
+        .reverse()
+        .find((item) => item.sessionId === session.id && item.status === 'terminal') ?? null;
+    const count = snapshot.runs.filter(
+      (item) => item.sessionId === session.id && item.purpose === 'validation_correction',
+    ).length;
+    const run = addRun(
+      snapshot,
+      session,
+      parent,
+      action.purpose,
+      review ? task.reviewRound : count + 1,
+      ids,
+      prompt,
+    );
+    run.description = parent?.description ?? childDescription(task.title);
+    launchAction(
+      snapshot,
+      run,
+      prompt,
+      session.sessionFile === null ? 'launch' : 'resume',
+      ids,
+      worktree,
+    );
+    snapshot.execution.status = 'active';
+    return finish(
+      snapshot,
+      review
+        ? `Review changes queued for task ${task.taskId}.`
+        : `Work correction queued for task ${task.taskId}.`,
+    );
+  }
+  const attention =
+    snapshot.attention.find((item) => item.status === 'resuming' || item.status === 'answered') ??
+    null;
+  const reply =
+    snapshot.replies.find(
+      (item) => item.isCurrent && attention !== null && item.requestId === attention.id,
+    ) ?? null;
+  if (attention === null || reply === null) {
+    return reject(existing, 'Reply was not stored.');
+  }
+  const parent = attention.runId === null ? null : runFor(snapshot, attention.runId);
+  const prompt = stages.work.turn({ answer: reply.answer, kind: 'reply' });
+  const run = addRun(
+    snapshot,
+    session,
+    parent,
+    'human_reply',
+    parent?.semanticRound ?? 0,
+    ids,
+    prompt,
+  );
+  run.description = parent?.description ?? childDescription(task.title);
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: reply.id,
+    attentionRequestId: attention.id,
+    cwd: worktree,
+    id: ids.action(),
+    idempotencyKey: `resume:${reply.id}:${run.id}`,
+    kind: 'resume_run',
+    lastError: null,
+    maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+    prompt,
+    retryOfActionId: null,
+    runId: run.id,
+    status: 'pending',
+  });
+  attention.status = 'resuming';
+  snapshot.execution.status = 'resuming';
+  return finish(snapshot, 'Reply stored. Resuming the session.');
 }
 
 export function reduce(input: {
@@ -1424,7 +1524,7 @@ export function reduce(input: {
       if (task === null) {
         return reject(existing, 'Plan has no runnable task.');
       }
-      enqueueWorkInput(snapshot, {
+      enqueueInput(snapshot, 'work', {
         failures: [],
         idempotencyKey: `work-input:${snapshot.execution.id}:${task.taskId}:initial`,
         ids,
@@ -1447,153 +1547,35 @@ export function reduce(input: {
       snapshot.execution.statusReason = event.message;
       return finish(snapshot, event.message);
     }
-    case 'work_input_ready': {
+    case 'input_ready': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
-      if (action === null || action.kind !== 'prepare_work_input') {
-        return reject(existing, 'Work input result does not match an action.');
+      if (action === null || action.kind !== 'prepare_input' || action.stage !== event.stage) {
+        return reject(existing, 'Input result does not match an action.');
       }
       if (action.status === 'succeeded') {
-        return unchanged(existing, 'Duplicate work input event ignored.');
+        return unchanged(existing, 'Duplicate input event ignored.');
       }
-      const task = taskById(snapshot, action.taskId);
-      const worktree = snapshot.execution.worktreePath;
-      if (task === null || worktree === null) {
-        return reject(existing, 'Work task is missing.');
-      }
-      action.status = 'succeeded';
-      if (action.purpose === 'initial') {
-        task.status = 'working';
-        const session = newSession(snapshot.execution.policy, 'work', task.taskId, ids);
-        snapshot.sessions.push(session);
-        const prompt = stages.work.turn({
-          input: {
-            adrPath: event.adrPath,
-            commands: snapshot.execution.policy.validation.work.commands,
-            contextPath: event.contextPath,
-            dependencies: task.blockedBy.map((id) => ({
-              status: taskById(snapshot, id)?.status ?? 'missing',
-              taskId: id,
-            })),
-            displayRef: snapshot.ticket.displayRef,
-            planPath: snapshot.execution.planPath ?? '',
-            taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-            taskId: task.taskId,
-            taskType: event.taskType,
-            title: task.title,
-            worktree,
-            worktreeBranch: snapshot.execution.worktreeBranch ?? '',
-          },
-          kind: 'initial',
-        });
-        const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
-        run.description = childDescription(task.title);
-        launchAction(snapshot, run, prompt, 'launch', ids, worktree);
-        return finish(snapshot, `Work queued for task ${task.taskId}.`);
-      }
-      const session =
-        snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === task.taskId) ??
-        null;
-      if (session === null) {
-        return reject(existing, 'Work session is missing.');
-      }
-      if (action.purpose === 'validation_correction' || action.purpose === 'review_changes') {
-        const review = action.purpose === 'review_changes';
-        const prompt = review
-          ? stages.work.turn({ kind: 'return', problems: action.failures, round: task.reviewRound })
-          : stages.work.turn({ failures: action.failures, kind: 'correction' });
-        const parent =
-          [...snapshot.runs]
-            .reverse()
-            .find((item) => item.sessionId === session.id && item.status === 'terminal') ?? null;
-        const count = snapshot.runs.filter(
-          (item) => item.sessionId === session.id && item.purpose === 'validation_correction',
-        ).length;
-        const run = addRun(
-          snapshot,
-          session,
-          parent,
-          action.purpose,
-          review ? task.reviewRound : count + 1,
-          ids,
-          prompt,
-        );
-        run.description = parent?.description ?? childDescription(task.title);
-        launchAction(
-          snapshot,
-          run,
-          prompt,
-          session.sessionFile === null ? 'launch' : 'resume',
-          ids,
-          worktree,
-        );
-        snapshot.execution.status = 'active';
-        return finish(
-          snapshot,
-          review
-            ? `Review changes queued for task ${task.taskId}.`
-            : `Work correction queued for task ${task.taskId}.`,
-        );
-      }
-      const attention =
-        snapshot.attention.find(
-          (item) => item.status === 'resuming' || item.status === 'answered',
-        ) ?? null;
-      const reply =
-        snapshot.replies.find(
-          (item) => item.isCurrent && attention !== null && item.requestId === attention.id,
-        ) ?? null;
-      if (attention === null || reply === null) {
-        return reject(existing, 'Reply was not stored.');
-      }
-      const parent = attention.runId === null ? null : runFor(snapshot, attention.runId);
-      const prompt = stages.work.turn({ answer: reply.answer, kind: 'reply' });
-      const run = addRun(
-        snapshot,
-        session,
-        parent,
-        'human_reply',
-        parent?.semanticRound ?? 0,
-        ids,
-        prompt,
-      );
-      run.description = parent?.description ?? childDescription(task.title);
-      snapshot.actions.push({
-        attempts: 0,
-        attentionReplyId: reply.id,
-        attentionRequestId: attention.id,
-        cwd: worktree,
-        id: ids.action(),
-        idempotencyKey: `resume:${reply.id}:${run.id}`,
-        kind: 'resume_run',
-        lastError: null,
-        maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-        prompt,
-        retryOfActionId: null,
-        runId: run.id,
-        status: 'pending',
-      });
-      attention.status = 'resuming';
-      snapshot.execution.status = 'resuming';
-      return finish(snapshot, 'Reply stored. Resuming the session.');
+      return event.stage === 'work'
+        ? workInputReady(snapshot, existing, action, event.input, ids)
+        : wrapupInputReady(snapshot, existing, action, event.input, ids);
     }
-    case 'wrapup_input_ready':
-      return wrapupInputReady(snapshot, existing, event, ids);
-    case 'wrapup_input_failed': {
+    case 'input_failed': {
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
-      if (action === null || action.kind !== 'prepare_wrapup_input') {
-        return reject(existing, 'Wrap-up input failure does not match an action.');
+      if (action === null || action.kind !== 'prepare_input') {
+        return reject(existing, 'Input failure does not match an action.');
       }
       if (action.status === 'failed') {
-        return unchanged(existing, 'Duplicate wrap-up input failure ignored.');
+        return unchanged(existing, 'Duplicate input failure ignored.');
       }
       action.status = 'failed';
       action.lastError = event.message;
       pauseWithNotice(snapshot, {
-        code: 'wrapup_input_invalid',
+        code: `${action.stage}_input_invalid`,
         failures: [event.message],
         ids,
+        // A failed reply keeps its stored answer, so a retry still carries it.
         keepReply: action.purpose === 'human_reply',
-        question: `Wrap-up cannot start:\n${event.message}`,
+        question: `${stages[action.stage].label} cannot start:\n${event.message}`,
         retryable: true,
       });
       return finish(snapshot, event.message);
@@ -1620,25 +1602,6 @@ export function reduce(input: {
       snapshot.execution.stage = 'done';
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
-    }
-    case 'work_input_failed': {
-      const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
-      if (action === null || action.kind !== 'prepare_work_input') {
-        return reject(existing, 'Work input failure does not match an action.');
-      }
-      if (action.status === 'failed') {
-        return unchanged(existing, 'Duplicate work input failure ignored.');
-      }
-      action.status = 'failed';
-      action.lastError = event.message;
-      pauseWithNotice(snapshot, {
-        code: 'work_input_invalid',
-        failures: [event.message],
-        ids,
-        question: event.message,
-        retryable: true,
-      });
-      return finish(snapshot, event.message);
     }
     case 'run_started': {
       const run = runFor(snapshot, event.runId);
@@ -1754,7 +1717,7 @@ export function reduce(input: {
         return reject(existing, 'No session is available to resume.');
       }
       if (session.stage === 'work' && session.taskId !== null) {
-        enqueueWorkInput(snapshot, {
+        enqueueInput(snapshot, 'work', {
           failures: [],
           idempotencyKey: `work-input:${reply.id}`,
           ids,
@@ -1765,7 +1728,7 @@ export function reduce(input: {
         return finish(snapshot, 'Reply stored. Checking the work input.');
       }
       if (session.stage === 'wrapup') {
-        enqueueWrapupInput(snapshot, {
+        enqueueInput(snapshot, 'wrapup', {
           failures: [],
           idempotencyKey: `wrapup-input:${reply.id}`,
           ids,
@@ -1809,53 +1772,32 @@ export function reduce(input: {
       }
       if (
         snapshot.execution.status === 'paused' &&
-        snapshot.execution.statusReasonCode === 'work_input_invalid'
+        snapshot.execution.statusReasonCode?.endsWith('_input_invalid') === true
       ) {
         const failed = [...snapshot.actions]
           .reverse()
           .find(
-            (item): item is Extract<ActionRecord, { kind: 'prepare_work_input' }> =>
-              item.kind === 'prepare_work_input' && item.status === 'failed',
-          );
-        if (failed === undefined) {
-          return reject(existing, 'Nothing failed that can be retried.');
-        }
-        resolveOpen(snapshot);
-        enqueueWorkInput(snapshot, {
-          failures: failed.failures,
-          idempotencyKey: `work-input-retry:${event.idempotencyKey}`,
-          ids,
-          purpose: failed.purpose,
-          taskId: failed.taskId,
-        });
-        snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
-        snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying work input preparation.');
-      }
-      if (
-        snapshot.execution.status === 'paused' &&
-        snapshot.execution.statusReasonCode === 'wrapup_input_invalid'
-      ) {
-        const failed = [...snapshot.actions]
-          .reverse()
-          .find(
-            (item): item is Extract<ActionRecord, { kind: 'prepare_wrapup_input' }> =>
-              item.kind === 'prepare_wrapup_input' && item.status === 'failed',
+            (item): item is PrepareInputAction =>
+              item.kind === 'prepare_input' && item.status === 'failed',
           );
         if (failed === undefined) {
           return reject(existing, 'Nothing failed that can be retried.');
         }
         // A failed reply keeps its stored answer, so the retry still carries it.
         resolveOpen(snapshot, failed.purpose === 'human_reply');
-        enqueueWrapupInput(snapshot, {
+        enqueueInput(snapshot, failed.stage, {
           failures: failed.failures,
-          idempotencyKey: `wrapup-input-retry:${event.idempotencyKey}`,
+          idempotencyKey: `${failed.stage}-input-retry:${event.idempotencyKey}`,
           ids,
           purpose: failed.purpose,
+          ...(failed.taskId === null ? {} : { taskId: failed.taskId }),
         });
         snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
         snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying wrap-up input preparation.');
+        return finish(
+          snapshot,
+          `Retrying ${stages[failed.stage].label.toLowerCase()} input preparation.`,
+        );
       }
       if (
         snapshot.execution.status === 'paused' &&

@@ -19,6 +19,7 @@ const contract = 'factory.review.v4';
 export const review = defineStage<ReviewInput, 'review'>({
   contract,
   emoji: '👀',
+  label: 'Review',
   model: 'review',
   name: 'review',
   parse: (output, round) => {
@@ -27,6 +28,7 @@ export const review = defineStage<ReviewInput, 'review'>({
       ? { json: JSON.stringify({ output, review: parsed.result }), kind: 'valid' }
       : { error: parsed.failures.join('\n'), json: JSON.stringify({ output }), kind: 'invalid' };
   },
+  preparesInput: false,
   prompts: {
     correction: (failures) =>
       [

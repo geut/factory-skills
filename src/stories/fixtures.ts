@@ -388,7 +388,7 @@ export function child(
 export function action(
   snapshot: FactorySnapshot,
   idempotencyKey: string,
-  kind: 'open_diff' | 'open_pane' | 'prepare_wrapup_input',
+  kind: 'open_diff' | 'open_pane' | 'prepare_input',
   forRun: RunRecord | null,
   failures: Array<string> = [],
 ): void {
@@ -403,13 +403,15 @@ export function action(
     retryOfActionId: null,
     status: 'pending' as const,
   };
-  if (kind === 'prepare_wrapup_input') {
+  if (kind === 'prepare_input') {
     snapshot.actions.push({
       ...base,
       failures,
       kind,
       purpose: 'validation_correction',
       runId: null,
+      stage: 'wrapup',
+      taskId: null,
     });
     return;
   }

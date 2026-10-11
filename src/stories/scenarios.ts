@@ -419,7 +419,7 @@ export function wrapupCorrecting(): Scenario {
   if (run === null) {
     return scenario;
   }
-  action(snapshot, `wrapup-input:${run.id}:correction`, 'prepare_wrapup_input', null, [
+  action(snapshot, `wrapup-input:${run.id}:correction`, 'prepare_input', null, [
     '## Files does not list changed path src/lib/server/read.ts.',
     'Wrap-up changed product code: src/routes/+page.svelte. Route code changes back through work and review.',
   ]);

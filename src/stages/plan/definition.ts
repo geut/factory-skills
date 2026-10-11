@@ -9,10 +9,12 @@ const contract = 'factory.plan.v3';
 export const plan = defineStage<PlanInput, 'plan'>({
   contract,
   emoji: '🔎',
+  label: 'Plan',
   model: 'plan',
   name: 'plan',
   // The plan is the files it wrote, not its response.
   parse: () => ({ json: JSON.stringify({ contract, source: 'files' }), kind: 'valid' }),
+  preparesInput: false,
   prompts: {
     correction: (failures) =>
       [

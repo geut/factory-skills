@@ -1,6 +1,13 @@
 import { defineStage } from '../definition.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 
+// What work's input preparation found in the factory files.
+export type WorkPrepared = {
+  adrPath: string | null;
+  contextPath: string | null;
+  taskType: string | null;
+};
+
 export type WorkInput = {
   adrPath: string | null;
   commands: Array<{ argv: Array<string>; name: string }>;
@@ -23,8 +30,10 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 export const work = defineStage<WorkInput, 'work'>({
   contract,
   emoji: '🛠',
+  label: 'Work',
   model: 'work',
   name: 'work',
+  preparesInput: true,
   prompts: {
     correction: (failures) =>
       [
