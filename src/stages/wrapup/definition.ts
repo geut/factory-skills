@@ -1,5 +1,6 @@
 import { defineStage } from '../definition.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
+import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
 export type WrapupInput = {
   adrPath: string | null;
@@ -35,6 +36,19 @@ export const wrapup = defineStage<WrapupInput, 'wrapup'>({
   // Wrap-up runs on the work model; it has no model setting of its own.
   model: 'work',
   name: 'wrapup',
+  // The raw response is the handoff text. Its headings make it complete.
+  parse: (output) => {
+    const sections = handoffSections(output);
+    const missing = WRAPUP_HEADINGS.filter((name) => !sections.has(name.toLowerCase()));
+    const json = JSON.stringify({ output });
+    return missing.length === 0
+      ? { json, kind: 'valid' }
+      : {
+          error: missing.map((name) => `## ${name} is missing.`).join('\n'),
+          json,
+          kind: 'invalid',
+        };
+  },
   prompts: {
     correction: (failures) =>
       [

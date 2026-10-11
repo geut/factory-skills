@@ -1,5 +1,6 @@
 import { defineStage } from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
+import { parseReview } from './parse.ts';
 
 export type ReviewInput = {
   diff: string;
@@ -20,6 +21,12 @@ export const review = defineStage<ReviewInput, 'review'>({
   emoji: '👀',
   model: 'review',
   name: 'review',
+  parse: (output, round) => {
+    const parsed = parseReview(output, round);
+    return parsed.kind === 'valid'
+      ? { json: JSON.stringify({ output, review: parsed.result }), kind: 'valid' }
+      : { error: parsed.failures.join('\n'), json: JSON.stringify({ output }), kind: 'invalid' };
+  },
   prompts: {
     correction: (failures) =>
       [

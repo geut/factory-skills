@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
   failedReport,
@@ -17,16 +18,6 @@ export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 // Validates the wrap-up handoff against the repository, not the agent's
 // claims. The headings are checked for completeness; the prose is not parsed
 // for operational state.
-
-export const WRAPUP_HEADINGS = [
-  'Outcome',
-  'PR summary',
-  'Files',
-  'Tests',
-  'Operations',
-  'Limitations',
-  'Merge commands',
-] as const;
 
 // Controller-owned or transient parts of the factory root.
 const factoryInternal = new Set(['db', 'sessions', 'worktrees', 'node_modules', '.git']);
@@ -172,18 +163,6 @@ export function parseBaseline(text: string): WrapupBaseline | null {
     return null;
   }
   return null;
-}
-
-export function handoffSections(output: string): Map<string, string> {
-  const sections = new Map<string, string>();
-  const text = output.trim().replace(/^```[\w-]*\n([\s\S]*)\n```$/, '$1');
-  const matches = [...text.matchAll(/^##\s+(.+?)\s*$/gm)];
-  matches.forEach((match, index) => {
-    const start = (match.index ?? 0) + match[0].length;
-    const end = matches[index + 1]?.index ?? text.length;
-    sections.set((match[1] ?? '').trim().toLowerCase(), text.slice(start, end).trim());
-  });
-  return sections;
 }
 
 function cleanPath(value: string): string {

@@ -26,9 +26,9 @@ import {
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
+import type { StageDefinition } from '../stages/definition.ts';
 import { stages } from '../stages/index.ts';
-import { formatFinding, parseReview } from '../validation/review.ts';
-import { handoffSections, WRAPUP_HEADINGS } from '../validation/wrapup.ts';
+import { formatFinding, parseReview } from '../stages/review/parse.ts';
 import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
@@ -469,6 +469,26 @@ function usageFor(run: RunRecord, terminal: TerminalOutcome): UsageWrite | null 
   return { cumulative: terminal.usage, runId: run.id, sessionId: run.sessionId };
 }
 
+function recordOutput(
+  run: RunRecord,
+  stage: { contract: string; parse: StageDefinition['parse'] },
+  output: string,
+): void {
+  const parsed = stage.parse(output, run.semanticRound);
+  run.resultJson = parsed.json;
+  if (parsed.kind === 'unchecked') {
+    return;
+  }
+  run.resultContract = stage.contract;
+  if (parsed.kind === 'valid') {
+    run.resultStatus = 'valid';
+    run.resultHash = sha256(parsed.json);
+  } else {
+    run.resultStatus = 'invalid';
+    run.resultError = parsed.error;
+  }
+}
+
 function applyTerminal(
   snapshot: FactorySnapshot,
   run: RunRecord,
@@ -482,43 +502,8 @@ function applyTerminal(
   const session = sessionFor(snapshot, run.sessionId);
   switch (terminal.kind) {
     case 'subagent_done': {
-      if (session?.stage === 'plan') {
-        const marker = JSON.stringify({ contract: 'factory.plan.v3', source: 'files' });
-        run.resultStatus = 'valid';
-        run.resultContract = 'factory.plan.v3';
-        run.resultJson = marker;
-        run.resultHash = sha256(marker);
-      }
-      if (session?.stage === 'work') {
-        run.resultJson = JSON.stringify({ output: terminal.output });
-      }
-      if (session?.stage === 'review') {
-        const parsed = parseReview(terminal.output, run.semanticRound);
-        run.resultContract = stages.review.contract;
-        if (parsed.kind === 'valid') {
-          run.resultJson = JSON.stringify({ output: terminal.output, review: parsed.result });
-          run.resultStatus = 'valid';
-          run.resultHash = sha256(run.resultJson);
-        } else {
-          run.resultJson = JSON.stringify({ output: terminal.output });
-          run.resultStatus = 'invalid';
-          run.resultError = parsed.failures.join('\n');
-        }
-      }
-      if (session?.stage === 'wrapup') {
-        // The raw response is the handoff text. Its headings make it complete.
-        const missing = WRAPUP_HEADINGS.filter(
-          (name) => !handoffSections(terminal.output).has(name.toLowerCase()),
-        );
-        run.resultContract = stages.wrapup.contract;
-        run.resultJson = JSON.stringify({ output: terminal.output });
-        if (missing.length === 0) {
-          run.resultStatus = 'valid';
-          run.resultHash = sha256(run.resultJson);
-        } else {
-          run.resultStatus = 'invalid';
-          run.resultError = missing.map((name) => `## ${name} is missing.`).join('\n');
-        }
+      if (session !== null) {
+        recordOutput(run, stages[session.stage], terminal.output);
       }
       if (session !== null) {
         enqueueValidation(snapshot, run, `validate:${run.id}`, ids);
@@ -528,7 +513,7 @@ function applyTerminal(
     }
     case 'caller_ping': {
       resolveOpen(snapshot);
-      if ((session?.stage === 'work' || session?.stage === 'review') && session.taskId !== null) {
+      if (session !== null && stages[session.stage].scope === 'task' && session.taskId !== null) {
         const task = taskById(snapshot, session.taskId);
         if (task !== null) {
           task.status = 'blocked';

@@ -11,6 +11,8 @@ export const plan = defineStage<PlanInput, 'plan'>({
   emoji: '🔎',
   model: 'plan',
   name: 'plan',
+  // The plan is the files it wrote, not its response.
+  parse: () => ({ json: JSON.stringify({ contract, source: 'files' }), kind: 'valid' }),
   prompts: {
     correction: (failures) =>
       [

@@ -9,6 +9,13 @@ export type Ask<Input> =
   // A later stage sent the task back with problems to fix.
   | { kind: 'return'; problems: Array<string>; round: number };
 
+// What a finished run's raw output means, before any validator runs.
+// `unchecked` output has no contract of its own and is left to the validator.
+export type ParsedOutput =
+  | { json: string; kind: 'valid' }
+  | { error: string; json: string; kind: 'invalid' }
+  | { json: string; kind: 'unchecked' };
+
 export type StageDefinition<Input = unknown, Name extends StageName = StageName> = {
   autoExit: true;
   contract: string;
@@ -16,6 +23,8 @@ export type StageDefinition<Input = unknown, Name extends StageName = StageName>
   // The policy model this stage's agent runs on.
   model: keyof Policy['models'];
   name: Name;
+  // Pure: the run's output read against the stage's contract.
+  parse: (output: string, round: number) => ParsedOutput;
   // `task` stages run once per task and need a task id on their session.
   scope: 'ticket' | 'task';
   skill: string;
@@ -28,8 +37,9 @@ export type StageDefinition<Input = unknown, Name extends StageName = StageName>
 
 type StageSpec<Input, Name extends StageName> = Omit<
   StageDefinition<Input, Name>,
-  'autoExit' | 'spawning' | 'turn'
+  'autoExit' | 'parse' | 'spawning' | 'turn'
 > & {
+  parse?: (output: string, round: number) => ParsedOutput;
   prompts: {
     correction: (failures: Array<string>) => string;
     initial: (input: Input) => string;
@@ -38,7 +48,8 @@ type StageSpec<Input, Name extends StageName> = Omit<
   };
 };
 
-// A stage from its spec. A reply prompt defaults to passing the answer on.
+// A stage from its spec. A reply prompt defaults to passing the answer on, and
+// output defaults to unchecked.
 export function defineStage<Input, const Name extends StageName>(
   spec: StageSpec<Input, Name>,
 ): StageDefinition<Input, Name> {
@@ -46,6 +57,7 @@ export function defineStage<Input, const Name extends StageName>(
   return {
     ...rest,
     autoExit: true,
+    parse: spec.parse ?? ((output) => ({ json: JSON.stringify({ output }), kind: 'unchecked' })),
     spawning: false,
     turn: (ask) => {
       switch (ask.kind) {

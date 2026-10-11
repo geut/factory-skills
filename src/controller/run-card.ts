@@ -7,7 +7,7 @@ import type {
   TerminalKind,
 } from '../domain.ts';
 import { runStatusLabel } from '../runtime/policy.ts';
-import { parseReview } from '../validation/review.ts';
+import { parseReview } from '../stages/review/parse.ts';
 import { card, encodeCard, type CardTone, type FactoryCard } from './card.ts';
 import {
   currentStep,

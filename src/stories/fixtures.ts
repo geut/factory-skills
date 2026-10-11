@@ -19,7 +19,7 @@ import {
 } from '../domain.ts';
 import type { WidgetChild } from '../extension/widget.ts';
 import { stages } from '../stages/index.ts';
-import { parseReview } from '../validation/review.ts';
+import { parseReview } from '../stages/review/parse.ts';
 
 // Snapshots for the component gallery. They are built by hand, field by
 // field, so every scenario is a plain value that renders without a database.

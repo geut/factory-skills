@@ -16,6 +16,7 @@ import {
 import { sha256 } from '../hash.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { parseReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import {
   githubCliClient,
@@ -23,7 +24,6 @@ import {
   type GithubClient,
   type TicketSource,
 } from '../tickets.ts';
-import { parseReview } from '../validation/review.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { ticketProgress, type TicketProgress } from './progress.ts';

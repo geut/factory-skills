@@ -6,9 +6,10 @@ import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { RunRecord, SessionRecord } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import { formatFinding, parseReview } from '../stages/review/parse.ts';
 import { session } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
-import { formatFinding, parseReview, reviewValidator } from './review.ts';
+import { reviewValidator } from './review.ts';
 import { collectWorkDiff } from './work.ts';
 
 function review(verdict: string, findings = 'none', summary = 'The filter survives a reload.') {
