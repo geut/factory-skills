@@ -2,11 +2,11 @@ BEGIN IMMEDIATE;
 
 CREATE TABLE schema_meta (
   singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 2),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 3),
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 2);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 3);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -31,9 +31,9 @@ CREATE TABLE ticket_executions (
   ticket_id             TEXT NOT NULL REFERENCES tickets(id),
   generation            INTEGER NOT NULL CHECK (generation > 0),
   is_current            INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0, 1)),
-  stage                 TEXT NOT NULL CHECK (
-    stage IN ('plan', 'work', 'review', 'wrapup', 'done')
-  ),
+  -- A stage name from the stage registry, or 'done'. The store checks it on
+  -- read; see ADR-002.
+  stage                 TEXT NOT NULL CHECK (length(trim(stage)) > 0),
   status                TEXT NOT NULL CHECK (
     status IN (
       'queued', 'active', 'waiting_for_user', 'paused', 'resuming',
@@ -72,7 +72,6 @@ CREATE TABLE ticket_executions (
 
   UNIQUE (ticket_id, generation),
   CHECK (status <> 'complete' OR stage = 'done'),
-  CHECK (status <> 'ready_for_handoff' OR stage = 'wrapup'),
   CHECK (stage <> 'done' OR status IN ('complete', 'cancelled')),
   CHECK (
     (status IN ('complete', 'cancelled') AND finished_at IS NOT NULL) OR
@@ -146,7 +145,9 @@ CREATE TABLE agent_sessions (
   id              TEXT PRIMARY KEY CHECK (length(trim(id)) > 0),
   execution_id    TEXT NOT NULL REFERENCES ticket_executions(id) ON DELETE CASCADE,
   logical_key     TEXT NOT NULL CHECK (length(trim(logical_key)) > 0),
-  stage           TEXT NOT NULL CHECK (stage IN ('plan', 'work', 'review', 'wrapup')),
+  -- A stage name from the stage registry. The store checks it and whether the
+  -- stage needs a task_id; see ADR-002.
+  stage           TEXT NOT NULL CHECK (length(trim(stage)) > 0 AND stage <> 'done'),
   task_id         TEXT,
   model           TEXT NOT NULL CHECK (length(trim(model)) > 0),
   thinking        TEXT,
@@ -164,11 +165,7 @@ CREATE TABLE agent_sessions (
   UNIQUE (execution_id, logical_key),
   UNIQUE (execution_id, id),
   FOREIGN KEY (execution_id, task_id)
-    REFERENCES tasks(execution_id, task_id),
-  CHECK (
-    (stage IN ('plan', 'wrapup') AND task_id IS NULL) OR
-    (stage IN ('work', 'review') AND task_id IS NOT NULL)
-  )
+    REFERENCES tasks(execution_id, task_id)
 ) STRICT;
 
 -- A run is one pane/process launch. Every resume or retry gets a new run while
@@ -893,6 +890,6 @@ END;
 
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 
 COMMIT;

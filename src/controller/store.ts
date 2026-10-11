@@ -26,6 +26,7 @@ import {
   type RunRecord,
   type SessionRecord,
   type Stage,
+  type StageName,
   type TaskRecord,
   type TicketRecord,
   type UsageTotals,
@@ -34,6 +35,7 @@ import {
   type WrapupInputPurpose,
   type WorktreeStatus,
 } from '../domain.ts';
+import { stages } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import { card, encodeCard } from './card.ts';
@@ -270,17 +272,28 @@ const attentionKinds = ['agent_question', 'policy_limit', 'manual_approval'] as 
 const attentionStatuses = ['open', 'answered', 'resuming', 'resolved', 'cancelled'] as const;
 const actionStatuses = ['pending', 'leased', 'succeeded', 'failed', 'cancelled'] as const;
 
-function stage(value: string): Stage {
-  if (
-    value === 'plan' ||
-    value === 'work' ||
-    value === 'review' ||
-    value === 'wrapup' ||
-    value === 'done'
-  ) {
-    return value;
+// Stage names are checked against the registry, not the schema (ADR-002).
+function stageName(value: string): StageName {
+  if (Object.hasOwn(stages, value)) {
+    return value as StageName;
   }
   throw new FactoryDatabaseError(`unknown stage ${value}`);
+}
+
+function stage(value: string): Stage {
+  return value === 'done' ? value : stageName(value);
+}
+
+// A per-task stage's session belongs to a task; a per-ticket one does not.
+function assertSessionScope(stage: StageName, task: string | null): void {
+  const scope = stages[stage].scope;
+  if ((scope === 'task') !== (task !== null)) {
+    throw new FactoryDatabaseError(
+      scope === 'task'
+        ? `a ${stage} session needs a task`
+        : `a ${stage} session cannot belong to a task`,
+    );
+  }
 }
 
 function worktreeStatus(value: string | null): WorktreeStatus | null {
@@ -470,22 +483,15 @@ function loadSessions(db: DatabaseSync, execution: ExecutionId): Array<SessionRe
     .map((item) => {
       const record = row(item);
       const task = nullableText(record, 'task_id');
-      const stageName = text(record, 'stage');
-      if (
-        stageName !== 'plan' &&
-        stageName !== 'work' &&
-        stageName !== 'review' &&
-        stageName !== 'wrapup'
-      ) {
-        throw new FactoryDatabaseError(`unknown session stage ${stageName}`);
-      }
+      const sessionStage = stageName(text(record, 'stage'));
+      assertSessionScope(sessionStage, task);
       return {
         id: sessionId(text(record, 'id')),
         logicalKey: text(record, 'logical_key'),
         model: text(record, 'model'),
         piSessionId: nullableText(record, 'pi_session_id'),
         sessionFile: nullableText(record, 'session_file'),
-        stage: stageName,
+        stage: sessionStage,
         status: oneOf(text(record, 'status'), sessionStatuses, 'session status'),
         taskId: task === null ? null : taskId(task),
         thinking: nullableText(record, 'thinking') ?? 'medium',
@@ -901,6 +907,7 @@ function insertSession(
   session: SessionRecord,
   now: string,
 ): void {
+  assertSessionScope(session.stage, session.taskId);
   db.prepare(
     `INSERT INTO agent_sessions
       (id, execution_id, logical_key, stage, task_id, model, thinking, pi_session_id, session_file, status, created_at, updated_at)

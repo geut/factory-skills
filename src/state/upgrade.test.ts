@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
-import { openStateDatabase, stateDatabasePath } from './database.ts';
+import {
+  IncompatibleFactoryDatabaseError,
+  openStateDatabase,
+  stateDatabasePath,
+} from './database.ts';
 
 const roots: Array<string> = [];
 
@@ -14,76 +18,43 @@ afterEach(() => {
   }
 });
 
-// A schema 2 database created before the wrap-up action kinds existed.
-function legacyRoot(): string {
+// A database written by a schema 2 controller, with a ticket in flight.
+function schema2Root(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'factory-upgrade-'));
   roots.push(root);
   const file = stateDatabasePath(root);
   mkdirSync(path.dirname(file), { recursive: true });
-  const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8').replace(
-    "'open_diff',\n      'prepare_wrapup_input', 'open_pane'",
-    "'open_diff'",
-  );
-  assert.doesNotMatch(schema, /prepare_wrapup_input/);
+  const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    .replace('CHECK (schema_version = 3)', 'CHECK (schema_version = 2)')
+    .replace('VALUES (1, 3);', 'VALUES (1, 2);')
+    .replace('PRAGMA user_version = 3;', 'PRAGMA user_version = 2;');
   const db = new DatabaseSync(file);
   db.exec(schema);
   db.exec(`
     INSERT INTO tickets (id, title, source_kind) VALUES ('t1', 'Ticket', 'local');
     INSERT INTO ticket_executions (id, ticket_id, generation, stage, status, factory_dir)
       VALUES ('e1', 't1', 1, 'review', 'active', '/f');
-    INSERT INTO actions (id, execution_id, kind, status, idempotency_key, completed_at)
-      VALUES ('a1', 'e1', 'prepare_worktree', 'succeeded', 'k1', '2026-10-10T00:00:00.000Z');
   `);
   db.close();
   return root;
 }
 
-function tableSql(db: DatabaseSync, type: string, name: string): string {
-  const found = db
-    .prepare('SELECT sql FROM sqlite_master WHERE type = ? AND name = ?')
-    .get(type, name);
-  return typeof found?.['sql'] === 'string' ? found['sql'] : '';
-}
-
-test('opening an older schema 2 database widens the action kinds and keeps its rows', () => {
-  const root = legacyRoot();
-  const db = openStateDatabase(root);
-  assert.match(tableSql(db, 'table', 'actions'), /'prepare_wrapup_input', 'open_pane'/);
-  assert.equal(db.prepare('SELECT schema_version FROM schema_meta').get()?.['schema_version'], 2);
+test('a schema 2 database is refused with what to do, and left as it was', () => {
+  const root = schema2Root();
+  for (const options of [{}, { create: true }, { readOnly: true }]) {
+    assert.throws(
+      () => openStateDatabase(root, options),
+      (error: unknown) =>
+        error instanceof IncompatibleFactoryDatabaseError &&
+        /is schema 2; this controller needs schema 3/.test(error.message) &&
+        /Finish or cancel its tickets/.test(error.message),
+    );
+  }
+  const db = new DatabaseSync(stateDatabasePath(root));
   assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 2);
   assert.equal(
-    db.prepare('SELECT status FROM actions WHERE id = ?').get('a1')?.['status'],
-    'succeeded',
+    db.prepare("SELECT stage FROM ticket_executions WHERE id = 'e1'").get()?.['stage'],
+    'review',
   );
-  for (const index of [
-    'dispatchable_actions',
-    'one_active_validation_per_execution',
-    'one_start_action_per_run',
-  ]) {
-    assert.notEqual(tableSql(db, 'index', index), '', index);
-  }
-  for (const trigger of ['terminal_action_is_immutable', 'terminal_action_cannot_be_deleted']) {
-    assert.notEqual(tableSql(db, 'trigger', trigger), '', trigger);
-  }
-  // The new kinds insert, and the old guards still hold.
-  db.exec(`INSERT INTO actions (id, execution_id, kind, status, idempotency_key)
-           VALUES ('a2', 'e1', 'prepare_wrapup_input', 'pending', 'k2')`);
-  assert.throws(() => db.exec("UPDATE actions SET status = 'pending' WHERE id = 'a1'"));
-  assert.throws(() =>
-    db.exec(`INSERT INTO actions (id, execution_id, kind, status, idempotency_key)
-             VALUES ('a3', 'e1', 'not_a_kind', 'pending', 'k3')`),
-  );
-  assert.equal(db.prepare('PRAGMA foreign_keys').get()?.['foreign_keys'], 1);
-  db.close();
-  // A second open finds nothing to do.
-  const again = openStateDatabase(root);
-  assert.match(tableSql(again, 'table', 'actions'), /'open_pane'/);
-  again.close();
-});
-
-test('a read-only open leaves an older database untouched', () => {
-  const root = legacyRoot();
-  const db = openStateDatabase(root, { readOnly: true });
-  assert.doesNotMatch(tableSql(db, 'table', 'actions'), /prepare_wrapup_input/);
   db.close();
 });

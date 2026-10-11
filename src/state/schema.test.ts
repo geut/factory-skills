@@ -306,7 +306,7 @@ test('keeps one current generation per ticket while parallel tickets stay indepe
         .prepare(
           `INSERT INTO ticket_executions
             (id, ticket_id, generation, is_current, stage, status, factory_dir)
-           VALUES ('bad', 'PROJ-1', 3, 0, 'plan', 'ready_for_handoff', '/tmp/bad')`,
+           VALUES ('bad', 'PROJ-1', 3, 0, 'done', 'active', '/tmp/bad')`,
         )
         .run(),
     /CHECK constraint failed/,
@@ -402,16 +402,9 @@ test('separates a Pi session from pane runs and permits only one active child', 
   });
   assert.equal(scalar(db, "SELECT count(*) FROM agent_runs WHERE session_id = 'session-1'"), 2);
 
-  assert.throws(
-    () =>
-      addSession(db, {
-        id: 'invalid-work-session',
-        key: 'invalid',
-        stage: 'work',
-        task: null,
-      }),
-    /CHECK constraint failed/,
-  );
+  // Whether a stage's session needs a task is the stage registry's call, and
+  // the store checks it (ADR-002), so the schema accepts the row.
+  addSession(db, { id: 'invalid-work-session', key: 'invalid', stage: 'work', task: null });
   db.close();
 });
 
