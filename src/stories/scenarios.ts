@@ -1,5 +1,5 @@
 import { formatUsageTable } from '../controller/usage.ts';
-import { attentionId, type FactorySnapshot, type RunRecord } from '../domain.ts';
+import { attentionId, taskId, type FactorySnapshot, type RunRecord } from '../domain.ts';
 import {
   action,
   addTasks,
@@ -227,7 +227,12 @@ export function diffKeepsChanging(): Scenario {
     'Something keeps writing files the diff includes. Check git status in /repo/.factory/worktrees/dpaez-factory-dashboard-11 and ignore generated files.',
     'Then run /factory retry dpaez/factory-dashboard#11 to validate the work and review it again.',
   ].join('\n');
-  pause(snapshot, { code: 'review_diff_changed', question, retryable: true, runId: again });
+  pause(snapshot, {
+    code: 'review_diff_changed',
+    question,
+    retry: { kind: 'revalidate', taskId: taskId('03') },
+    runId: again,
+  });
   return { question, run: again, snapshot };
 }
 

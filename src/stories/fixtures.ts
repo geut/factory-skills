@@ -9,6 +9,7 @@ import {
   ticketId,
   zeroUsage,
   type FactorySnapshot,
+  type Retry,
   type ReviewVerdict,
   type RunPurpose,
   type RunRecord,
@@ -71,7 +72,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         pullRequests: false,
         validation: { work: { commands: [] }, wrapup: { generated: [] } },
       },
-      retryable: false,
+      retry: null,
       stage: 'plan',
       status: 'active',
       statusReason: null,
@@ -289,7 +290,7 @@ export function pause(
   input: {
     code: string;
     question: string;
-    retryable?: boolean;
+    retry?: Retry;
     runId?: RunRecord | null;
     waiting?: boolean;
   },
@@ -297,7 +298,7 @@ export function pause(
   snapshot.execution.status = input.waiting === true ? 'waiting_for_user' : 'paused';
   snapshot.execution.statusReasonCode = input.code;
   snapshot.execution.statusReason = input.question;
-  snapshot.execution.retryable = input.retryable ?? false;
+  snapshot.execution.retry = input.retry ?? null;
   snapshot.attention.push({
     id: attentionId(`attention-${snapshot.attention.length + 1}`),
     kind: input.waiting === true ? 'agent_question' : 'policy_limit',

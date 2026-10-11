@@ -345,6 +345,22 @@ export type TicketRecord = {
   title: string;
 };
 
+// What `/factory retry` redoes for a paused or failed execution. An
+// execution with no retry target cannot be retried.
+export type Retry =
+  // The failed input preparation, with the same stage, task, and purpose.
+  | { kind: 'input' }
+  // The task's latest work validation, then review again.
+  | { kind: 'revalidate'; taskId: TaskId }
+  // The latest finished run's validation.
+  | { kind: 'validate' }
+  // The failed worktree preparation.
+  | { kind: 'worktree' }
+  // A new launch of the latest run's session.
+  | { kind: 'relaunch' }
+  // A new resume carrying the stored reply.
+  | { kind: 'resume_reply' };
+
 export type ExecutionRecord = {
   factoryDir: string;
   generation: number;
@@ -355,7 +371,7 @@ export type ExecutionRecord = {
   message: string | null;
   planPath: string | null;
   policy: Policy;
-  retryable: boolean;
+  retry: Retry | null;
   stage: Stage;
   status: ExecutionStatus;
   statusReason: string | null;

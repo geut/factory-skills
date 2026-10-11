@@ -10,6 +10,7 @@ import {
   type InputPurpose,
   type Reduction,
   type ReviewResult,
+  type Retry,
   type ReviewValidationReport,
   type RunId,
   type RunPurpose,
@@ -52,9 +53,10 @@ export function detail(snapshot: FactorySnapshot, message: string): ControllerRe
     next: nextAction(snapshot),
     progress: progressText(snapshot),
     question: question?.question ?? null,
-    retryHint: snapshot.execution.retryable
-      ? `Retry with /factory retry ${snapshot.ticket.commandRef}.`
-      : null,
+    retryHint:
+      snapshot.execution.retry !== null
+        ? `Retry with /factory retry ${snapshot.ticket.commandRef}.`
+        : null,
     stage: snapshot.execution.stage,
     status: snapshot.execution.status,
     task: currentStep(snapshot),
@@ -98,7 +100,7 @@ function repeatMessage(snapshot: FactorySnapshot): string {
       return `Ticket ${ref} is paused: ${snapshot.execution.statusReason ?? 'no reason recorded'}.${nextAction(snapshot) === null ? '' : ` Next: ${nextAction(snapshot)}.`}`;
     case 'resume_failed':
     case 'failed':
-      return snapshot.execution.retryable
+      return snapshot.execution.retry !== null
         ? `Ticket ${ref} failed: ${snapshot.execution.statusReason ?? 'unknown'}. Retry with /factory retry ${ref}.`
         : `Ticket ${ref} failed and v0 will not start another generation.`;
     case 'ready_for_handoff':
@@ -216,14 +218,14 @@ function pauseWithNotice(
     ids: IdSource;
     keepReply?: boolean;
     question: string;
-    retryable: boolean;
+    retry: Retry | null;
     // A reply to this notice resumes the session that owns this run.
     runId?: RunId;
   },
 ): void {
   resolveOpen(snapshot, input.keepReply === true);
   snapshot.execution.status = 'paused';
-  snapshot.execution.retryable = input.retryable;
+  snapshot.execution.retry = input.retry;
   snapshot.execution.statusReasonCode = input.code;
   snapshot.execution.statusReason = input.failures.join('\n');
   snapshot.attention.push({
@@ -265,7 +267,7 @@ function pauseForLimit(
     failures,
     ids,
     question: `${label} validation is still failing after the correction limit:\n${failures.map((failure) => `- ${failure}`).join('\n')}`,
-    retryable: false,
+    retry: null,
   });
 }
 
@@ -420,7 +422,7 @@ function scheduleInfrastructure(
   const human = failed.purpose === 'human_reply' || snapshot.execution.status === 'resuming';
   if (count >= snapshot.execution.policy.limits.infrastructureRetries) {
     snapshot.execution.status = human ? 'resume_failed' : 'failed';
-    snapshot.execution.retryable = true;
+    snapshot.execution.retry = { kind: human ? 'resume_reply' : 'relaunch' };
     snapshot.execution.statusReasonCode = 'infrastructure_limit';
     snapshot.execution.statusReason = message;
     return;
@@ -545,7 +547,7 @@ function applyTerminal(
       });
       const attention = snapshot.attention.at(-1);
       snapshot.execution.status = 'waiting_for_user';
-      snapshot.execution.retryable = false;
+      snapshot.execution.retry = null;
       if (attention !== undefined) {
         snapshot.actions.push({
           attempts: 0,
@@ -617,7 +619,7 @@ function reduceStart(
       message: null,
       planPath: null,
       policy: event.policy,
-      retryable: false,
+      retry: null,
       stage: 'plan',
       status: 'queued',
       statusReason: null,
@@ -676,7 +678,7 @@ function retryValidation(
   ).length;
   if (failed >= snapshot.execution.policy.limits.infrastructureRetries) {
     snapshot.execution.status = 'failed';
-    snapshot.execution.retryable = true;
+    snapshot.execution.retry = { kind: 'validate' };
     snapshot.execution.statusReasonCode = 'validator_error';
     snapshot.execution.statusReason = message;
     return finish(snapshot, message);
@@ -831,7 +833,7 @@ function advanceAfterApproval(
       failures: [`No remaining task is ready: ${waiting}.`],
       ids,
       question: `Task ${approved.taskId} was approved, but no remaining task is ready: ${waiting}.`,
-      retryable: false,
+      retry: null,
     });
     return `Task ${approved.taskId} approved. No remaining task is ready.`;
   }
@@ -873,7 +875,7 @@ function applyVerdict(
             ...lines.map((line) => `- ${line}`),
             'Reply to tell the reviewer how to settle them.',
           ].join('\n'),
-          retryable: false,
+          retry: null,
           runId: run.id,
         });
         return finish(snapshot, `Review round limit reached for task ${task.taskId}.`);
@@ -903,7 +905,7 @@ function applyVerdict(
           ...lines.map((line) => `- ${line}`),
           'Reply to resume the reviewer with what it needs.',
         ].join('\n'),
-        retryable: false,
+        retry: null,
         runId: run.id,
       });
       return finish(snapshot, `Review blocked task ${task.taskId}.`);
@@ -941,7 +943,7 @@ function correctReview(
         ...failures.map((failure) => `- ${failure}`),
         'Reply to resume the reviewer.',
       ].join('\n'),
-      retryable: false,
+      retry: null,
       runId: parent.id,
     });
     return finish(snapshot, 'Review correction limit reached.');
@@ -1028,7 +1030,7 @@ function revalidateWork(
         `Something keeps writing files the diff includes. Check git status in ${worktree} and ignore generated files.`,
         `Then run /factory retry ${snapshot.ticket.commandRef} to validate the work and review it again.`,
       ].join('\n'),
-      retryable: true,
+      retry: { kind: 'revalidate', taskId: task.taskId },
       runId: review.id,
     });
     return finish(snapshot, 'The worktree keeps changing during review.');
@@ -1073,7 +1075,7 @@ function finishReviewValidation(
           'The reviewer was not isolated from the worker:',
           ...report.failures.map((failure) => `- ${failure}`),
         ].join('\n'),
-        retryable: false,
+        retry: null,
       });
       return finish(snapshot, 'Review isolation failed.');
     }
@@ -1233,7 +1235,7 @@ function finishWrapupValidation(
   // Passed: the human takes it from here. The session stays open for reading.
   const ref = snapshot.ticket.displayRef;
   snapshot.execution.status = 'ready_for_handoff';
-  snapshot.execution.retryable = false;
+  snapshot.execution.retry = null;
   snapshot.execution.statusReasonCode = null;
   snapshot.execution.statusReason = null;
   const worktree = snapshot.execution.worktreePath ?? snapshot.execution.policy.codeRoot;
@@ -1559,7 +1561,7 @@ export function reduce(input: {
       action.status = 'failed';
       action.lastError = event.message;
       snapshot.execution.status = 'failed';
-      snapshot.execution.retryable = true;
+      snapshot.execution.retry = { kind: 'worktree' };
       snapshot.execution.worktreeStatus = 'failed';
       snapshot.execution.statusReasonCode = 'worktree_failed';
       snapshot.execution.statusReason = event.message;
@@ -1594,7 +1596,7 @@ export function reduce(input: {
         // A failed reply keeps its stored answer, so a retry still carries it.
         keepReply: action.purpose === 'human_reply',
         question: `${stages[action.stage].label} cannot start:\n${event.message}`,
-        retryable: true,
+        retry: { kind: 'input' },
       });
       return finish(snapshot, event.message);
     }
@@ -1685,11 +1687,9 @@ export function reduce(input: {
       ) {
         return reject(existing, 'This ticket is not waiting for a reply.');
       }
-      if (
-        snapshot.execution.statusReasonCode === 'work_input_invalid' ||
-        snapshot.execution.statusReasonCode === 'wrapup_input_invalid' ||
-        snapshot.execution.statusReasonCode === 'review_diff_changed'
-      ) {
+      // A retryable pause takes only a retry; otherwise a reply resumes the run
+      // that paused the ticket, and a pause no run asked for takes neither.
+      if (snapshot.execution.retry !== null) {
         return reject(existing, `Retry with /factory retry ${snapshot.ticket.commandRef}.`);
       }
       const attention =
@@ -1697,6 +1697,9 @@ export function reduce(input: {
         null;
       if (attention === null) {
         return reject(existing, 'There is no open question to answer.');
+      }
+      if (attention.runId === null) {
+        return reject(existing, 'No agent is waiting for a reply to this pause.');
       }
       if (snapshot.replies.some((reply) => reply.idempotencyKey === event.idempotencyKey)) {
         return unchanged(existing, 'Duplicate reply ignored.');
@@ -1785,148 +1788,136 @@ export function reduce(input: {
       if (event.ticketId !== snapshot.ticket.id) {
         return reject(existing, 'Retry does not match the current ticket.');
       }
-      if (
-        snapshot.execution.status === 'paused' &&
-        snapshot.execution.statusReasonCode?.endsWith('_input_invalid') === true
-      ) {
-        const failed = [...snapshot.actions]
-          .reverse()
-          .find(
-            (item): item is PrepareInputAction =>
-              item.kind === 'prepare_input' && item.status === 'failed',
+      const retry = snapshot.execution.retry;
+      if (retry === null) {
+        return reject(existing, 'This ticket is not waiting for retry.');
+      }
+      switch (retry.kind) {
+        case 'input': {
+          const failed = [...snapshot.actions]
+            .reverse()
+            .find(
+              (item): item is PrepareInputAction =>
+                item.kind === 'prepare_input' && item.status === 'failed',
+            );
+          if (failed === undefined) {
+            return reject(existing, 'Nothing failed that can be retried.');
+          }
+          // A failed reply keeps its stored answer, so the retry still carries it.
+          resolveOpen(snapshot, failed.purpose === 'human_reply');
+          enqueueInput(snapshot, failed.stage, {
+            failures: failed.failures,
+            idempotencyKey: `${failed.stage}-input-retry:${event.idempotencyKey}`,
+            ids,
+            purpose: failed.purpose,
+            ...(failed.origin === null ? {} : { origin: failed.origin }),
+            ...(failed.taskId === null ? {} : { taskId: failed.taskId }),
+          });
+          snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
+          snapshot.execution.retry = null;
+          return finish(
+            snapshot,
+            `Retrying ${stages[failed.stage].label.toLowerCase()} input preparation.`,
           );
-        if (failed === undefined) {
-          return reject(existing, 'Nothing failed that can be retried.');
         }
-        // A failed reply keeps its stored answer, so the retry still carries it.
-        resolveOpen(snapshot, failed.purpose === 'human_reply');
-        enqueueInput(snapshot, failed.stage, {
-          failures: failed.failures,
-          idempotencyKey: `${failed.stage}-input-retry:${event.idempotencyKey}`,
-          ids,
-          purpose: failed.purpose,
-          ...(failed.origin === null ? {} : { origin: failed.origin }),
-          ...(failed.taskId === null ? {} : { taskId: failed.taskId }),
-        });
-        snapshot.execution.status = failed.purpose === 'human_reply' ? 'resuming' : 'active';
-        snapshot.execution.retryable = false;
-        return finish(
-          snapshot,
-          `Retrying ${stages[failed.stage].label.toLowerCase()} input preparation.`,
-        );
-      }
-      if (
-        snapshot.execution.status === 'paused' &&
-        snapshot.execution.statusReasonCode === 'review_diff_changed'
-      ) {
-        const attention = snapshot.attention.find((item) => item.status === 'open') ?? null;
-        const review =
-          attention?.runId === null || attention === null
-            ? null
-            : runFor(snapshot, attention.runId);
-        const session = review === null ? null : sessionFor(snapshot, review.sessionId);
-        const task =
-          session === null || session.taskId === null ? null : taskById(snapshot, session.taskId);
-        const workRun = task === null ? null : latestWorkRun(snapshot, task.taskId);
-        if (task === null || workRun === null) {
-          return reject(existing, 'No finished work run can be validated again.');
+        case 'revalidate': {
+          const task = taskById(snapshot, retry.taskId);
+          const workRun = task === null ? null : latestWorkRun(snapshot, task.taskId);
+          if (task === null || workRun === null) {
+            return reject(existing, 'No finished work run can be validated again.');
+          }
+          resolveOpen(snapshot);
+          enterStage(task, 'work');
+          snapshot.execution.stage = 'work';
+          snapshot.execution.status = 'active';
+          snapshot.execution.retry = null;
+          enqueueValidation(
+            snapshot,
+            workRun,
+            `validate:${workRun.id}:retry:${event.idempotencyKey}`,
+            ids,
+          );
+          return finish(snapshot, 'Validating the work again.');
         }
-        resolveOpen(snapshot);
-        enterStage(task, 'work');
-        snapshot.execution.stage = 'work';
-        snapshot.execution.status = 'active';
-        snapshot.execution.retryable = false;
-        enqueueValidation(
-          snapshot,
-          workRun,
-          `validate:${workRun.id}:retry:${event.idempotencyKey}`,
-          ids,
-        );
-        return finish(snapshot, 'Validating the work again.');
-      }
-      if (
-        snapshot.execution.status === 'failed' &&
-        snapshot.execution.retryable &&
-        snapshot.execution.statusReasonCode === 'validator_error'
-      ) {
-        const run =
-          [...snapshot.runs].reverse().find((item) => item.terminalKind === 'subagent_done') ??
-          null;
-        if (run === null) {
-          return reject(existing, 'Nothing failed that can be retried.');
+        case 'validate': {
+          const run =
+            [...snapshot.runs].reverse().find((item) => item.terminalKind === 'subagent_done') ??
+            null;
+          if (run === null) {
+            return reject(existing, 'Nothing failed that can be retried.');
+          }
+          snapshot.actions.push({
+            attempts: 0,
+            attentionReplyId: null,
+            attentionRequestId: null,
+            id: ids.action(),
+            idempotencyKey: `validate-retry:${event.idempotencyKey}`,
+            kind: 'validate_run',
+            lastError: null,
+            maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+            retryOfActionId: null,
+            runId: run.id,
+            status: 'pending',
+          });
+          snapshot.execution.status = 'active';
+          snapshot.execution.retry = null;
+          return finish(snapshot, 'Retrying validation.');
         }
-        snapshot.actions.push({
-          attempts: 0,
-          attentionReplyId: null,
-          attentionRequestId: null,
-          id: ids.action(),
-          idempotencyKey: `validate-retry:${event.idempotencyKey}`,
-          kind: 'validate_run',
-          lastError: null,
-          maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-          retryOfActionId: null,
-          runId: run.id,
-          status: 'pending',
-        });
-        snapshot.execution.status = 'active';
-        snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying validation.');
-      }
-      if (snapshot.execution.status === 'resume_failed') {
-        const reply = snapshot.replies.find((item) => item.isCurrent) ?? null;
-        const attention =
-          snapshot.attention.find(
-            (item) => item.status === 'answered' || item.status === 'resuming',
-          ) ?? null;
-        const parent =
-          attention?.runId === null || attention === null
-            ? null
-            : runFor(snapshot, attention.runId);
-        const session = parent === null ? null : sessionFor(snapshot, parent.sessionId);
-        if (reply === null || attention === null || session === null) {
-          return reject(existing, 'Retry needs the stored reply.');
+        case 'resume_reply': {
+          const reply = snapshot.replies.find((item) => item.isCurrent) ?? null;
+          const attention =
+            snapshot.attention.find(
+              (item) => item.status === 'answered' || item.status === 'resuming',
+            ) ?? null;
+          const parent =
+            attention?.runId === null || attention === null
+              ? null
+              : runFor(snapshot, attention.runId);
+          const session = parent === null ? null : sessionFor(snapshot, parent.sessionId);
+          if (reply === null || attention === null || session === null) {
+            return reject(existing, 'Retry needs the stored reply.');
+          }
+          const prompt = stages[session.stage].turn({ answer: reply.answer, kind: 'reply' });
+          const run = addRun(
+            snapshot,
+            session,
+            parent,
+            'infrastructure_retry',
+            parent?.semanticRound ?? 0,
+            ids,
+            prompt,
+          );
+          run.description = parent?.description ?? childDescription(snapshot.ticket.title);
+          snapshot.actions.push({
+            attempts: 0,
+            attentionReplyId: reply.id,
+            attentionRequestId: attention.id,
+            cwd: sessionCwd(snapshot, session),
+            id: ids.action(),
+            idempotencyKey: `retry:${event.idempotencyKey}:${run.id}`,
+            kind: 'resume_run',
+            lastError: null,
+            maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+            prompt,
+            retryOfActionId: null,
+            runId: run.id,
+            status: 'pending',
+          });
+          attention.status = 'resuming';
+          snapshot.execution.status = 'resuming';
+          snapshot.execution.retry = null;
+          return finish(snapshot, 'Retrying with the stored reply.');
         }
-        const prompt = stages[session.stage].turn({ answer: reply.answer, kind: 'reply' });
-        const run = addRun(
-          snapshot,
-          session,
-          parent,
-          'infrastructure_retry',
-          parent?.semanticRound ?? 0,
-          ids,
-          prompt,
-        );
-        run.description = parent?.description ?? childDescription(snapshot.ticket.title);
-        snapshot.actions.push({
-          attempts: 0,
-          attentionReplyId: reply.id,
-          attentionRequestId: attention.id,
-          cwd: sessionCwd(snapshot, session),
-          id: ids.action(),
-          idempotencyKey: `retry:${event.idempotencyKey}:${run.id}`,
-          kind: 'resume_run',
-          lastError: null,
-          maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
-          prompt,
-          retryOfActionId: null,
-          runId: run.id,
-          status: 'pending',
-        });
-        attention.status = 'resuming';
-        snapshot.execution.status = 'resuming';
-        snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying with the stored reply.');
-      }
-      if (snapshot.execution.status === 'failed' && snapshot.execution.retryable) {
-        const failedWorktree = snapshot.actions.find(
-          (item): item is Extract<ActionRecord, { kind: 'prepare_worktree' }> =>
-            item.kind === 'prepare_worktree' && item.status === 'failed',
-        );
-        if (
-          failedWorktree !== undefined &&
-          snapshot.execution.stage === 'work' &&
-          snapshot.execution.planPath !== null
-        ) {
+        case 'worktree': {
+          const failedWorktree = [...snapshot.actions]
+            .reverse()
+            .find(
+              (item): item is Extract<ActionRecord, { kind: 'prepare_worktree' }> =>
+                item.kind === 'prepare_worktree' && item.status === 'failed',
+            );
+          if (failedWorktree === undefined) {
+            return reject(existing, 'Nothing failed that can be retried.');
+          }
           snapshot.actions.push({
             attempts: 0,
             attentionReplyId: null,
@@ -1942,44 +1933,49 @@ export function reduce(input: {
             status: 'pending',
           });
           snapshot.execution.status = 'active';
-          snapshot.execution.retryable = false;
+          snapshot.execution.retry = null;
           snapshot.execution.worktreeStatus = 'preparing';
           return finish(snapshot, 'Retrying worktree preparation.');
         }
-        const parent = snapshot.runs.at(-1) ?? null;
-        const session = parent === null ? null : sessionFor(snapshot, parent.sessionId);
-        if (session === null || parent === null) {
-          return reject(existing, 'Nothing failed that can be retried.');
+        case 'relaunch': {
+          const parent = snapshot.runs.at(-1) ?? null;
+          const session = parent === null ? null : sessionFor(snapshot, parent.sessionId);
+          if (session === null || parent === null) {
+            return reject(existing, 'Nothing failed that can be retried.');
+          }
+          const prompt = [
+            `Follow the ${stages[session.stage].skill} skill.`,
+            '',
+            `Retry after failure: ${snapshot.execution.statusReason ?? 'unknown'}`,
+            'Continue the same task.',
+          ].join('\n');
+          const run = addRun(
+            snapshot,
+            session,
+            parent,
+            'infrastructure_retry',
+            parent.semanticRound,
+            ids,
+            prompt,
+          );
+          run.description = parent.description ?? childDescription(snapshot.ticket.title);
+          launchAction(
+            snapshot,
+            run,
+            prompt,
+            session.sessionFile === null ? 'launch' : 'resume',
+            ids,
+            sessionCwd(snapshot, session),
+          );
+          snapshot.execution.status = 'active';
+          snapshot.execution.retry = null;
+          return finish(snapshot, 'Retrying the failed launch.');
         }
-        const prompt = [
-          `Follow the ${stages[session.stage].skill} skill.`,
-          '',
-          `Retry after failure: ${snapshot.execution.statusReason ?? 'unknown'}`,
-          'Continue the same task.',
-        ].join('\n');
-        const run = addRun(
-          snapshot,
-          session,
-          parent,
-          'infrastructure_retry',
-          parent.semanticRound,
-          ids,
-          prompt,
-        );
-        run.description = parent.description ?? childDescription(snapshot.ticket.title);
-        launchAction(
-          snapshot,
-          run,
-          prompt,
-          session.sessionFile === null ? 'launch' : 'resume',
-          ids,
-          sessionCwd(snapshot, session),
-        );
-        snapshot.execution.status = 'active';
-        snapshot.execution.retryable = false;
-        return finish(snapshot, 'Retrying the failed launch.');
+        default: {
+          const _exhaustive: never = retry;
+          return _exhaustive;
+        }
       }
-      return reject(existing, 'This ticket is not waiting for retry.');
     }
     case 'reconciled': {
       const run = runFor(snapshot, event.runId);
@@ -2034,7 +2030,7 @@ export function reduce(input: {
             run.terminalKind = 'launch_failed';
             run.endedAt = now;
             snapshot.execution.status = 'failed';
-            snapshot.execution.retryable = true;
+            snapshot.execution.retry = { kind: 'relaunch' };
             snapshot.execution.statusReason = action.lastError;
             return finish(snapshot, action.lastError);
           }

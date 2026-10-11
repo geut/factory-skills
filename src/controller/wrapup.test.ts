@@ -93,7 +93,7 @@ test('a validator error uses the infrastructure retry budget, then fails retryab
   }
   assert.equal(snapshot.execution.status, 'failed');
   assert.equal(snapshot.execution.statusReasonCode, 'validator_error');
-  assert.equal(snapshot.execution.retryable, true);
+  assert.deepEqual(snapshot.execution.retry, { kind: 'validate' });
   // No correction run was created: an infrastructure error asks nothing of the agent.
   assert.equal(snapshot.runs.filter((run) => run.purpose === 'validation_correction').length, 0);
 });

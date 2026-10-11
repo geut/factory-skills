@@ -25,6 +25,7 @@ import {
   type RunRecord,
   type SessionRecord,
   type InputPurpose,
+  type Retry,
   type Stage,
   type StageName,
   type TaskRecord,
@@ -316,6 +317,28 @@ function taskSummaries(json: string): TaskRecord['summaries'] {
   return summaries;
 }
 
+const retryKinds = ['input', 'validate', 'worktree', 'relaunch', 'resume_reply'] as const;
+
+// The execution's retry target lives in status_details_json as {"retry": ...}.
+function retryOf(json: string | null): Retry | null {
+  const details: unknown = json === null ? {} : JSON.parse(json);
+  const retry = isRecord(details) ? details['retry'] : undefined;
+  if (retry === undefined || retry === null) {
+    return null;
+  }
+  if (isRecord(retry) && retry['kind'] === 'revalidate' && typeof retry['taskId'] === 'string') {
+    return { kind: 'revalidate', taskId: taskId(retry['taskId']) };
+  }
+  if (isRecord(retry) && typeof retry['kind'] === 'string') {
+    return { kind: oneOf(retry['kind'], retryKinds, 'retry kind') };
+  }
+  throw new FactoryDatabaseError('the execution retry target is malformed');
+}
+
+function statusDetails(retry: Retry | null): string | null {
+  return retry === null ? null : jsonText({ retry });
+}
+
 // A per-task stage's session belongs to a task; a per-ticket one does not.
 function assertSessionScope(stage: StageName, task: string | null): void {
   const scope = stages[stage].scope;
@@ -431,7 +454,7 @@ function hydrate(
     message: nullableText(executionRow, 'message'),
     planPath: nullableText(executionRow, 'plan_path'),
     policy: parsePolicy(text(executionRow, 'policy_json')),
-    retryable: flag(executionRow, 'retryable'),
+    retry: retryOf(nullableText(executionRow, 'status_details_json')),
     stage: stage(text(executionRow, 'stage')),
     status: executionStatus(text(executionRow, 'status')),
     statusReason: nullableText(executionRow, 'status_reason'),
@@ -816,10 +839,10 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
   db.prepare(
     `INSERT INTO ticket_executions
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
-       retryable, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
+       retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
        message, message_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -829,7 +852,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     execution.version,
     execution.statusReasonCode,
     execution.statusReason,
-    execution.retryable ? 1 : 0,
+    execution.retry === null ? 0 : 1,
+    statusDetails(execution.retry),
     jsonText(execution.policy),
     execution.inputJson,
     execution.inputHash,
@@ -858,7 +882,7 @@ function updateExecution(
     .prepare(
       `UPDATE ticket_executions
        SET stage = ?, status = ?, version = ?, status_reason_code = ?, status_reason = ?,
-           retryable = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
+           retryable = ?, status_details_json = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
            worktree_base_branch = ?, worktree_status = ?, worktree_base_sha = ?,
            message = ?, message_at = ?, updated_at = ?,
            finished_at = CASE
@@ -873,7 +897,8 @@ function updateExecution(
       after.version,
       after.statusReasonCode,
       after.statusReason,
-      after.retryable ? 1 : 0,
+      after.retry === null ? 0 : 1,
+      statusDetails(after.retry),
       after.planPath,
       after.worktreePath,
       after.worktreeBranch,
@@ -1552,7 +1577,8 @@ export function requeueOrphanedValidations(
         ).run('Validation lease expired.', now, now, id);
         db.prepare(
           `UPDATE ticket_executions
-           SET status = 'failed', retryable = 1, status_reason_code = 'validator_error',
+           SET status = 'failed', retryable = 1, status_details_json = '{"retry":{"kind":"validate"}}',
+               status_reason_code = 'validator_error',
                status_reason = ?, version = version + 1, message = ?, updated_at = ?
            WHERE id = ?`,
         ).run(

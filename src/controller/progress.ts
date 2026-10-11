@@ -123,19 +123,20 @@ export function nextAction(snapshot: FactorySnapshot): string | null {
     return `/factory retry ${ref}`;
   }
   if (execution.status === 'failed') {
-    return execution.retryable ? `/factory retry ${ref}` : null;
+    return execution.retry !== null ? `/factory retry ${ref}` : null;
   }
   if (execution.status !== 'paused') {
     return null;
   }
-  if (execution.retryable) {
+  if (execution.retry !== null) {
     return `/factory retry ${ref}`;
   }
   if (execution.statusReasonCode === 'review_isolation') {
     return 'Fix models.review in FACTORY.json, then start the ticket again';
   }
-  const open = snapshot.attention.some((item) => item.status === 'open');
-  return open ? `/factory reply ${ref} "answer"` : null;
+  // Only a notice that names the run that paused can take a reply.
+  const asked = snapshot.attention.some((item) => item.status === 'open' && item.runId !== null);
+  return asked ? `/factory reply ${ref} "answer"` : null;
 }
 
 export function needsUser(snapshot: FactorySnapshot): boolean {
