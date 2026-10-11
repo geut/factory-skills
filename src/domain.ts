@@ -95,7 +95,9 @@ export function sequentialIds(prefix: string): IdSource {
   };
 }
 
-export type Stage = 'plan' | 'work' | 'review' | 'wrapup' | 'done';
+export type Stage = StageName | 'done';
+// A stage an agent runs; `done` is only an execution's position after the last one.
+export type StageName = 'plan' | 'work' | 'review' | 'wrapup';
 export type ExecutionStatus =
   | 'queued'
   | 'active'
@@ -409,7 +411,7 @@ export type SessionRecord = {
   model: string;
   piSessionId: string | null;
   sessionFile: string | null;
-  stage: 'plan' | 'work' | 'review' | 'wrapup';
+  stage: StageName;
   status: SessionStatus;
   taskId: TaskId | null;
   thinking: string;

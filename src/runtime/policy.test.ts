@@ -1,21 +1,23 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { stages, stageTools } from '../stages/index.ts';
+import { childInstructions } from '../stages/prompt.ts';
 import {
   childDescription,
-  childInstructions,
-  childToolList,
   clipTaskTitle,
   paneLabel,
-  replyPrompt,
   runStatusLabel,
-  stageLaunchPolicy,
   taskProgressText,
-  workCorrectionPrompt,
 } from './policy.ts';
 
+const replyPrompt = (stage: 'plan' | 'work', answer: string) =>
+  stages[stage].turn({ answer, kind: 'reply' });
+const workCorrectionPrompt = (failures: Array<string>) =>
+  stages.work.turn({ failures, kind: 'correction' });
+
 test('stage launch policy auto-exits and specialist skills finish with subagent_done', () => {
-  for (const policy of Object.values(stageLaunchPolicy)) {
+  for (const policy of Object.values(stages)) {
     assert.equal(policy.autoExit, true);
     assert.equal(policy.spawning, false);
     const instructions = childInstructions(policy.skill, policy.contract);
@@ -30,9 +32,9 @@ test('stage launch policy auto-exits and specialist skills finish with subagent_
     assert.match(skill, /shutting down/);
     assert.doesNotMatch(skill, /factory-supervise|fstate|FACTORY-STATE/);
   }
-  assert.match(childToolList('plan'), /subagent_done/);
-  assert.match(childToolList('work'), /caller_ping/);
-  assert.doesNotMatch(childToolList('review'), /bash|edit|write/);
+  assert.match(stageTools('plan'), /subagent_done/);
+  assert.match(stageTools('work'), /caller_ping/);
+  assert.doesNotMatch(stageTools('review'), /bash|edit|write/);
   assert.match(workCorrectionPrompt(['diff is empty']), /factory-work/);
   assert.match(workCorrectionPrompt(['diff is empty']), /diff is empty/);
   assert.match(replyPrompt('work', 'Use the catalog'), /factory-work/);

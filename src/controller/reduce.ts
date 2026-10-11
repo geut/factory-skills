@@ -3,6 +3,7 @@ import {
   type ActionRecord,
   type ControllerEvent,
   type ControllerResponse,
+  type Policy,
   type ExecutionStatus,
   type FactorySnapshot,
   type IdSource,
@@ -13,6 +14,7 @@ import {
   type RunPurpose,
   type RunRecord,
   type SessionRecord,
+  type StageName,
   type TaskId,
   type TaskRecord,
   type TerminalOutcome,
@@ -23,21 +25,8 @@ import {
   type WrapupValidationReport,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
-import {
-  childDescription,
-  correctionPrompt,
-  planPrompt,
-  replyPrompt,
-  reviewChangesPrompt,
-  reviewCorrectionPrompt,
-  reviewPrompt,
-  stageEmoji,
-  stageLaunchPolicy,
-  workCorrectionPrompt,
-  workPrompt,
-  wrapupCorrectionPrompt,
-  wrapupPrompt,
-} from '../runtime/policy.ts';
+import { childDescription } from '../runtime/policy.ts';
+import { stages } from '../stages/index.ts';
 import { formatFinding, parseReview } from '../validation/review.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../validation/wrapup.ts';
 import { currentStep, nextAction, progressText, runOutput } from './progress.ts';
@@ -280,6 +269,27 @@ function pauseForLimit(
   });
 }
 
+// A prepared session for one stage, launched with that stage's model and thinking.
+function newSession(
+  policy: Policy,
+  stage: StageName,
+  taskId: TaskId | null,
+  ids: IdSource,
+): SessionRecord {
+  const definition = stages[stage];
+  return {
+    id: ids.session(),
+    logicalKey: taskId === null ? stage : `${stage}:${taskId}`,
+    model: policy.models[definition.model],
+    piSessionId: null,
+    sessionFile: null,
+    stage,
+    status: 'prepared',
+    taskId,
+    thinking: definition.thinking,
+  };
+}
+
 function sessionCwd(snapshot: FactorySnapshot, session: SessionRecord): string {
   if (session.stage !== 'plan' && snapshot.execution.worktreePath !== null) {
     return snapshot.execution.worktreePath;
@@ -370,7 +380,7 @@ function scheduleCorrection(
     snapshot.execution.status = 'active';
     return;
   }
-  const prompt = correctionPrompt(failures);
+  const prompt = stages[session.stage].turn({ failures, kind: 'correction' });
   const run = addRun(snapshot, session, parent, 'validation_correction', count + 1, ids, prompt);
   run.description = parent.description ?? childDescription(snapshot.ticket.title);
   launchAction(snapshot, run, prompt, 'resume', ids, sessionCwd(snapshot, session));
@@ -404,9 +414,9 @@ function scheduleInfrastructure(
     null;
   const prompt =
     human && current !== null
-      ? replyPrompt(session.stage, current.answer)
+      ? stages[session.stage].turn({ answer: current.answer, kind: 'reply' })
       : [
-          `Follow the ${stageLaunchPolicy[session.stage].skill} skill.`,
+          `Follow the ${stages[session.stage].skill} skill.`,
           '',
           `The previous launch failed: ${message}`,
           'Continue the same task.',
@@ -484,7 +494,7 @@ function applyTerminal(
       }
       if (session?.stage === 'review') {
         const parsed = parseReview(terminal.output, run.semanticRound);
-        run.resultContract = stageLaunchPolicy.review.contract;
+        run.resultContract = stages.review.contract;
         if (parsed.kind === 'valid') {
           run.resultJson = JSON.stringify({ output: terminal.output, review: parsed.result });
           run.resultStatus = 'valid';
@@ -500,7 +510,7 @@ function applyTerminal(
         const missing = WRAPUP_HEADINGS.filter(
           (name) => !handoffSections(terminal.output).has(name.toLowerCase()),
         );
-        run.resultContract = stageLaunchPolicy.wrapup.contract;
+        run.resultContract = stages.wrapup.contract;
         run.resultJson = JSON.stringify({ output: terminal.output });
         if (missing.length === 0) {
           run.resultStatus = 'valid';
@@ -575,24 +585,17 @@ function reduceStart(
   if (snapshot !== null) {
     return unchanged(snapshot, repeatMessage(snapshot));
   }
-  const prompt = planPrompt({
-    body: event.ticket.body,
-    displayRef: event.ticket.displayRef,
-    factoryDir: event.ticket.factoryDir,
-    title: event.ticket.title,
+  const prompt = stages.plan.turn({
+    input: {
+      body: event.ticket.body,
+      displayRef: event.ticket.displayRef,
+      factoryDir: event.ticket.factoryDir,
+      title: event.ticket.title,
+    },
+    kind: 'initial',
   });
   const executionId = ids.execution();
-  const session: SessionRecord = {
-    id: ids.session(),
-    logicalKey: 'plan',
-    model: event.policy.models.plan,
-    piSessionId: null,
-    sessionFile: null,
-    stage: 'plan',
-    status: 'prepared',
-    taskId: null,
-    thinking: 'medium',
-  };
+  const session = newSession(event.policy, 'plan', null, ids);
   const created: FactorySnapshot = {
     actions: [],
     attention: [],
@@ -709,30 +712,24 @@ function finishWorkValidation(
   const previous =
     snapshot.sessions.find((item) => item.stage === 'review' && item.taskId === task.taskId) ??
     null;
-  const reviewSession: SessionRecord = previous ?? {
-    id: ids.session(),
-    logicalKey: `review:${task.taskId}`,
-    model: snapshot.execution.policy.models.review,
-    piSessionId: null,
-    sessionFile: null,
-    stage: 'review',
-    status: 'prepared',
-    taskId: task.taskId,
-    thinking: stageLaunchPolicy.review.thinking,
-  };
+  const reviewSession =
+    previous ?? newSession(snapshot.execution.policy, 'review', task.taskId, ids);
   if (previous === null) {
     snapshot.sessions.push(reviewSession);
   }
   const round = task.reviewRound + 1;
-  const prompt = reviewPrompt({
-    diff: report.detail.diff,
-    displayRef: snapshot.ticket.displayRef,
-    planPath: snapshot.execution.planPath ?? '',
-    rawOutput: runOutput(run),
-    round,
-    taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-    taskTitle: task.title,
-    validationSummary: report.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
+  const prompt = stages.review.turn({
+    input: {
+      diff: report.detail.diff,
+      displayRef: snapshot.ticket.displayRef,
+      planPath: snapshot.execution.planPath ?? '',
+      rawOutput: runOutput(run),
+      round,
+      taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+      taskTitle: task.title,
+      validationSummary: report.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
+    },
+    kind: 'initial',
   });
   const reviewRun = addRun(
     snapshot,
@@ -970,7 +967,7 @@ function correctReview(
     });
     return finish(snapshot, 'Review correction limit reached.');
   }
-  const prompt = reviewCorrectionPrompt(failures);
+  const prompt = stages.review.turn({ failures, kind: 'correction' });
   const run = addRun(
     snapshot,
     session,
@@ -1139,40 +1136,33 @@ function wrapupInputReady(
     if (existingSession !== null) {
       return unchanged(existing, 'Wrap-up already started.');
     }
-    const session: SessionRecord = {
-      id: ids.session(),
-      logicalKey: 'wrapup',
-      model: snapshot.execution.policy.models.work,
-      piSessionId: null,
-      sessionFile: null,
-      stage: 'wrapup',
-      status: 'prepared',
-      taskId: null,
-      thinking: stageLaunchPolicy.wrapup.thinking,
-    };
+    const session = newSession(snapshot.execution.policy, 'wrapup', null, ids);
     snapshot.sessions.push(session);
-    const prompt = wrapupPrompt({
-      adrPath: event.adrPath,
-      baseBranch: snapshot.execution.worktreeBaseBranch,
-      codeRoot: snapshot.execution.policy.codeRoot,
-      contextPath: event.contextPath,
-      displayRef: snapshot.ticket.displayRef,
-      factoryRoot: path.dirname(path.dirname(snapshot.execution.factoryDir)),
-      minorFindings: minorFindings(snapshot),
-      model: session.model,
-      planPath: snapshot.execution.planPath ?? '',
-      pullRequests: snapshot.execution.policy.pullRequests,
-      tasks: snapshot.tasks.map((task) => ({
-        status: task.status,
-        taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-        taskId: task.taskId,
-        title: task.title,
-        verdict: task.reviewVerdict ?? 'none',
-      })),
-      usage: event.usage,
-      verification: event.verification,
-      worktree,
-      worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+    const prompt = stages.wrapup.turn({
+      input: {
+        adrPath: event.adrPath,
+        baseBranch: snapshot.execution.worktreeBaseBranch,
+        codeRoot: snapshot.execution.policy.codeRoot,
+        contextPath: event.contextPath,
+        displayRef: snapshot.ticket.displayRef,
+        factoryRoot: path.dirname(path.dirname(snapshot.execution.factoryDir)),
+        minorFindings: minorFindings(snapshot),
+        model: session.model,
+        planPath: snapshot.execution.planPath ?? '',
+        pullRequests: snapshot.execution.policy.pullRequests,
+        tasks: snapshot.tasks.map((task) => ({
+          status: task.status,
+          taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+          taskId: task.taskId,
+          title: task.title,
+          verdict: task.reviewVerdict ?? 'none',
+        })),
+        usage: event.usage,
+        verification: event.verification,
+        worktree,
+        worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+      },
+      kind: 'initial',
     });
     const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
     run.description = childDescription(snapshot.ticket.title);
@@ -1190,7 +1180,7 @@ function wrapupInputReady(
       .find((item) => item.sessionId === existingSession.id && item.status === 'terminal') ?? null;
   if (action.purpose === 'validation_correction') {
     // Wrap-up corrections are not counted against a limit.
-    const prompt = wrapupCorrectionPrompt(action.failures);
+    const prompt = stages.wrapup.turn({ failures: action.failures, kind: 'correction' });
     const count = snapshot.runs.filter(
       (item) => item.sessionId === existingSession.id && item.purpose === 'validation_correction',
     ).length;
@@ -1226,7 +1216,7 @@ function wrapupInputReady(
     return reject(existing, 'Reply was not stored.');
   }
   const asked = attention.runId === null ? parent : runFor(snapshot, attention.runId);
-  const prompt = replyPrompt('wrapup', reply.answer);
+  const prompt = stages.wrapup.turn({ answer: reply.answer, kind: 'reply' });
   const run = addRun(snapshot, existingSession, asked, 'human_reply', 0, ids, prompt);
   run.description = asked?.description ?? childDescription(snapshot.ticket.title);
   snapshot.actions.push({
@@ -1290,7 +1280,7 @@ function finishWrapupValidation(
       id: ids.action(),
       idempotencyKey: `pane:session:${run.id}`,
       kind: 'open_pane',
-      name: `${stageEmoji.wrapup} ${ref}`,
+      name: `${stages.wrapup.emoji} ${ref}`,
     },
     {
       ...base,
@@ -1488,34 +1478,27 @@ export function reduce(input: {
       action.status = 'succeeded';
       if (action.purpose === 'initial') {
         task.status = 'working';
-        const session: SessionRecord = {
-          id: ids.session(),
-          logicalKey: `work:${task.taskId}`,
-          model: snapshot.execution.policy.models.work,
-          piSessionId: null,
-          sessionFile: null,
-          stage: 'work',
-          status: 'prepared',
-          taskId: task.taskId,
-          thinking: 'medium',
-        };
+        const session = newSession(snapshot.execution.policy, 'work', task.taskId, ids);
         snapshot.sessions.push(session);
-        const prompt = workPrompt({
-          adrPath: event.adrPath,
-          commands: snapshot.execution.policy.validation.work.commands,
-          contextPath: event.contextPath,
-          dependencies: task.blockedBy.map((id) => ({
-            status: taskById(snapshot, id)?.status ?? 'missing',
-            taskId: id,
-          })),
-          displayRef: snapshot.ticket.displayRef,
-          planPath: snapshot.execution.planPath ?? '',
-          taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
-          taskId: task.taskId,
-          taskType: event.taskType,
-          title: task.title,
-          worktree,
-          worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+        const prompt = stages.work.turn({
+          input: {
+            adrPath: event.adrPath,
+            commands: snapshot.execution.policy.validation.work.commands,
+            contextPath: event.contextPath,
+            dependencies: task.blockedBy.map((id) => ({
+              status: taskById(snapshot, id)?.status ?? 'missing',
+              taskId: id,
+            })),
+            displayRef: snapshot.ticket.displayRef,
+            planPath: snapshot.execution.planPath ?? '',
+            taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
+            taskId: task.taskId,
+            taskType: event.taskType,
+            title: task.title,
+            worktree,
+            worktreeBranch: snapshot.execution.worktreeBranch ?? '',
+          },
+          kind: 'initial',
         });
         const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
         run.description = childDescription(task.title);
@@ -1531,8 +1514,8 @@ export function reduce(input: {
       if (action.purpose === 'validation_correction' || action.purpose === 'review_changes') {
         const review = action.purpose === 'review_changes';
         const prompt = review
-          ? reviewChangesPrompt(task.reviewRound, action.failures)
-          : workCorrectionPrompt(action.failures);
+          ? stages.work.turn({ kind: 'return', problems: action.failures, round: task.reviewRound })
+          : stages.work.turn({ failures: action.failures, kind: 'correction' });
         const parent =
           [...snapshot.runs]
             .reverse()
@@ -1578,7 +1561,7 @@ export function reduce(input: {
         return reject(existing, 'Reply was not stored.');
       }
       const parent = attention.runId === null ? null : runFor(snapshot, attention.runId);
-      const prompt = replyPrompt('work', reply.answer);
+      const prompt = stages.work.turn({ answer: reply.answer, kind: 'reply' });
       const run = addRun(
         snapshot,
         session,
@@ -1806,7 +1789,7 @@ export function reduce(input: {
         snapshot.execution.status = 'resuming';
         return finish(snapshot, 'Reply stored. Checking the wrap-up input.');
       }
-      const prompt = replyPrompt(session.stage, event.answer);
+      const prompt = stages[session.stage].turn({ answer: event.answer, kind: 'reply' });
       const run = addRun(
         snapshot,
         session,
@@ -1960,7 +1943,7 @@ export function reduce(input: {
         if (reply === null || attention === null || session === null) {
           return reject(existing, 'Retry needs the stored reply.');
         }
-        const prompt = replyPrompt(session.stage, reply.answer);
+        const prompt = stages[session.stage].turn({ answer: reply.answer, kind: 'reply' });
         const run = addRun(
           snapshot,
           session,
@@ -2026,7 +2009,7 @@ export function reduce(input: {
           return reject(existing, 'Nothing failed that can be retried.');
         }
         const prompt = [
-          `Follow the ${stageLaunchPolicy[session.stage].skill} skill.`,
+          `Follow the ${stages[session.stage].skill} skill.`,
           '',
           `Retry after failure: ${snapshot.execution.statusReason ?? 'unknown'}`,
           'Continue the same task.',

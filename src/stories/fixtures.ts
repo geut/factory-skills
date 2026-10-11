@@ -18,7 +18,7 @@ import {
   type TerminalOutcome,
 } from '../domain.ts';
 import type { WidgetChild } from '../extension/widget.ts';
-import { stageEmoji } from '../runtime/policy.ts';
+import { stages } from '../stages/index.ts';
 import { parseReview } from '../validation/review.ts';
 
 // Snapshots for the component gallery. They are built by hand, field by
@@ -367,7 +367,7 @@ export function child(
     owner?.taskId === null || owner === undefined
       ? null
       : (snapshot.tasks.find((item) => item.taskId === owner.taskId) ?? null);
-  const glyph = stageEmoji[owner?.stage ?? 'plan'];
+  const glyph = stages[owner?.stage ?? 'plan'].emoji;
   return {
     activity: owner?.stage === 'review' ? 'reading src/lib/server/read.ts…' : 'running npm test…',
     context: '67K/200K ctx (33.5%)',

@@ -21,8 +21,9 @@ import type {
   TaskRecord,
   TerminalOutcome,
 } from '../domain.ts';
-import { childToolList, paneLabel, taskProgressText } from '../runtime/policy.ts';
+import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
+import { stageTools } from '../stages/index.ts';
 import { validators } from '../validation/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -199,7 +200,7 @@ async function launch(
     stage: session.stage,
     taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
-    tools: childToolList(session.stage),
+    tools: stageTools(session.stage),
   };
   try {
     const started =

@@ -1,6 +1,6 @@
 import { ticketProgress, type TicketProgress } from '../controller/progress.ts';
 import type { FactorySnapshot } from '../domain.ts';
-import { stageEmoji } from '../runtime/policy.ts';
+import { stages } from '../stages/index.ts';
 import { child, NOW } from '../stories/fixtures.ts';
 import {
   approvedNext,
@@ -134,7 +134,7 @@ export const component: Component = {
         if (reviewer !== undefined) {
           children.push(
             child(other, reviewer),
-            child(other, reviewer, { paneName: `${stageEmoji.plan} proj-9` }),
+            child(other, reviewer, { paneName: `${stages.plan.emoji} proj-9` }),
           );
         }
         return { children, tickets: [first.snapshot, other, planRunning().snapshot] };

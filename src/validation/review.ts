@@ -6,7 +6,7 @@ import type {
   ReviewVerdict,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
-import { childToolList } from '../runtime/policy.ts';
+import { stageTools } from '../stages/index.ts';
 import {
   errorReport,
   failedReport,
@@ -292,7 +292,7 @@ export const reviewValidator: Validator<'review'> = {
         resultStatus: run.resultStatus,
         reviewedDiffHash: run.diffHash,
         reviewModel: session.model,
-        tools: childToolList('review'),
+        tools: stageTools('review'),
         workModel: workSession?.model ?? snapshot.execution.policy.models.work,
       }),
     );
