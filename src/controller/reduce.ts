@@ -1134,7 +1134,12 @@ function inputReady(
     const returnRound =
       action.origin === null || task === null ? 0 : (task.summaries[action.origin]?.round ?? 0);
     const prompt = returned
-      ? definition.turn({ kind: 'return', problems: action.failures, round: returnRound })
+      ? definition.turn({
+          kind: 'return',
+          origin: action.origin === null ? definition.label : stages[action.origin].label,
+          problems: action.failures,
+          round: returnRound,
+        })
       : definition.turn({ failures: action.failures, kind: 'correction' });
     const count = snapshot.runs.filter(
       (item) => item.sessionId === session.id && item.purpose === 'validation_correction',

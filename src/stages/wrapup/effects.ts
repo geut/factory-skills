@@ -54,7 +54,12 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
       baseline,
       contextPath: inspection.contextPath,
       usage: deps.usage(),
-      verification: deps.workChecks(),
+      verification: deps
+        .passedChecks('work')
+        .map(
+          (check) =>
+            `Task ${check.taskId ?? '?'} · ${check.name}: ${check.status}${check.command === null ? '' : ` (${check.command})`}`,
+        ),
     },
     kind: 'ready',
   };

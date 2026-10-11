@@ -5,9 +5,11 @@ import type {
   RunId,
   RunRecord,
   RunStatus,
+  StageName,
   TerminalKind,
 } from '../domain.ts';
 import { runStatusLabel } from '../runtime/policy.ts';
+import { stages } from '../stages/index.ts';
 import { parseReview } from '../stages/review/parse.ts';
 import { card, encodeCard, type CardTone, type FactoryCard } from './card.ts';
 import {
@@ -41,7 +43,7 @@ export type RunOutcome =
   | 'running'
   | 'waiting for you';
 
-export type RunStage = 'plan' | 'review' | 'work' | 'wrapup';
+export type RunStage = StageName;
 
 // Retries, replies, and corrections are named; first runs, returns to work,
 // and later review rounds are not, because the round is shown on its own.
@@ -97,10 +99,8 @@ export function classifyRun(input: {
       return input.verdict === null ? 'correcting' : verdictOutcomes[input.verdict];
     case 'wrapup':
       return input.handoff === true ? 'ready for handoff' : 'finished';
-    default: {
-      const _exhaustive: never = input.stage;
-      return _exhaustive;
-    }
+    default:
+      return 'finished';
   }
 }
 
@@ -218,10 +218,10 @@ export function runsInStartOrder<T extends { startedAt: string | null }>(runs: A
     .map((item) => item.run);
 }
 
-// Review rounds count from 1; work shows the round whose findings it fixes.
+// A stage's rounds count from 1; work shows the round whose findings it fixes.
 function runRound(snapshot: FactorySnapshot, run: RunRecord): number | null {
   const stage = runStage(snapshot, run);
-  if (stage === 'review' || (stage === 'work' && run.purpose === 'return_to_work')) {
+  if (stages[stage].rounds || run.purpose === 'return_to_work') {
     return run.semanticRound > 0 ? run.semanticRound : null;
   }
   return null;

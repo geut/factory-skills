@@ -25,6 +25,7 @@ import {
   type RunRecord,
   type SessionRecord,
   type InputPurpose,
+  type PassedCheck,
   type Retry,
   type Stage,
   type StageName,
@@ -36,7 +37,6 @@ import {
 } from '../domain.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
-import { WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import { card, encodeCard } from './card.ts';
 import { describeExisting, reduce } from './reduce.ts';
 
@@ -1705,10 +1705,17 @@ export function formatStatus(response: ControllerResponse): string {
 
 // Each task's latest passing work validation, one line per check:
 // `Task 01 · test: passed (npm test)`.
-export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Array<string> {
+// The checks of each task's latest passed validation by a stage's validator.
+export function passedChecks(
+  db: DatabaseSync,
+  execution: ExecutionId,
+  stage: StageName,
+  validatorVersion: string,
+): Array<PassedCheck> {
   return db
     .prepare(
-      `SELECT s.task_id AS task_id, c.name AS name, c.status AS status, c.command AS command
+      `SELECT s.task_id AS task_id, c.name AS name, c.kind AS kind, c.status AS status,
+              c.command AS command, c.evidence_path AS evidence_path
        FROM agent_sessions AS s
        JOIN validation_runs AS v ON v.id = (
          SELECT v2.id
@@ -1719,14 +1726,21 @@ export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Arra
          LIMIT 1
        )
        JOIN validation_checks AS c ON c.validation_id = v.id
-       WHERE s.execution_id = ? AND s.stage = 'work'
+       WHERE s.execution_id = ? AND s.stage = ?
        ORDER BY s.task_id, c.ordinal`,
     )
-    .all(WORK_VALIDATOR_VERSION, execution)
+    .all(validatorVersion, execution, stage)
     .map((item) => {
       const record = row(item);
-      const command = nullableText(record, 'command');
-      return `Task ${text(record, 'task_id')} · ${text(record, 'name')}: ${text(record, 'status')}${command === null ? '' : ` (${command})`}`;
+      const task = nullableText(record, 'task_id');
+      return {
+        command: nullableText(record, 'command'),
+        evidencePath: nullableText(record, 'evidence_path'),
+        kind: text(record, 'kind'),
+        name: text(record, 'name'),
+        status: text(record, 'status'),
+        taskId: task === null ? null : taskId(task),
+      };
     });
 }
 

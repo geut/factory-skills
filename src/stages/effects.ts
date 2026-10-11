@@ -1,4 +1,4 @@
-import type { ActionRecord, FactorySnapshot, StageName } from '../domain.ts';
+import type { ActionRecord, FactorySnapshot, PassedCheck, StageName } from '../domain.ts';
 import { planValidator } from '../validation/plan.ts';
 import type { Validator } from '../validation/report.ts';
 import { reviewValidator } from '../validation/review.ts';
@@ -13,10 +13,10 @@ export type InputContext = {
   deps: {
     // Whether the action's execution is still the ticket's current one.
     executionCurrent: boolean;
+    // The checks of each task's latest passed validation by `stage`.
+    passedChecks: (stage: StageName) => Array<PassedCheck>;
     // The all-stage usage table so far, excluding wrap-up.
     usage: () => string;
-    // One line per passing work-validation check, per task.
-    workChecks: () => Array<string>;
   };
   snapshot: FactorySnapshot;
 };

@@ -64,8 +64,8 @@ export type Ask<Input> =
   | { input: Input; kind: 'initial' }
   | { failures: Array<string>; kind: 'correction' }
   | { answer: string; kind: 'reply' }
-  // A later stage sent the task back with problems to fix.
-  | { kind: 'return'; problems: Array<string>; round: number };
+  // A later stage, named by its label, sent the task back with problems to fix.
+  | { kind: 'return'; origin: string; problems: Array<string>; round: number };
 
 // What a finished run's raw output means, before any validator runs.
 // `unchecked` output has no contract of its own and is left to the validator.
@@ -151,7 +151,7 @@ type StageSpec<Input, Name extends StageName, Prepared> = Omit<
     correction: (failures: Array<string>) => string;
     initial: (input: Input) => string;
     reply?: (answer: string) => string;
-    returned?: (round: number, problems: Array<string>) => string;
+    returned?: (origin: string, round: number, problems: Array<string>) => string;
   };
   rounds?: boolean;
 };
@@ -181,7 +181,7 @@ export function defineStage<Input, const Name extends StageName, Prepared = null
           if (prompts.returned === undefined) {
             throw new Error(`The ${spec.name} stage cannot take a return to work.`);
           }
-          return prompts.returned(ask.round, ask.problems);
+          return prompts.returned(ask.origin, ask.round, ask.problems);
         default: {
           const _exhaustive: never = ask;
           return _exhaustive;

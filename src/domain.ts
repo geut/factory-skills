@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
 import type { StageSettings } from './stages/definition.ts';
-import type { InputStage, PreparedInput } from './stages/index.ts';
+import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -96,6 +96,27 @@ export function sequentialIds(prefix: string): IdSource {
     session: () => sessionId(next('session')),
   };
 }
+
+// A validator's report on a run, typed by the stage whose validator wrote it.
+export type ValidationFinished = {
+  [S in StageName]: {
+    actionId: ActionId;
+    kind: 'validation_finished';
+    report: StageReports[S];
+    runId: RunId;
+    stage: S;
+  };
+}[StageName];
+
+// One check of a passed validation, as a later stage reads it back.
+export type PassedCheck = {
+  command: string | null;
+  evidencePath: string | null;
+  kind: string;
+  name: string;
+  status: string;
+  taskId: TaskId | null;
+};
 
 // A prepared input, typed by the stage that asked for it.
 export type InputReady = {
@@ -265,36 +286,9 @@ export type ReconcileObservation =
 export type ControllerEvent =
   | { kind: 'start'; policy: Policy; ticket: ResolvedTicket }
   | { kind: 'runtime_terminal'; runId: RunId; terminal: TerminalOutcome }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      report: PlanValidationReport;
-      runId: RunId;
-      stage: 'plan';
-    }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      report: WorkValidationReport;
-      runId: RunId;
-      stage: 'work';
-    }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      report: ReviewValidationReport;
-      runId: RunId;
-      stage: 'review';
-    }
+  | ValidationFinished
   | InputReady
   | { actionId: ActionId; kind: 'input_failed'; message: string }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      report: WrapupValidationReport;
-      runId: RunId;
-      stage: 'wrapup';
-    }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
   | {
       actionId: ActionId;

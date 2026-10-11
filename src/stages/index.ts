@@ -1,4 +1,10 @@
-import type { StageName } from '../domain.ts';
+import type {
+  PlanValidationReport,
+  ReviewValidationReport,
+  StageName,
+  WorkValidationReport,
+  WrapupValidationReport,
+} from '../domain.ts';
 import { plan, planLimits } from './plan/definition.ts';
 import { childToolList } from './prompt.ts';
 import { review, reviewLimits } from './review/definition.ts';
@@ -12,6 +18,14 @@ export const stages = { plan, review, work, wrapup } satisfies {
 
 // Every stage's FACTORY.json limits, by key.
 export const stageLimits = { ...planLimits, ...reviewLimits, ...workLimits };
+
+// The report each stage's validator writes.
+export type StageReports = {
+  plan: PlanValidationReport;
+  review: ReviewValidationReport;
+  work: WorkValidationReport;
+  wrapup: WrapupValidationReport;
+};
 
 // The input each stage with input preparation hands the reducer.
 export type PreparedInput = { work: WorkPrepared; wrapup: WrapupPrepared };

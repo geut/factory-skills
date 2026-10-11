@@ -114,11 +114,11 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         commands,
       ].join('\n');
     },
-    returned: (round, problems) =>
+    returned: (origin, round, problems) =>
       [
         childInstructions(skill, contract),
         '',
-        `Review round ${round} requested changes. Resolve these blocking findings in the same worktree:`,
+        `${origin} round ${round} requested changes. Resolve these blocking findings in the same worktree:`,
         ...problems.map((problem) => `- ${problem}`),
         '',
         'Change only what these findings require. Leave the work uncommitted.',

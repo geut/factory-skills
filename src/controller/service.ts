@@ -16,6 +16,7 @@ import {
 import { sha256 } from '../hash.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { stages } from '../stages/index.ts';
 import { parseReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import {
@@ -482,11 +483,7 @@ function runStageMessage(snapshot: FactorySnapshot, runId: RunId): string {
     run === null
       ? null
       : (snapshot.sessions.find((session) => session.id === run.sessionId)?.stage ?? null);
-  return stage === 'work'
-    ? 'Work validation failed.'
-    : stage === 'wrapup'
-      ? 'Wrap-up validation failed.'
-      : 'Plan validation failed.';
+  return `${stages[stage ?? 'plan'].label} validation failed.`;
 }
 
 export function factoryPaths(cwd: string): { codeRoot: string; factoryRoot: string } {

@@ -9,7 +9,7 @@ import {
   finishLeasedAction,
   loadSnapshotByExecution,
   loadSnapshotByRun,
-  passedWorkChecks,
+  passedChecks,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
 import type {
@@ -318,8 +318,9 @@ function prepareInput(
     action,
     deps: {
       executionCurrent: executionIsCurrent(input.db, executionId),
+      passedChecks: (stage) =>
+        passedChecks(input.db, executionId, stage, effects[stage].validator.version),
       usage: () => usageTable(input.db, executionId, { includeWrapup: false }),
-      workChecks: () => passedWorkChecks(input.db, executionId),
     },
     snapshot,
   });

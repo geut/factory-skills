@@ -3,6 +3,7 @@ import type {
   RunId,
   RunPurpose,
   SessionId,
+  StageName,
   TerminalOutcome,
 } from '../domain.ts';
 
@@ -17,7 +18,7 @@ export type LaunchSpec = {
   runId: RunId;
   sessionFile: string;
   sessionId: SessionId;
-  stage: 'plan' | 'work' | 'review' | 'wrapup';
+  stage: StageName;
   taskLabel: string | null;
   thinking: string;
   tools: string;

@@ -17,12 +17,17 @@ test('every stage builds its prompts from its own skill and contract', () => {
 
 test('only work takes a return to work', () => {
   assert.match(
-    stages.work.turn({ kind: 'return', problems: ['1. Missing guard'], round: 2 }),
+    stages.work.turn({
+      kind: 'return',
+      origin: 'Review',
+      problems: ['1. Missing guard'],
+      round: 2,
+    }),
     /Review round 2 requested changes[\s\S]*- 1\. Missing guard/,
   );
   for (const stage of [stages.plan, stages.review, stages.wrapup]) {
     assert.throws(
-      () => stage.turn({ kind: 'return', problems: [], round: 1 }),
+      () => stage.turn({ kind: 'return', origin: 'Review', problems: [], round: 1 }),
       /cannot take a return to work/,
     );
   }
