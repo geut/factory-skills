@@ -15,7 +15,12 @@ import {
 } from '../../validation/work.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import { acceptanceCriteria, qaPaths, testGaps, testPlan } from './criteria.ts';
-import { qaSettings, type QaPrepared, type QaValidationReport } from './definition.ts';
+import {
+  changedFiles,
+  qaSettings,
+  type QaPrepared,
+  type QaValidationReport,
+} from './definition.ts';
 
 export const QA_VALIDATOR_VERSION = 'qa.v1';
 
@@ -27,8 +32,9 @@ function readText(file: string): string | null {
   }
 }
 
-// Reads the task's acceptance criteria and makes QA's directory.
-export function prepareQaInput({ action, snapshot }: InputContext): InputResult<QaPrepared> {
+// Reads the task's acceptance criteria, what the worker changed, and the work
+// checks that passed, and makes QA's directory.
+export function prepareQaInput({ action, deps, snapshot }: InputContext): InputResult<QaPrepared> {
   const task = snapshot.tasks.find((item) => item.taskId === action.taskId) ?? null;
   if (task === null || snapshot.execution.worktreeStatus !== 'ready') {
     return { kind: 'failed', message: 'The worktree is not ready for this execution.' };
@@ -51,7 +57,19 @@ export function prepareQaInput({ action, snapshot }: InputContext): InputResult<
       message: `Cannot create ${paths.dir}: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  return { input: { criteria, dir: paths.dir }, kind: 'ready' };
+  const worktree = snapshot.execution.worktreePath;
+  const diff = worktree === null ? { diff: '' } : collectWorkDiff(worktree);
+  if ('message' in diff) {
+    return { kind: 'failed', message: `Cannot read the worktree diff: ${diff.message}` };
+  }
+  const checks = deps
+    .passedChecks('work')
+    .filter((check) => check.taskId === task.taskId && check.kind === 'command')
+    .map((check) => `${check.name}: ${check.status}`);
+  return {
+    input: { changedFiles: changedFiles(diff.diff), checks, criteria, dir: paths.dir },
+    kind: 'ready',
+  };
 }
 
 function artifact(
@@ -109,21 +127,22 @@ async function validateQa(input: {
     });
   }
   for (const row of plan) {
-    if (row.screenshot === null) {
-      continue;
+    for (const screenshot of row.screenshots) {
+      const file = path.resolve(paths.dir, screenshot);
+      const present = file.startsWith(`${paths.dir}${path.sep}`) && existsSync(file);
+      checks.push(
+        artifact(
+          row.screenshots.length === 1
+            ? `screenshot ${row.criterion}`
+            : `screenshot ${row.criterion} ${path.basename(screenshot)}`,
+          present,
+          present
+            ? file
+            : `Screenshot ${screenshot} for ${row.criterion} is missing from ${paths.dir}.`,
+          present ? file : null,
+        ),
+      );
     }
-    const file = path.resolve(paths.dir, row.screenshot);
-    const present = file.startsWith(`${paths.dir}${path.sep}`) && existsSync(file);
-    checks.push(
-      artifact(
-        `screenshot ${row.criterion}`,
-        present,
-        present
-          ? file
-          : `Screenshot ${row.screenshot} for ${row.criterion} is missing from ${paths.dir}.`,
-        present ? file : null,
-      ),
-    );
   }
   const incomplete = checks
     .filter((check) => check.status === 'failed')

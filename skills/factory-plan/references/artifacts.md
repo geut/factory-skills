@@ -68,6 +68,7 @@ Number files in dependency order. Keep one task per file.
 
 Status: pending
 Type: bug | feature | performance | refactor | investigation
+QA: e2e | none
 Blocked by: none | <task numbers>
 
 ## User story
@@ -86,6 +87,10 @@ What belongs in this task and what explicitly does not.
 
 - [ ] Observable, testable behavior.
 
+One behavior per criterion. Phrase it as something a user can see in the running product when it is one: QA writes an end-to-end test for each observable criterion and lists the rest in its ledger.
+
+`QA:` says whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the running product: a page, an HTTP response, a CLI's output. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. Without the line, QA runs. A `none` task still lists its acceptance criteria.
+
 ## Verification
 
 Expected unit/integration seam and relevant end-to-end story. If E2E automation is not feasible, state why and give a human verification path.
@@ -98,11 +103,11 @@ Only evidence and constraints the worker would otherwise have to rediscover.
 Task status uses one lifecycle vocabulary:
 
 ```text
-pending → active (work → review) → done
+pending → active (work → qa → review) → done
              └──────────────────→ blocked
 ```
 
-An `active` task is at one per-task stage at a time: work, then review. A changes-requested verdict returns the task to work; only review approval moves it to `done`. A `blocked` task waits for a person at the stage where it stopped.
+An `active` task is at one per-task stage at a time: work, then QA when FACTORY.json enables it, then review. A failing QA test or a changes-requested verdict returns the task to work; only review approval moves it to `done`. A `blocked` task waits for a person at the stage where it stopped.
 
 Do not predesign implementation in the task unless a constraint or agreed contract makes it necessary.
 

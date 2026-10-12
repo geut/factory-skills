@@ -11,6 +11,10 @@ _Avoid_: phase, step
 **Optional stage**:
 A stage the project turns on or off in its factory configuration; a disabled stage is skipped. QA is the first.
 
+**Skipped stage**:
+An optional per-task stage that a task's plan turns off for that task, such as QA for a task no user can observe. The task goes on to the next stage, and the skipped stage's summary says so.
+_Avoid_: disabled (that is the project-wide switch)
+
 **QA**:
 The stage between work and review that proves a task's acceptance criteria with observable tests run against the real product, and captures screenshots as evidence.
 _Avoid_: testing stage, verification

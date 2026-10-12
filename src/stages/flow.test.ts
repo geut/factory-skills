@@ -37,8 +37,8 @@ test('the plan leads to the first ready task, and work to review of that task', 
     stage: 'review',
     taskId: taskId('01'),
   });
-  assert.equal(previousTaskStage(snapshot.execution.policy, 'review'), 'work');
-  assert.equal(previousTaskStage(snapshot.execution.policy, 'work'), null);
+  assert.equal(previousTaskStage(snapshot.execution.policy, 'review', null), 'work');
+  assert.equal(previousTaskStage(snapshot.execution.policy, 'work', null), null);
 });
 
 test('after a task, the next one whose dependencies are done, then wrap-up', () => {
@@ -63,4 +63,30 @@ test('after a task, the next one whose dependencies are done, then wrap-up', () 
     taskId: null,
   });
   assert.deepEqual(nextStep(snapshot, 'wrapup', null), { kind: 'handoff' });
+});
+
+test('a task whose file says QA: none goes from work straight to review', () => {
+  const snapshot = blank();
+  addTasks(snapshot, 2);
+  snapshot.execution.policy.stages['qa'] = {
+    commands: [{ argv: ['pnpm', 'test:e2e'], name: 'e2e', timeoutMs: 60_000 }],
+    enabled: true,
+  };
+  const [first, second] = snapshot.tasks;
+  if (first === undefined || second === undefined) {
+    throw new Error('two tasks expected');
+  }
+  first.summaries.qa = { counts: {}, label: 'skipped', round: 0 };
+  assert.deepEqual(nextStep(snapshot, 'work', taskId('01')), {
+    kind: 'stage',
+    stage: 'review',
+    taskId: taskId('01'),
+  });
+  assert.equal(previousTaskStage(snapshot.execution.policy, 'review', first), 'work');
+  assert.deepEqual(nextStep(snapshot, 'work', taskId('02')), {
+    kind: 'stage',
+    stage: 'qa',
+    taskId: taskId('02'),
+  });
+  assert.equal(previousTaskStage(snapshot.execution.policy, 'review', second), 'qa');
 });

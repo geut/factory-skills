@@ -31,13 +31,13 @@ The reviewer returns the `factory.review.v4` template. The controller parses the
 
 Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round.
 
-QA is an optional stage between work and review, on when `FACTORY.json` sets `stages.qa.enabled` and lists at least one `stages.qa.commands`. It reads the task file's `## Acceptance criteria` (AC1..ACn) and launches the `factory-qa` agent on `models.work` in the worktree. The agent writes one observable end-to-end test per criterion in the worktree, and `test-plan.md`, `ledger.md`, and `screenshots/` under `tickets/<slug>/qa/<task>/`. The controller checks that every criterion is tested or in the ledger with a reason and that each screenshot exists, then runs the QA commands itself:
+QA is an optional stage between work and review, on when `FACTORY.json` sets `stages.qa.enabled` and lists at least one `stages.qa.commands`. It reads the task file's `## Acceptance criteria` (AC1..ACn) and launches the `factory-qa` agent on `models.work` in the worktree. The agent writes one observable end-to-end test per criterion a user can observe, lists the others in the ledger with what covers them, and `test-plan.md`, `ledger.md`, and `screenshots/` under `tickets/<slug>/qa/<task>/`. The controller checks that every criterion is tested or in the ledger with a reason and that each screenshot exists, then runs the QA commands itself:
 
 - missing or incomplete QA output resumes the QA agent with the failures, up to `limits.qaCorrections` (default 2) per round;
 - a failing command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
 - a pass hands review the diff QA left, tests included, and wrap-up lists the screenshots for the pull request.
 
-With QA on, the plan must give every task at least one acceptance criterion.
+With QA on, the plan must give every task at least one acceptance criterion. A task file can opt out with `QA: none` when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. Without the line, or with `QA: e2e`, QA runs.
 
 After the last approval, the controller checks the wrap-up input in code: every task is done with an approving review, the plan and task files exist, the worktree is ready on its branch, and no other child runs. It records the worktree, refs, and factory files as a baseline, then launches the `factory-wrapup` agent on `models.work` in the worktree. A failed check pauses the ticket; `retry` checks again.
 
@@ -119,7 +119,10 @@ Child sessions follow the named skill, return only the versioned template in tha
   "keys": { "PROJ": { "provider": "github" } },
   "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
   "stages": {
-    "qa": { "enabled": true, "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }] }
+    "qa": {
+      "enabled": true,
+      "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }]
+    }
   },
   "validation": {
     "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] },

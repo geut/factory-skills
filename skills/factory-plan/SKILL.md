@@ -46,6 +46,7 @@ Before finishing, verify that:
 
 - Every success condition maps to at least one task acceptance criterion.
 - Every task has a user story or observable outcome, explicit scope, and a verification approach.
+- Every task file has a `QA:` line: `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.

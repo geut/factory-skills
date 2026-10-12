@@ -15,26 +15,49 @@ function section(markdown: string, heading: string): string | null {
 }
 
 // The items under the task file's `## Acceptance criteria`, checked or not.
+// An item runs on over the indented lines that wrap it.
 export function acceptanceCriteria(taskMarkdown: string): Array<Criterion> {
   const body = section(taskMarkdown, 'acceptance criteria') ?? '';
-  return body
-    .split('\n')
-    .map((line) => /^\s*[-*]\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/.exec(line)?.[1] ?? null)
-    .filter((text): text is string => text !== null && text.length > 0)
-    .map((text, index) => ({ id: `AC${index + 1}`, text }));
+  const items: Array<string> = [];
+  let open = false;
+  for (const line of body.split('\n')) {
+    const item = /^\s*[-*]\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/.exec(line)?.[1];
+    if (item !== undefined) {
+      items.push(item);
+      open = true;
+    } else if (open && /^\s+\S/.test(line)) {
+      items[items.length - 1] += ` ${line.trim()}`;
+    } else {
+      open = false;
+    }
+  }
+  return items.map((text, index) => ({ id: `AC${index + 1}`, text }));
 }
 
 // One row of the test plan: the criterion, the test that proves it, and the
-// screenshot it captured, relative to the task's QA directory.
-export type PlannedTest = { criterion: string; screenshot: string | null; test: string };
+// screenshots it captured, relative to the task's QA directory.
+export type PlannedTest = { criterion: string; screenshots: Array<string>; test: string };
 
+// A screenshot cell holds `none` or one or more image paths, possibly with
+// prose around them. Without an image path, the whole cell is the path, so
+// the validator reports it as missing.
+function screenshotPaths(cell: string): Array<string> {
+  const text = cell.trim();
+  if (text === '' || text.toLowerCase() === 'none') {
+    return [];
+  }
+  const images = text.match(/[\w./-]+\.(?:png|jpe?g|gif|webp)\b/gi);
+  return images === null ? [text] : [...new Set(images)];
+}
+
+// A table row's cells. A pipe escaped as `\|` stays inside its cell.
 function cells(line: string): Array<string> {
   return line
     .trim()
     .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
+    .replace(/(?<!\\)\|$/, '')
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.replaceAll(String.raw`\|`, '|').trim());
 }
 
 // The rows of the `| AC | Test | Screenshot |` table in test-plan.md.
@@ -46,7 +69,7 @@ export function testPlan(markdown: string): Array<PlannedTest> {
     .filter(([criterion]) => /^AC\d+$/i.test(criterion ?? ''))
     .map(([criterion = '', test = '', screenshot = '']) => ({
       criterion: criterion.toUpperCase(),
-      screenshot: screenshot === '' || screenshot.toLowerCase() === 'none' ? null : screenshot,
+      screenshots: screenshotPaths(screenshot),
       test,
     }));
 }

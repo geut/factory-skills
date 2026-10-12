@@ -1,5 +1,5 @@
 import type { WorkCommand } from '../../config.ts';
-import type { Policy } from '../../domain.ts';
+import type { FactorySnapshot, Policy } from '../../domain.ts';
 import type { ValidationReport } from '../../validation/report.ts';
 import { defineStage, type LimitSpec, type SettingsResult } from '../definition.ts';
 import { runOutput } from '../output.ts';
@@ -14,9 +14,20 @@ export type QaValidationReport = ValidationReport<
 >;
 
 // What QA's input preparation read from the task file and set up.
-export type QaPrepared = { criteria: Array<Criterion>; dir: string };
+export type QaPrepared = {
+  // Files the worker changed, read from the worktree.
+  changedFiles: Array<string>;
+  // The task's work checks that passed, such as `test: passed`.
+  checks: Array<string>;
+  criteria: Array<Criterion>;
+  dir: string;
+};
 
 export type QaInput = {
+  // Files the worker changed, read from its diff.
+  changedFiles: Array<string>;
+  // The work checks that passed, such as `test: passed`.
+  checks: Array<string>;
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   dir: string;
@@ -26,8 +37,30 @@ export type QaInput = {
   taskFile: string;
   taskId: string;
   title: string;
+  workerSummary: string;
   worktree: string;
 };
+
+// What the task's worker said when it last finished.
+function workerOutput(snapshot: FactorySnapshot, taskId: string): string {
+  const work = snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === taskId);
+  const worker = [...snapshot.runs]
+    .reverse()
+    .find((item) => item.sessionId === work?.id && item.terminalKind === 'subagent_done');
+  return worker === undefined ? '' : runOutput(worker);
+}
+
+// The paths a unified diff touches, in order.
+export function changedFiles(diff: string): Array<string> {
+  const files = new Set<string>();
+  for (const line of diff.split('\n')) {
+    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (match?.[2] !== undefined) {
+      files.add(match[2]);
+    }
+  }
+  return [...files];
+}
 
 export type QaSettings = { commands: Array<WorkCommand>; enabled: boolean };
 
@@ -115,14 +148,8 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
     const round = run.semanticRound;
     if (report.status === 'passed') {
       // Review reads what the worker said, then what QA proved.
-      const work = snapshot.sessions.find(
-        (item) => item.stage === 'work' && item.taskId === task?.taskId,
-      );
-      const worker = [...snapshot.runs]
-        .reverse()
-        .find((item) => item.sessionId === work?.id && item.terminalKind === 'subagent_done');
       const output = [
-        worker === undefined ? '' : runOutput(worker),
+        workerOutput(snapshot, task?.taskId ?? ''),
         '',
         'QA summary:',
         runOutput(run),
@@ -172,6 +199,8 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
       throw new Error('QA runs for a task in a ready worktree.');
     }
     return {
+      changedFiles: prepared.changedFiles,
+      checks: prepared.checks,
       commands: qaSettings(execution.policy).commands,
       criteria: prepared.criteria,
       dir: prepared.dir,
@@ -181,6 +210,7 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
       title: task.title,
+      workerSummary: workerOutput(snapshot, task.taskId),
       worktree: execution.worktreePath,
     };
   },
@@ -214,7 +244,18 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
         'Acceptance criteria:',
         ...input.criteria.map((criterion) => `- ${criterion.id}: ${criterion.text}`),
         '',
-        'Write one observable end-to-end test per criterion in the worktree, beside the project tests.',
+        'Work checks that already passed (do not re-prove them with new tests):',
+        ...(input.checks.length === 0 ? ['none'] : input.checks.map((check) => `- ${check}`)),
+        '',
+        'Files the worker changed:',
+        ...(input.changedFiles.length === 0
+          ? ['none']
+          : input.changedFiles.map((file) => `- ${file}`)),
+        '',
+        'Worker summary:',
+        input.workerSummary.length > 0 ? input.workerSummary : 'none',
+        '',
+        'Sort the criteria first: write one observable end-to-end test for each criterion a user can observe, and put every other criterion in the ledger with the check or unit test that covers it.',
         `Write ${input.dir}/test-plan.md with a | AC | Test | Screenshot | row per tested criterion; screenshot paths are relative to the QA directory, under screenshots/.`,
         `Write ${input.dir}/ledger.md with a "- ACn: reason" line for every criterion the tests do not prove, and for any other gap.`,
         'The controller runs these commands in the worktree and fails QA when one fails:',

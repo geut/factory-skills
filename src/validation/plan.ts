@@ -6,6 +6,15 @@ import { stageEnabled } from '../stages/flow.ts';
 import { acceptanceCriteria } from '../stages/qa/criteria.ts';
 import { errorReport, failedReport, passedReport, type Validator } from './report.ts';
 
+// `QA: e2e | none` says whether QA runs for the task. Without the line, it runs.
+function qaMode(markdown: string): 'e2e' | 'none' | null {
+  const value = /^QA:\s*(.+)$/m.exec(markdown)?.[1]?.trim().toLowerCase();
+  if (value === undefined || value === 'e2e') {
+    return 'e2e';
+  }
+  return value === 'none' ? 'none' : null;
+}
+
 function blockedBy(markdown: string): Array<string> | null {
   const match = /^Blocked by:\s*(.+)$/m.exec(markdown);
   const value = match?.[1]?.trim();
@@ -83,13 +92,18 @@ function inspectPlanDir(input: {
     } catch {
       text = '';
     }
-    if (input.requireCriteria && acceptanceCriteria(text).length === 0) {
+    const qa = qaMode(text);
+    if (qa === null) {
+      failures.push(`${filename} has a QA line that is neither e2e nor none.`);
+    }
+    if (input.requireCriteria && qa === 'e2e' && acceptanceCriteria(text).length === 0) {
       failures.push(`${filename} lists no acceptance criteria; QA proves each one.`);
     }
     const deps = blockedBy(text) ?? [];
     tasks.push({
       blockedBy: deps.map((dep) => taskId(dep)),
       ordinal: Number(id),
+      skips: qa === 'none' ? ['qa'] : [],
       specHash: sha256(text),
       taskFile: filename,
       taskId: taskId(id),
@@ -102,7 +116,7 @@ function inspectPlanDir(input: {
       failures.map((failure) => ({
         details: failure,
         kind: 'artifact',
-        name: 'acceptance criteria',
+        name: 'task files',
         status: 'failed',
       })),
       failures,

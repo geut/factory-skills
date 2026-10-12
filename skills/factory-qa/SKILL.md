@@ -7,32 +7,56 @@ description: Prove one task's acceptance criteria with observable end-to-end tes
 
 Prove that one task does what its acceptance criteria say, from the outside. You test the product; you do not change it.
 
-## Establish the contract
+## Start from what the prompt gives you
 
-Read `.factory/CONTEXT.md`, the ticket's `plan.md`, the task file, and the project's existing end-to-end setup (for example a Playwright config and its tests). The prompt lists the task's acceptance criteria as `AC1`..`ACn`, in the order the task file gives them. Those ids are the keys of everything you write.
+The prompt lists the task's acceptance criteria as `AC1`..`ACn`, in the order the task file gives them. Those ids are the keys of everything you write. It also gives you the worker's summary, the files the worker changed, and the work checks that already passed.
 
-## Write one observable test per criterion
+Read the task file, the project's end-to-end setup (for example `playwright.config.ts` and one or two existing end-to-end tests), and `.factory/CONTEXT.md` when it exists. Read product code only where a test needs a selector, a route, or a fixture. The worker already built the change and review will read the diff: do not re-derive the implementation.
 
-For each criterion, write one end-to-end test in the worktree, next to the project's existing end-to-end tests, that drives the product the way a user would and asserts what the criterion says can be observed. Name the criterion in the test title, such as `AC2: the filter survives a reload`.
+## Sort the criteria
 
-- Exercise the running product (browser, HTTP, CLI), not internal functions.
-- Assert the observable result, not that code ran.
-- Capture a screenshot where the result is visible, into `screenshots/` under the QA directory. Name it after the criterion, such as `screenshots/ac2-filter-after-reload.png`.
-- When a criterion cannot be proven by an automated observable test, do not fake one. Record it in the ledger instead.
+Before you write anything, put each criterion in one of two groups:
 
-Run the tests yourself. If a test fails because the product does not meet the criterion, keep the test as it is: the controller runs the QA commands and returns the task to work with the failure. Do not weaken the assertion and do not change product code.
+- **Observable**: a user can see the result through the running product: a page, an HTTP response, a CLI's output. It gets one end-to-end test.
+- **Internal**: the criterion is about a function's return shape, a schema or fixture detail, the content of documentation, a skill, or an ADR, a grep over the source, or the configured checks being green. It gets a ledger line naming what already covers it, such as `- AC8: covered by the work check test (pnpm test)` or `- AC3: covered by src/lib/server/read.test.ts`. Do not build a harness to watch internals from the outside. For example, do not parse a framework's serialized page data out of the HTML.
+
+When a task has no observable criterion, the ledger can hold every one of them. That is a valid result, not a failure.
+
+## Write one test per observable criterion
+
+Write the test first, straight from the criterion and the project's harness, and let its failures tell you what to read. For each observable criterion:
+
+1. Write a short test that drives the product the way a user would and asserts what the criterion says can be observed. Put the criterion in the test title, such as `AC2: the filter survives a reload`, and put it next to the project's existing end-to-end tests.
+2. Run only that test.
+3. When it fails, read the failure, and only then the product code it points at: a route, a label, a fixture. Fix the test with a small edit and run it again.
+
+A failure that shows the product misses the criterion is a finding, not something to fix: see below.
+
+- Exercise the running product, not internal functions. Assert the observable result, not that code ran.
+- For Playwright projects, follow [references/playwright.md](references/playwright.md).
+- Reuse the project's harness: its web server config, fixtures, and seed helpers. Keep each test short: a spec for one task is tens of lines per criterion, not a thousand-line file. Fix a failing test with a small edit, never by rewriting the whole file.
+- Iterate with short timeouts and stop at the first failure, for example `pnpm exec playwright test <file> --timeout=15000 --max-failures=1`, so a wrong locator fails in seconds instead of minutes.
+- Probe through the test, not by hand. Do not start servers to explore with `curl`. If you must start a process yourself, record its pid (`cmd & pid=$!`) and kill that pid. Never use `pkill -f` with a pattern that also appears in your own command line. Prefer `localhost` to `127.0.0.1`, because dev servers often listen on IPv6 only.
+- Capture a screenshot only where the criterion's result is visible on screen. Save it in `screenshots/` under the QA directory, named after the criterion, such as `screenshots/ac2-filter-after-reload.png`. Take one screenshot per distinct screen, and do not capture the same page again for a second criterion.
+- When an observable criterion still cannot be proven by an automated test, do not fake one. Record it in the ledger.
+
+Run the QA commands the prompt lists once, at the end. If a test fails because the product does not meet the criterion, keep the test as it is: the controller runs the QA commands and returns the task to work with the failure. Do not weaken the assertion and do not change product code.
+
+Do not mutate product code, docs, or skills to show that your tests catch a regression. Review judges the tests. Restoring files by hand is how product changes leak into the diff.
+
+Decide and act. A QA round should be a short loop of write, run, fix, not a long design exercise.
 
 ## Record the test plan and the test-gap ledger
 
 Write both files in the QA directory the prompt names:
 
-- `test-plan.md`: a table with one row per tested criterion.
+- `test-plan.md`: a table with one row per tested criterion. A row can list several screenshots, separated by commas.
 
   ```markdown
-  | AC | Test | Screenshot |
-  | --- | --- | --- |
-  | AC1 | tests/e2e/filter.spec.ts › AC1: filter applies | screenshots/ac1-filter.png |
-  | AC2 | tests/e2e/filter.spec.ts › AC2: filter survives a reload | none |
+  | AC  | Test                                                     | Screenshot                 |
+  | --- | -------------------------------------------------------- | -------------------------- |
+  | AC1 | tests/e2e/filter.spec.ts › AC1: filter applies           | screenshots/ac1-filter.png |
+  | AC2 | tests/e2e/filter.spec.ts › AC2: filter survives a reload | none                       |
   ```
 
 - `ledger.md`: what the tests do not prove, one line each, keyed by criterion where one applies.

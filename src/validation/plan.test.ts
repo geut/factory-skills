@@ -89,6 +89,25 @@ test('with QA enabled, every task file must list acceptance criteria', async () 
     // Without QA the same plan never needed criteria.
     writeFileSync(path.join(factoryDir, '01-task-store.md'), '# Store\n\nBlocked by: none\n');
     assert.equal((await validate(factoryDir)).status, 'passed');
+    // A task that opts out of QA needs no criteria and is planned with QA skipped.
+    writeFileSync(
+      path.join(factoryDir, '01-task-store.md'),
+      '# Store\n\nQA: none\nBlocked by: none\n',
+    );
+    const skipped = await withQa();
+    assert.equal(skipped.status, 'passed');
+    if (skipped.status === 'passed') {
+      assert.deepEqual(skipped.detail.tasks[0]?.skips, ['qa']);
+    }
+    writeFileSync(
+      path.join(factoryDir, '01-task-store.md'),
+      '# Store\n\nQA: maybe\nBlocked by: none\n',
+    );
+    const invalid = await withQa();
+    assert.equal(invalid.status, 'failed');
+    if (invalid.status === 'failed') {
+      assert.match(invalid.summary, /QA line that is neither e2e nor none/);
+    }
   } finally {
     rmSync(factoryDir, { force: true, recursive: true });
   }

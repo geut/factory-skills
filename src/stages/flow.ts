@@ -27,6 +27,12 @@ function enabled(policy: Policy, list: ReadonlyArray<StageName>): Array<StageNam
   return list.filter((stage) => stageEnabled(policy, stage));
 }
 
+// The per-task stages that run for `task`: enabled ones the task file does not
+// skip (plan records a skip as a `skipped` summary).
+function taskStages(policy: Policy, task: TaskRecord | null): Array<StageName> {
+  return enabled(policy, flow.task).filter((stage) => task?.summaries[stage]?.label !== 'skipped');
+}
+
 // The lowest-ordinal pending task whose dependencies are done.
 export function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
   const done = new Set(
@@ -42,7 +48,7 @@ export function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
 function afterTasks(snapshot: FactorySnapshot): Step {
   const policy = snapshot.execution.policy;
   const next = readyTask(snapshot);
-  const first = enabled(policy, flow.task)[0];
+  const first = taskStages(policy, next)[0];
   if (next !== null && first !== undefined) {
     return { kind: 'stage', stage: first, taskId: next.taskId };
   }
@@ -70,7 +76,11 @@ export function nextStep(snapshot: FactorySnapshot, stage: StageName, taskId: Ta
     if (index === -1) {
       continue;
     }
-    const later = enabled(policy, list.slice(index + 1))[0];
+    const task =
+      phase === 'task' ? (snapshot.tasks.find((item) => item.taskId === taskId) ?? null) : null;
+    const later = (phase === 'task' ? taskStages(policy, task) : enabled(policy, list)).filter(
+      (item) => list.indexOf(item) > index,
+    )[0];
     if (later !== undefined) {
       return { kind: 'stage', stage: later, taskId: phase === 'task' ? taskId : null };
     }
@@ -83,8 +93,12 @@ export function nextStep(snapshot: FactorySnapshot, stage: StageName, taskId: Ta
 }
 
 // The enabled per-task stage before `stage`, whose output `stage` was given.
-export function previousTaskStage(policy: Policy, stage: StageName): StageName | null {
-  const list = enabled(policy, flow.task);
+export function previousTaskStage(
+  policy: Policy,
+  stage: StageName,
+  task: TaskRecord | null,
+): StageName | null {
+  const list = taskStages(policy, task);
   const index = list.indexOf(stage);
   return index > 0 ? (list[index - 1] ?? null) : null;
 }

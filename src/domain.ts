@@ -219,6 +219,8 @@ export type ResolvedTicket = {
 export type PlannedTask = {
   blockedBy: Array<TaskId>;
   ordinal: number;
+  // Optional per-task stages the task file turns off, such as `QA: none`.
+  skips: Array<StageName>;
   specHash: string;
   taskFile: string;
   taskId: TaskId;

@@ -893,7 +893,7 @@ function revalidatePrevious(
   stale: RunRecord,
   ids: IdSource,
 ): Reduction {
-  const previous = previousTaskStage(snapshot.execution.policy, stage);
+  const previous = previousTaskStage(snapshot.execution.policy, stage, task);
   const earlier = previous === null ? null : latestFinishedRun(snapshot, previous, task.taskId);
   if (previous === null || earlier === null) {
     return reject(existing, 'No finished run before this stage can be validated again.');
@@ -1068,7 +1068,10 @@ function applyOutcome(
           specHash: planned.specHash,
           stage: null,
           status: 'pending',
-          summaries: {},
+          // A stage the task file turns off is recorded as skipped.
+          summaries: Object.fromEntries(
+            planned.skips.map((stage) => [stage, { counts: {}, label: 'skipped', round: 0 }]),
+          ),
           taskFile: planned.taskFile,
           taskId: planned.taskId,
           title: planned.title,
