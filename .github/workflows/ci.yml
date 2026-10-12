@@ -1,7 +1,7 @@
 name: CI
 
 # Only code changes need the checks: src/ and tests/ hold the code, and the rest
-# of this list changes how it installs, typechecks or lints.
+# of this list changes how it installs, typechecks, formats or lints.
 on:
   push:
     branches: [main]
@@ -12,6 +12,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'oxlint.config.ts'
+      - '.oxfmtrc.json'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'oxlint.config.ts'
+      - '.oxfmtrc.json'
       - '.github/workflows/ci.yml'
 
 concurrency:
@@ -42,5 +44,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run format:check
       - run: npm run lint
       - run: npm test
