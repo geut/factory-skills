@@ -1,13 +1,16 @@
 import type {
+  ActionRecord,
   FactorySnapshot,
   ReviewVerdict,
   RunId,
   RunRecord,
   RunStatus,
+  StageName,
   TerminalKind,
 } from '../domain.ts';
 import { runStatusLabel } from '../runtime/policy.ts';
-import { parseReview } from '../validation/review.ts';
+import { stages } from '../stages/index.ts';
+import { parseReview } from '../stages/review/parse.ts';
 import { card, encodeCard, type CardTone, type FactoryCard } from './card.ts';
 import {
   currentStep,
@@ -40,12 +43,12 @@ export type RunOutcome =
   | 'running'
   | 'waiting for you';
 
-export type RunStage = 'plan' | 'review' | 'work' | 'wrapup';
+export type RunStage = StageName;
 
-// Retries, replies, and corrections are named; first runs and review rounds
-// are not, because the round is shown on its own.
+// Retries, replies, and corrections are named; first runs, returns to work,
+// and later review rounds are not, because the round is shown on its own.
 export function purposeSegment(run: Pick<RunRecord, 'purpose' | 'semanticRound'>): string | null {
-  if (run.purpose === 'initial' || run.purpose === 'review_changes') {
+  if (run.purpose === 'initial' || run.purpose === 'return_to_work' || run.purpose === 'reentry') {
     return null;
   }
   return runStatusLabel(run.purpose);
@@ -96,10 +99,8 @@ export function classifyRun(input: {
       return input.verdict === null ? 'correcting' : verdictOutcomes[input.verdict];
     case 'wrapup':
       return input.handoff === true ? 'ready for handoff' : 'finished';
-    default: {
-      const _exhaustive: never = input.stage;
-      return _exhaustive;
-    }
+    default:
+      return 'finished';
   }
 }
 
@@ -137,22 +138,23 @@ export function correctionScheduled(snapshot: FactorySnapshot, runId: RunId): bo
   if (child) {
     return true;
   }
-  const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
-  return snapshot.actions.some((action) =>
-    prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
+  return snapshot.actions.some((action) => correctsRun(action, runId));
+}
+
+// A stage pauses at its correction limit, or at its round limit.
+const limitCode = /_(correction|round)_limit$/;
+
+// Input prepared for a correction of `runId`, before that run exists.
+export function correctsRun(action: ActionRecord, runId: RunId): boolean {
+  return (
+    action.kind === 'prepare_input' &&
+    action.idempotencyKey.startsWith(`${action.stage}-input:${runId}:correction`)
   );
 }
 
-const limitCodes = new Set([
-  'plan_correction_limit',
-  'review_correction_limit',
-  'review_round_limit',
-  'work_correction_limit',
-]);
-
 export function limitPaused(snapshot: FactorySnapshot, run: RunRecord): boolean {
   const code = snapshot.execution.statusReasonCode;
-  if (snapshot.execution.status !== 'paused' || code === null || !limitCodes.has(code)) {
+  if (snapshot.execution.status !== 'paused' || code === null || !limitCode.test(code)) {
     return false;
   }
   // The pause is about the run its notice names, else the latest run.
@@ -216,10 +218,10 @@ export function runsInStartOrder<T extends { startedAt: string | null }>(runs: A
     .map((item) => item.run);
 }
 
-// Review rounds count from 1; work shows the round whose findings it fixes.
+// A stage's rounds count from 1; work shows the round whose findings it fixes.
 function runRound(snapshot: FactorySnapshot, run: RunRecord): number | null {
   const stage = runStage(snapshot, run);
-  if (stage === 'review' || (stage === 'work' && run.purpose === 'review_changes')) {
+  if (stages[stage].rounds || run.purpose === 'return_to_work') {
     return run.semanticRound > 0 ? run.semanticRound : null;
   }
   return null;

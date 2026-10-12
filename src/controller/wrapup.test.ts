@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '../domain.ts';
 import { wrapupRunning } from '../stories/scenarios.ts';
+import { errorReport, passedReport } from '../validation/report.ts';
+import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { reduce } from './reduce.ts';
 
@@ -75,10 +77,9 @@ test('a validator error uses the infrastructure retry budget, then fails retryab
       event: {
         actionId: action.id,
         kind: 'validation_finished',
-        outcome: { kind: 'error', message: 'git crashed' },
+        report: errorReport(WRAPUP_VALIDATOR_VERSION, 'git crashed'),
         runId,
         stage: 'wrapup',
-        usage: '',
       },
       ids: randomIds(),
       now,
@@ -92,7 +93,7 @@ test('a validator error uses the infrastructure retry budget, then fails retryab
   }
   assert.equal(snapshot.execution.status, 'failed');
   assert.equal(snapshot.execution.statusReasonCode, 'validator_error');
-  assert.equal(snapshot.execution.retryable, true);
+  assert.deepEqual(snapshot.execution.retry, { kind: 'validate' });
   // No correction run was created: an infrastructure error asks nothing of the agent.
   assert.equal(snapshot.runs.filter((run) => run.purpose === 'validation_correction').length, 0);
 });
@@ -103,20 +104,13 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
   const event = {
     actionId: action.id,
     kind: 'validation_finished' as const,
-    outcome: {
-      checks: [
-        {
-          details: 'ok',
-          kind: 'schema' as const,
-          name: 'handoff headings',
-          status: 'passed' as const,
-        },
-      ],
-      kind: 'passed' as const,
-    },
+    report: passedReport(
+      WRAPUP_VALIDATOR_VERSION,
+      [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
+      { usage: 'Stage  Sess  Input' },
+    ),
     runId,
     stage: 'wrapup' as const,
-    usage: 'Stage  Sess  Input',
   };
   const passed = reduce({ event, ids: randomIds(), now, snapshot });
   const after = passed.snapshot ?? snapshot;

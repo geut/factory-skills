@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_LIMITS, type InternalLabel } from '../config.ts';
+import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
   actionId,
   attentionId,
@@ -21,19 +21,21 @@ import {
   type IdSource,
   type Policy,
   type ReplyRecord,
-  type ReviewVerdict,
   type RunId,
   type RunRecord,
   type SessionRecord,
+  type InputPurpose,
+  type PassedCheck,
+  type Retry,
   type Stage,
+  type StageName,
   type TaskRecord,
   type TicketRecord,
   type UsageTotals,
   type UsageWrite,
-  type WorkInputPurpose,
-  type WrapupInputPurpose,
   type WorktreeStatus,
 } from '../domain.ts';
+import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { card, encodeCard } from './card.ts';
 import { describeExisting, reduce } from './reduce.ts';
@@ -157,8 +159,6 @@ function parsePolicy(raw: string): Policy {
     typeof models['plan'] !== 'string' ||
     typeof models['work'] !== 'string' ||
     typeof models['review'] !== 'string' ||
-    typeof limits['planCorrections'] !== 'number' ||
-    typeof limits['workCorrections'] !== 'number' ||
     typeof limits['infrastructureRetries'] !== 'number' ||
     !isRecord(labels['map']) ||
     !isRecord(validation['work'])
@@ -168,27 +168,30 @@ function parsePolicy(raw: string): Policy {
   return {
     codeRoot: value['codeRoot'],
     labels: parseLabelMap(labels['map']),
-    limits: {
-      infrastructureRetries: limits['infrastructureRetries'],
-      planCorrections: limits['planCorrections'],
-      // Executions started before the review limits existed keep the defaults.
-      reviewCorrections:
-        typeof limits['reviewCorrections'] === 'number'
-          ? limits['reviewCorrections']
-          : DEFAULT_LIMITS.reviewCorrections,
-      reviewRounds:
-        typeof limits['reviewRounds'] === 'number'
-          ? limits['reviewRounds']
-          : DEFAULT_LIMITS.reviewRounds,
-      workCorrections: limits['workCorrections'],
-    },
+    // A limit the execution's policy does not name keeps its default.
+    limits: Object.fromEntries(
+      Object.entries(DEFAULT_LIMITS).map(([key, fallback]) => {
+        const stored = limits[key];
+        return [key, typeof stored === 'number' ? stored : fallback];
+      }),
+    ) as Limits,
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
     pullRequests: value['pullRequests'] === true,
+    stages: storedStageSettings(value['stages']),
     validation: {
       work: { commands: parseCommands(validation['work']['commands']) },
       wrapup: { generated: parseGenerated(validation['wrapup']) },
     },
   };
+}
+
+// Settings snapshotted at start are read again by their stages.
+function storedStageSettings(value: unknown): Policy['stages'] {
+  const read = readStageSettings(value);
+  if (read.kind === 'error') {
+    throw new FactoryDatabaseError(`execution policy is invalid: ${read.message}`);
+  }
+  return read.stages;
 }
 
 function stringList(value: unknown): Array<string> {
@@ -234,22 +237,14 @@ function optionalOneOf<T extends string>(
   return oneOf(value, allowed, label);
 }
 
-const taskStatuses = [
-  'pending',
-  'working',
-  'ready_for_review',
-  'reviewing',
-  'done',
-  'blocked',
-  'cancelled',
-] as const;
-const reviewVerdicts: ReadonlyArray<ReviewVerdict> = ['approve', 'changes_requested', 'blocked'];
+const taskStatuses = ['pending', 'active', 'done', 'blocked', 'cancelled'] as const;
 const sessionStatuses = ['prepared', 'open', 'completed', 'abandoned'] as const;
 const runPurposes = [
   'initial',
   'validation_correction',
   'human_reply',
-  'review_changes',
+  'return_to_work',
+  'reentry',
   'manual_continue',
   'infrastructure_retry',
 ] as const;
@@ -269,17 +264,101 @@ const attentionKinds = ['agent_question', 'policy_limit', 'manual_approval'] as 
 const attentionStatuses = ['open', 'answered', 'resuming', 'resolved', 'cancelled'] as const;
 const actionStatuses = ['pending', 'leased', 'succeeded', 'failed', 'cancelled'] as const;
 
-function stage(value: string): Stage {
-  if (
-    value === 'plan' ||
-    value === 'work' ||
-    value === 'review' ||
-    value === 'wrapup' ||
-    value === 'done'
-  ) {
-    return value;
+// Stage names are checked against the registry, not the schema (ADR-002).
+function stageName(value: string): StageName {
+  if (Object.hasOwn(stages, value)) {
+    return value as StageName;
   }
   throw new FactoryDatabaseError(`unknown stage ${value}`);
+}
+
+function stage(value: string): Stage {
+  return value === 'done' ? value : stageName(value);
+}
+
+function inputStage(value: string): InputStage {
+  const stage = stageName(value);
+  if (!isInputStage(stage)) {
+    throw new FactoryDatabaseError(`the ${stage} stage prepares no input`);
+  }
+  return stage;
+}
+
+// A stage a task can be at: one that runs per task.
+function taskStage(value: string): StageName {
+  const stage = stageName(value);
+  if (stages[stage].scope !== 'task') {
+    throw new FactoryDatabaseError(`the ${stage} stage does not run per task`);
+  }
+  return stage;
+}
+
+function taskSummaries(json: string): TaskRecord['summaries'] {
+  const parsed: unknown = JSON.parse(json);
+  if (!isRecord(parsed)) {
+    throw new FactoryDatabaseError('task summaries must be an object');
+  }
+  const summaries: TaskRecord['summaries'] = {};
+  for (const [stage, value] of Object.entries(parsed)) {
+    if (
+      !isRecord(value) ||
+      typeof value['label'] !== 'string' ||
+      typeof value['round'] !== 'number' ||
+      !isRecord(value['counts']) ||
+      !Object.values(value['counts']).every((count) => typeof count === 'number')
+    ) {
+      throw new FactoryDatabaseError(`the ${stage} task summary is malformed`);
+    }
+    summaries[taskStage(stage)] = {
+      counts: value['counts'] as Record<string, number>,
+      label: value['label'],
+      round: value['round'],
+    };
+  }
+  return summaries;
+}
+
+const retryKinds = ['input', 'validate', 'worktree', 'relaunch', 'resume_reply'] as const;
+
+// The execution's retry target lives in status_details_json as {"retry": ...}.
+function retryOf(json: string | null): Retry | null {
+  const details: unknown = json === null ? {} : JSON.parse(json);
+  const retry = isRecord(details) ? details['retry'] : undefined;
+  if (retry === undefined || retry === null) {
+    return null;
+  }
+  if (
+    isRecord(retry) &&
+    retry['kind'] === 'revalidate' &&
+    typeof retry['stage'] === 'string' &&
+    typeof retry['taskId'] === 'string'
+  ) {
+    return {
+      kind: 'revalidate',
+      stage: taskStage(retry['stage']),
+      taskId: taskId(retry['taskId']),
+    };
+  }
+  if (isRecord(retry) && typeof retry['kind'] === 'string') {
+    return { kind: oneOf(retry['kind'], retryKinds, 'retry kind') };
+  }
+  throw new FactoryDatabaseError('the execution retry target is malformed');
+}
+
+function statusDetails(retry: Retry | null): string | null {
+  return retry === null ? null : jsonText({ retry });
+}
+
+// A per-task stage's session belongs to a task; a per-ticket one does not.
+function assertSessionScope(stage: StageName, task: string | null): void {
+  const scope = stages[stage].scope;
+  if ((scope === 'task') !== (task !== null)) {
+    throw new FactoryDatabaseError(
+      scope === 'task'
+        ? `a ${stage} session needs a task`
+        : `a ${stage} session cannot belong to a task`,
+    );
+  }
 }
 
 function worktreeStatus(value: string | null): WorktreeStatus | null {
@@ -385,7 +464,7 @@ function hydrate(
     message: nullableText(executionRow, 'message'),
     planPath: nullableText(executionRow, 'plan_path'),
     policy: parsePolicy(text(executionRow, 'policy_json')),
-    retryable: flag(executionRow, 'retryable'),
+    retry: retryOf(nullableText(executionRow, 'status_details_json')),
     stage: stage(text(executionRow, 'stage')),
     status: executionStatus(text(executionRow, 'status')),
     statusReason: nullableText(executionRow, 'status_reason'),
@@ -440,21 +519,14 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
         'SELECT depends_on_task_id FROM task_dependencies WHERE execution_id = ? AND task_id = ? ORDER BY depends_on_task_id',
       )
       .all(execution, id);
-    const findings = record['finding_count'];
-    const blocking = record['blocking_count'];
+    const stage = nullableText(record, 'stage');
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
-      blockingCount: typeof blocking === 'number' ? blocking : null,
-      findingCount: typeof findings === 'number' ? findings : null,
       ordinal: integer(record, 'ordinal'),
-      reviewRound: integer(record, 'review_round'),
-      reviewVerdict: optionalOneOf(
-        nullableText(record, 'review_verdict'),
-        reviewVerdicts,
-        'review verdict',
-      ),
       specHash: nullableText(record, 'spec_hash'),
+      stage: stage === null ? null : taskStage(stage),
       status: oneOf(text(record, 'status'), taskStatuses, 'task status'),
+      summaries: taskSummaries(text(record, 'summaries_json')),
       taskFile: text(record, 'task_file'),
       taskId: id,
       title: nullableText(record, 'title') ?? id,
@@ -469,22 +541,15 @@ function loadSessions(db: DatabaseSync, execution: ExecutionId): Array<SessionRe
     .map((item) => {
       const record = row(item);
       const task = nullableText(record, 'task_id');
-      const stageName = text(record, 'stage');
-      if (
-        stageName !== 'plan' &&
-        stageName !== 'work' &&
-        stageName !== 'review' &&
-        stageName !== 'wrapup'
-      ) {
-        throw new FactoryDatabaseError(`unknown session stage ${stageName}`);
-      }
+      const sessionStage = stageName(text(record, 'stage'));
+      assertSessionScope(sessionStage, task);
       return {
         id: sessionId(text(record, 'id')),
         logicalKey: text(record, 'logical_key'),
         model: text(record, 'model'),
         piSessionId: nullableText(record, 'pi_session_id'),
         sessionFile: nullableText(record, 'session_file'),
-        stage: stageName,
+        stage: sessionStage,
         status: oneOf(text(record, 'status'), sessionStatuses, 'session status'),
         taskId: task === null ? null : taskId(task),
         thinking: nullableText(record, 'thinking') ?? 'medium',
@@ -499,6 +564,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
     .map((item) => {
       const record = row(item);
       const parent = nullableText(record, 'parent_run_id');
+      const origin = nullableText(record, 'origin');
       return {
         baseline: baselineFromLifecycle(nullableText(record, 'lifecycle_json')),
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
@@ -506,6 +572,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
         endedAt: nullableText(record, 'ended_at'),
         id: runId(text(record, 'id')),
         inputHash: nullableText(record, 'input_hash'),
+        origin: origin === null ? null : taskStage(origin),
         paneId: nullableText(record, 'pane_id'),
         paneName: nullableText(record, 'pane_name'),
         parentRunId: parent === null ? null : runId(parent),
@@ -642,44 +709,32 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
     return { ...base, attentionReplyId: null, attentionRequestId: null, kind, runId: runId(run) };
   }
   if (
-    kind === 'prepare_work_input' &&
-    typeof payload['taskId'] === 'string' &&
+    kind === 'prepare_input' &&
+    typeof payload['stage'] === 'string' &&
+    (payload['taskId'] === null || typeof payload['taskId'] === 'string') &&
+    (payload['origin'] === null || typeof payload['origin'] === 'string') &&
     (payload['purpose'] === 'initial' ||
       payload['purpose'] === 'validation_correction' ||
       payload['purpose'] === 'human_reply' ||
-      payload['purpose'] === 'review_changes') &&
+      payload['purpose'] === 'return_to_work') &&
     Array.isArray(payload['failures']) &&
     payload['failures'].every((item) => typeof item === 'string')
   ) {
-    const purpose: WorkInputPurpose = payload['purpose'];
+    const stage = inputStage(payload['stage']);
+    const purpose: InputPurpose = payload['purpose'];
+    const task = payload['taskId'] === null ? null : taskId(payload['taskId']);
+    assertSessionScope(stage, task);
     return {
       ...base,
       attentionReplyId: null,
       attentionRequestId: null,
       failures: payload['failures'],
       kind,
+      origin: payload['origin'] === null ? null : taskStage(payload['origin']),
       purpose,
       runId: null,
-      taskId: taskId(payload['taskId']),
-    };
-  }
-  if (
-    kind === 'prepare_wrapup_input' &&
-    (payload['purpose'] === 'initial' ||
-      payload['purpose'] === 'validation_correction' ||
-      payload['purpose'] === 'human_reply') &&
-    Array.isArray(payload['failures']) &&
-    payload['failures'].every((item) => typeof item === 'string')
-  ) {
-    const purpose: WrapupInputPurpose = payload['purpose'];
-    return {
-      ...base,
-      attentionReplyId: null,
-      attentionRequestId: null,
-      failures: payload['failures'],
-      kind,
-      purpose,
-      runId: null,
+      stage,
+      taskId: task,
     };
   }
   if (kind === 'open_pane' && run !== null && typeof payload['name'] === 'string') {
@@ -739,14 +794,14 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ cwd: action.cwd, prompt: action.prompt });
     case 'validate_run':
       return '{}';
-    case 'prepare_work_input':
+    case 'prepare_input':
       return jsonText({
         failures: action.failures,
+        origin: action.origin,
         purpose: action.purpose,
+        stage: action.stage,
         taskId: action.taskId,
       });
-    case 'prepare_wrapup_input':
-      return jsonText({ failures: action.failures, purpose: action.purpose });
     case 'open_pane':
       return jsonText({ name: action.name });
     case 'open_diff':
@@ -794,10 +849,10 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
   db.prepare(
     `INSERT INTO ticket_executions
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
-       retryable, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
+       retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
        message, message_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -807,7 +862,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     execution.version,
     execution.statusReasonCode,
     execution.statusReason,
-    execution.retryable ? 1 : 0,
+    execution.retry === null ? 0 : 1,
+    statusDetails(execution.retry),
     jsonText(execution.policy),
     execution.inputJson,
     execution.inputHash,
@@ -836,7 +892,7 @@ function updateExecution(
     .prepare(
       `UPDATE ticket_executions
        SET stage = ?, status = ?, version = ?, status_reason_code = ?, status_reason = ?,
-           retryable = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
+           retryable = ?, status_details_json = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
            worktree_base_branch = ?, worktree_status = ?, worktree_base_sha = ?,
            message = ?, message_at = ?, updated_at = ?,
            finished_at = CASE
@@ -851,7 +907,8 @@ function updateExecution(
       after.version,
       after.statusReasonCode,
       after.statusReason,
-      after.retryable ? 1 : 0,
+      after.retry === null ? 0 : 1,
+      statusDetails(after.retry),
       after.planPath,
       after.worktreePath,
       after.worktreeBranch,
@@ -874,8 +931,9 @@ function updateExecution(
 function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, now: string): void {
   db.prepare(
     `INSERT INTO tasks
-      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution,
     task.taskId,
@@ -884,6 +942,8 @@ function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, 
     task.taskFile,
     task.specHash,
     task.status,
+    task.stage,
+    jsonText(task.summaries),
     now,
     now,
   );
@@ -900,6 +960,7 @@ function insertSession(
   session: SessionRecord,
   now: string,
 ): void {
+  assertSessionScope(session.stage, session.taskId);
   db.prepare(
     `INSERT INTO agent_sessions
       (id, execution_id, logical_key, stage, task_id, model, thinking, pi_session_id, session_file, status, created_at, updated_at)
@@ -960,11 +1021,11 @@ function descriptionFromLifecycle(raw: string | null): string | null {
 function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now: string): void {
   db.prepare(
     `INSERT INTO agent_runs
-      (id, execution_id, session_id, sequence, parent_run_id, purpose, semantic_round, status,
-       terminal_kind, subagent_id, pane_id, pane_name, input_hash, diff_hash, result_contract,
-       result_status, result_json, result_hash, result_error, lifecycle_json, created_at, started_at,
-       updated_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, execution_id, session_id, sequence, parent_run_id, purpose, origin, semantic_round,
+       status, terminal_kind, subagent_id, pane_id, pane_name, input_hash, diff_hash,
+       result_contract, result_status, result_json, result_hash, result_error, lifecycle_json,
+       created_at, started_at, updated_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     run.id,
     execution,
@@ -972,6 +1033,7 @@ function insertRun(db: DatabaseSync, execution: ExecutionId, run: RunRecord, now
     run.sequence,
     run.parentRunId,
     run.purpose,
+    run.origin,
     run.semanticRound,
     run.status,
     run.terminalKind,
@@ -1184,15 +1246,12 @@ function persist(
     } else if (!same(previous, task)) {
       db.prepare(
         `UPDATE tasks
-         SET status = ?, review_round = ?, review_verdict = ?, finding_count = ?,
-             blocking_count = ?, version = version + 1, updated_at = ?
+         SET status = ?, stage = ?, summaries_json = ?, version = version + 1, updated_at = ?
          WHERE execution_id = ? AND task_id = ?`,
       ).run(
         task.status,
-        task.reviewRound,
-        task.reviewVerdict,
-        task.findingCount,
-        task.blockingCount,
+        task.stage,
+        jsonText(task.summaries),
         now,
         after.execution.id,
         task.taskId,
@@ -1271,10 +1330,8 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
-    case 'work_input_ready':
-    case 'work_input_failed':
-    case 'wrapup_input_ready':
-    case 'wrapup_input_failed':
+    case 'input_ready':
+    case 'input_failed':
       return loadByAction(db, event.actionId);
     default: {
       const _exhaustive: never = event;
@@ -1312,10 +1369,8 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'retry':
     case 'worktree_ready':
     case 'worktree_failed':
-    case 'work_input_ready':
-    case 'work_input_failed':
-    case 'wrapup_input_ready':
-    case 'wrapup_input_failed':
+    case 'input_ready':
+    case 'input_failed':
     case 'complete':
       return null;
     default: {
@@ -1446,7 +1501,10 @@ export function listRunningChildren(db: DatabaseSync): Array<RunningChildRow> {
       const stage = text(record, 'stage');
       const title = nullableText(record, 'task_title');
       const taskTitle =
-        (stage === 'work' || stage === 'review') && title !== null && title.trim().length > 0
+        Object.hasOwn(stages, stage) &&
+        stages[stage as StageName].scope === 'task' &&
+        title !== null &&
+        title.trim().length > 0
           ? title
           : null;
       return {
@@ -1532,7 +1590,8 @@ export function requeueOrphanedValidations(
         ).run('Validation lease expired.', now, now, id);
         db.prepare(
           `UPDATE ticket_executions
-           SET status = 'failed', retryable = 1, status_reason_code = 'validator_error',
+           SET status = 'failed', retryable = 1, status_details_json = '{"retry":{"kind":"validate"}}',
+               status_reason_code = 'validator_error',
                status_reason = ?, version = version + 1, message = ?, updated_at = ?
            WHERE id = ?`,
         ).run(
@@ -1646,28 +1705,42 @@ export function formatStatus(response: ControllerResponse): string {
 
 // Each task's latest passing work validation, one line per check:
 // `Task 01 · test: passed (npm test)`.
-export function passedWorkChecks(db: DatabaseSync, execution: ExecutionId): Array<string> {
+// The checks of each task's latest passed validation by a stage's validator.
+export function passedChecks(
+  db: DatabaseSync,
+  execution: ExecutionId,
+  stage: StageName,
+  validatorVersion: string,
+): Array<PassedCheck> {
   return db
     .prepare(
-      `SELECT s.task_id AS task_id, c.name AS name, c.status AS status, c.command AS command
+      `SELECT s.task_id AS task_id, c.name AS name, c.kind AS kind, c.status AS status,
+              c.command AS command, c.evidence_path AS evidence_path
        FROM agent_sessions AS s
        JOIN validation_runs AS v ON v.id = (
          SELECT v2.id
          FROM validation_runs AS v2
          JOIN agent_runs AS r2 ON r2.id = v2.run_id
-         WHERE r2.session_id = s.id AND v2.validator_version = 'work.v1' AND v2.status = 'passed'
+         WHERE r2.session_id = s.id AND v2.validator_version = ? AND v2.status = 'passed'
          ORDER BY v2.completed_at DESC, v2.rowid DESC
          LIMIT 1
        )
        JOIN validation_checks AS c ON c.validation_id = v.id
-       WHERE s.execution_id = ? AND s.stage = 'work'
+       WHERE s.execution_id = ? AND s.stage = ?
        ORDER BY s.task_id, c.ordinal`,
     )
-    .all(execution)
+    .all(validatorVersion, execution, stage)
     .map((item) => {
       const record = row(item);
-      const command = nullableText(record, 'command');
-      return `Task ${text(record, 'task_id')} · ${text(record, 'name')}: ${text(record, 'status')}${command === null ? '' : ` (${command})`}`;
+      const task = nullableText(record, 'task_id');
+      return {
+        command: nullableText(record, 'command'),
+        evidencePath: nullableText(record, 'evidence_path'),
+        kind: text(record, 'kind'),
+        name: text(record, 'name'),
+        status: text(record, 'status'),
+        taskId: task === null ? null : taskId(task),
+      };
     });
 }
 

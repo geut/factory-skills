@@ -97,8 +97,8 @@ test('valid wrap-up input is ready, with the optional ADR and context', () => {
 
 test('a task that is not done, or not approved, blocks wrap-up', () => {
   const pending = ready();
-  setTask(pending.snapshot, '02', 'reviewing');
-  assert.match(failures(inspect(pending)), /Task 02 is reviewing, not done/);
+  setTask(pending.snapshot, '02', { stage: 'review' });
+  assert.match(failures(inspect(pending)), /Task 02 is at review, not done/);
   const unapproved = ready();
   setTask(unapproved.snapshot, '02', 'done', { round: 1, verdict: 'changes_requested' });
   assert.match(failures(inspect(unapproved)), /Task 02 has no approving review/);

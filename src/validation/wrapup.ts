@@ -3,21 +3,21 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
-import type { WrapupBaseline, WrapupCheck, WrapupValidationOutcome } from '../domain.ts';
+import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
+import {
+  errorReport,
+  failedReport,
+  passedReport,
+  type ValidationCheck,
+  type Validator,
+} from './report.ts';
+
+export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 
 // Validates the wrap-up handoff against the repository, not the agent's
 // claims. The headings are checked for completeness; the prose is not parsed
 // for operational state.
-
-export const WRAPUP_HEADINGS = [
-  'Outcome',
-  'PR summary',
-  'Files',
-  'Tests',
-  'Operations',
-  'Limitations',
-  'Merge commands',
-] as const;
 
 // Controller-owned or transient parts of the factory root.
 const factoryInternal = new Set(['db', 'sessions', 'worktrees', 'node_modules', '.git']);
@@ -165,18 +165,6 @@ export function parseBaseline(text: string): WrapupBaseline | null {
   return null;
 }
 
-export function handoffSections(output: string): Map<string, string> {
-  const sections = new Map<string, string>();
-  const text = output.trim().replace(/^```[\w-]*\n([\s\S]*)\n```$/, '$1');
-  const matches = [...text.matchAll(/^##\s+(.+?)\s*$/gm)];
-  matches.forEach((match, index) => {
-    const start = (match.index ?? 0) + match[0].length;
-    const end = matches[index + 1]?.index ?? text.length;
-    sections.set((match[1] ?? '').trim().toLowerCase(), text.slice(start, end).trim());
-  });
-  return sections;
-}
-
 function cleanPath(value: string): string {
   return value
     .trim()
@@ -246,10 +234,10 @@ const pullRequestUrl = /https?:\/\/\S+\/pull\/\d+/;
 
 function check(
   name: string,
-  kind: WrapupCheck['kind'],
+  kind: ValidationCheck['kind'],
   failures: Array<string>,
   passed: string,
-): WrapupCheck {
+): ValidationCheck {
   return {
     details: failures.length === 0 ? passed : failures.join('\n'),
     kind,
@@ -274,8 +262,10 @@ export function validateWrapup(input: {
   generated: Array<string>;
   output: string;
   pullRequests: boolean;
+  // The all-stage usage table, read once the checks are done.
+  usage: () => string;
   worktree: string;
-}): WrapupValidationOutcome {
+}): WrapupValidationReport {
   let current: WrapupBaseline;
   let dirty: boolean;
   let branchExists: boolean;
@@ -284,13 +274,16 @@ export function validateWrapup(input: {
     dirty = gitOk(input.worktree, ['status', '--porcelain']).trim().length > 0;
     branchExists = refSha(input.codeRoot, `refs/heads/${input.branch}`) !== null;
   } catch (error: unknown) {
-    return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+    return errorReport(
+      WRAPUP_VALIDATOR_VERSION,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 
   const sections = handoffSections(input.output);
   const section = (name: string) => sections.get(name.toLowerCase()) ?? '';
   const missing = WRAPUP_HEADINGS.filter((name) => !sections.has(name.toLowerCase()));
-  const checks: Array<WrapupCheck> = [
+  const checks: Array<ValidationCheck> = [
     check(
       'handoff headings',
       'schema',
@@ -441,7 +434,10 @@ export function validateWrapup(input: {
     try {
       found = input.findPullRequest(url);
     } catch (error: unknown) {
-      return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+      return errorReport(
+        WRAPUP_VALIDATOR_VERSION,
+        error instanceof Error ? error.message : String(error),
+      );
     }
     if ('missing' in found) {
       policy.push(`No pull request exists at ${url}.`);
@@ -465,5 +461,61 @@ export function validateWrapup(input: {
   const failures = checks
     .filter((item) => item.status === 'failed')
     .flatMap((item) => item.details.split('\n'));
-  return failures.length === 0 ? { checks, kind: 'passed' } : { checks, failures, kind: 'failed' };
+  const detail = { usage: input.usage() };
+  return failures.length === 0
+    ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
+    : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
 }
+
+function outputOf(resultJson: string | null): string {
+  try {
+    const parsed: unknown = JSON.parse(resultJson ?? '{}');
+    return typeof parsed === 'object' &&
+      parsed !== null &&
+      'output' in parsed &&
+      typeof parsed.output === 'string'
+      ? parsed.output
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+export const wrapupValidator: Validator<'wrapup'> = {
+  validate: ({ deps, run, session, snapshot }) => {
+    const { execution } = snapshot;
+    // The baseline is taken when the first wrap-up input is prepared.
+    const baselineText =
+      snapshot.runs.find((item) => item.sessionId === session.id && item.baseline !== null)
+        ?.baseline ?? null;
+    const baseline = baselineText === null ? null : parseBaseline(baselineText);
+    if (
+      baseline === null ||
+      execution.worktreeBaseSha === null ||
+      execution.worktreeBranch === null ||
+      execution.worktreePath === null
+    ) {
+      return Promise.resolve(
+        errorReport(WRAPUP_VALIDATOR_VERSION, 'The wrap-up baseline or worktree is missing.'),
+      );
+    }
+    return Promise.resolve(
+      validateWrapup({
+        baseBranch: execution.worktreeBaseBranch,
+        baseline,
+        baseSha: execution.worktreeBaseSha,
+        branch: execution.worktreeBranch,
+        codeRoot: execution.policy.codeRoot,
+        commands: execution.policy.validation.work.commands,
+        factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+        findPullRequest: deps.findPullRequest,
+        generated: execution.policy.validation.wrapup.generated,
+        output: outputOf(run.resultJson),
+        pullRequests: execution.policy.pullRequests,
+        usage: deps.usage,
+        worktree: execution.worktreePath,
+      }),
+    );
+  },
+  version: WRAPUP_VALIDATOR_VERSION,
+};

@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { COMMAND_OUTPUT_LIMIT, validateWork, validationLeaseMs } from './work.ts';
+import type { WorkCommand } from '../config.ts';
+import { validationContext } from './fixture.ts';
+import { COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
 const roots: Array<string> = [];
 const gitEnv = {
@@ -41,24 +43,57 @@ function repo(): { baseSha: string; cwd: string } {
   return { baseSha: git(cwd, ['rev-parse', 'HEAD']), cwd };
 }
 
+function validate(input: {
+  allowsEmptyDiff: boolean;
+  baseSha: string;
+  commands: Array<WorkCommand>;
+  cwd: string;
+}) {
+  return workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreePath = input.cwd;
+      snapshot.execution.worktreeBaseSha = input.baseSha;
+      snapshot.execution.policy.validation.work.commands = input.commands;
+      // An investigation ticket may end with no diff.
+      snapshot.ticket.labels = input.allowsEmptyDiff ? ['investigation'] : [];
+    }),
+  );
+}
+
 test('validation lease covers every command timeout plus the inspection margin', () => {
-  assert.equal(validationLeaseMs([{ timeoutMs: 60_000 }, { timeoutMs: 300_000 }]), 390_000);
+  const { snapshot } = validationContext('work', (value) => {
+    value.execution.policy.validation.work.commands = [
+      { argv: ['true'], name: 'lint', timeoutMs: 60_000 },
+      { argv: ['true'], name: 'test', timeoutMs: 300_000 },
+    ];
+  });
+  assert.equal(workValidator.leaseMs?.(snapshot), 390_000);
+});
+
+test('a work run without a ready worktree is a validator error', async () => {
+  const report = await workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreeBaseSha = null;
+    }),
+  );
+  assert.equal(report.status, 'error');
+  assert.equal(report.summary, 'Worktree is missing.');
 });
 
 test('work validation records the real diff and configured commands', async () => {
   const { baseSha, cwd } = repo();
   writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
-  const passed = await validateWork({
+  const passed = await validate({
     allowsEmptyDiff: false,
     baseSha,
     commands: [{ argv: ['node', '-e', 'process.exit(0)'], name: 'tests', timeoutMs: 5000 }],
     cwd,
   });
-  assert.equal(passed.kind, 'passed');
-  if (passed.kind !== 'passed') {
+  assert.equal(passed.status, 'passed');
+  if (passed.status !== 'passed') {
     return;
   }
-  assert.match(passed.diff, /changed/);
+  assert.match(passed.detail.diff, /changed/);
   assert.equal(
     passed.checks.every((check) => check.status === 'passed'),
     true,
@@ -67,45 +102,45 @@ test('work validation records the real diff and configured commands', async () =
   const staged = repo();
   writeFileSync(path.join(staged.cwd, 'staged.txt'), 'staged\n');
   git(staged.cwd, ['add', 'staged.txt']);
-  const stagedResult = await validateWork({
+  const stagedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: staged.baseSha,
     commands: [],
     cwd: staged.cwd,
   });
-  assert.equal(stagedResult.kind, 'passed');
+  assert.equal(stagedResult.status, 'passed');
 
   const deleted = repo();
   rmSync(path.join(deleted.cwd, 'README.md'));
-  const deletedResult = await validateWork({
+  const deletedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: deleted.baseSha,
     commands: [],
     cwd: deleted.cwd,
   });
-  assert.equal(deletedResult.kind, 'passed');
-  if (deletedResult.kind === 'passed') {
-    assert.match(deletedResult.diff, /README.md/);
+  assert.equal(deletedResult.status, 'passed');
+  if (deletedResult.status === 'passed') {
+    assert.match(deletedResult.detail.diff, /README.md/);
   }
 
   const untracked = repo();
   writeFileSync(path.join(untracked.cwd, 'new.txt'), 'new\n');
-  const untrackedResult = await validateWork({
+  const untrackedResult = await validate({
     allowsEmptyDiff: false,
     baseSha: untracked.baseSha,
     commands: [],
     cwd: untracked.cwd,
   });
-  assert.equal(untrackedResult.kind, 'passed');
-  if (untrackedResult.kind === 'passed') {
-    assert.match(untrackedResult.diff, /new.txt/);
+  assert.equal(untrackedResult.status, 'passed');
+  if (untrackedResult.status === 'passed') {
+    assert.match(untrackedResult.detail.diff, /new.txt/);
   }
 
   // The returned diff is the worktree after the commands, so files they
   // write are part of what the reviewer sees.
   const written = repo();
   writeFileSync(path.join(written.cwd, 'README.md'), '# demo\nchanged\n');
-  const writtenResult = await validateWork({
+  const writtenResult = await validate({
     allowsEmptyDiff: false,
     baseSha: written.baseSha,
     commands: [
@@ -117,33 +152,33 @@ test('work validation records the real diff and configured commands', async () =
     ],
     cwd: written.cwd,
   });
-  assert.equal(writtenResult.kind, 'passed');
-  if (writtenResult.kind === 'passed') {
-    assert.match(writtenResult.diff, /report.json/);
+  assert.equal(writtenResult.status, 'passed');
+  if (writtenResult.status === 'passed') {
+    assert.match(writtenResult.detail.diff, /report.json/);
   }
 });
 
 test('empty diffs, whitespace, commits, timeouts, and command results are checks', async () => {
   const empty = repo();
-  const emptyResult = await validateWork({
+  const emptyResult = await validate({
     allowsEmptyDiff: false,
     baseSha: empty.baseSha,
     commands: [],
     cwd: empty.cwd,
   });
-  assert.equal(emptyResult.kind, 'failed');
-  if (emptyResult.kind === 'failed') {
+  assert.equal(emptyResult.status, 'failed');
+  if (emptyResult.status === 'failed') {
     assert.match(emptyResult.failures.join('\n'), /diff is empty/);
   }
 
-  const investigation = await validateWork({
+  const investigation = await validate({
     allowsEmptyDiff: true,
     baseSha: empty.baseSha,
     commands: [],
     cwd: empty.cwd,
   });
-  assert.equal(investigation.kind, 'passed');
-  if (investigation.kind === 'passed') {
+  assert.equal(investigation.status, 'passed');
+  if (investigation.status === 'passed') {
     assert.equal(
       investigation.checks.some((check) => check.name === 'diff'),
       false,
@@ -152,14 +187,14 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
 
   const dirty = repo();
   writeFileSync(path.join(dirty.cwd, 'README.md'), '# demo \n');
-  const whitespace = await validateWork({
+  const whitespace = await validate({
     allowsEmptyDiff: false,
     baseSha: dirty.baseSha,
     commands: [],
     cwd: dirty.cwd,
   });
-  assert.equal(whitespace.kind, 'failed');
-  if (whitespace.kind === 'failed') {
+  assert.equal(whitespace.status, 'failed');
+  if (whitespace.status === 'failed') {
     assert.match(whitespace.failures.join('\n'), /git diff --check/);
   }
 
@@ -167,50 +202,50 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
   writeFileSync(path.join(committed.cwd, 'README.md'), '# committed\n');
   git(committed.cwd, ['add', 'README.md']);
   git(committed.cwd, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'worker commit']);
-  const commit = await validateWork({
+  const commit = await validate({
     allowsEmptyDiff: false,
     baseSha: committed.baseSha,
     commands: [],
     cwd: committed.cwd,
   });
-  assert.equal(commit.kind, 'failed');
-  if (commit.kind === 'failed') {
+  assert.equal(commit.status, 'failed');
+  if (commit.status === 'failed') {
     assert.match(commit.failures.join('\n'), /unexpected commit/);
   }
 
   const failing = repo();
   writeFileSync(path.join(failing.cwd, 'README.md'), '# demo\nchanged\n');
-  const failedCommand = await validateWork({
+  const failedCommand = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['node', '-e', 'process.exit(2)'], name: 'tests', timeoutMs: 5000 }],
     cwd: failing.cwd,
   });
-  assert.equal(failedCommand.kind, 'failed');
-  if (failedCommand.kind === 'failed') {
+  assert.equal(failedCommand.status, 'failed');
+  if (failedCommand.status === 'failed') {
     assert.match(failedCommand.failures.join('\n'), /tests/);
   }
 
-  const timed = await validateWork({
+  const timed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['sleep', '2'], name: 'slow', timeoutMs: 200 }],
     cwd: failing.cwd,
   });
-  assert.equal(timed.kind, 'failed');
-  if (timed.kind === 'failed') {
+  assert.equal(timed.status, 'failed');
+  if (timed.status === 'failed') {
     assert.match(timed.failures.join('\n'), /timed out after 200ms/);
   }
 
-  const allowed = await validateWork({
+  const allowed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['sleep', '0.2'], name: 'pause', timeoutMs: 5000 }],
     cwd: failing.cwd,
   });
-  assert.equal(allowed.kind, 'passed');
+  assert.equal(allowed.status, 'passed');
 
-  const noisy = await validateWork({
+  const noisy = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [
@@ -222,18 +257,18 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     ],
     cwd: failing.cwd,
   });
-  assert.equal(noisy.kind, 'passed');
-  if (noisy.kind === 'passed') {
+  assert.equal(noisy.status, 'passed');
+  if (noisy.status === 'passed') {
     const output = noisy.checks.find((check) => check.name === 'noise')?.outputExcerpt ?? '';
     assert.ok(output.length <= COMMAND_OUTPUT_LIMIT);
     assert.ok(output.length > 0);
   }
 
-  const crashed = await validateWork({
+  const crashed = await validate({
     allowsEmptyDiff: false,
     baseSha: failing.baseSha,
     commands: [{ argv: ['factory-missing-binary'], name: 'missing', timeoutMs: 5000 }],
     cwd: failing.cwd,
   });
-  assert.equal(crashed.kind, 'error');
+  assert.equal(crashed.status, 'error');
 });

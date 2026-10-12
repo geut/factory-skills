@@ -43,6 +43,31 @@ export function shouldAutoExit(messages: ReadonlyArray<TurnMessage>): boolean {
   return false;
 }
 
+// A model request can fail in a way Pi does not retry, such as a provider
+// that answers 200 with a failed body. The child would sit idle with no
+// terminal call, so it nudges itself to continue with backoff, then exits
+// with a failure so the controller's infrastructure retry takes over.
+export const NUDGE_DELAYS_MS = [15_000, 60_000, 180_000] as const;
+export const NUDGE_PROMPT =
+  'The last model request failed. Continue the task from where you stopped.';
+
+export type FailedTurnStep =
+  | { kind: 'none' }
+  | { delayMs: number; kind: 'nudge' }
+  | { kind: 'exit' };
+
+export function afterFailedTurn(
+  messages: ReadonlyArray<TurnMessage>,
+  nudges: number,
+): FailedTurnStep {
+  const last = messages.at(-1);
+  if (last?.role !== 'assistant' || last.stopReason !== 'error') {
+    return { kind: 'none' };
+  }
+  const delayMs = NUDGE_DELAYS_MS[nudges];
+  return delayMs === undefined ? { kind: 'exit' } : { delayMs, kind: 'nudge' };
+}
+
 export function createTerminalWriter(): (
   sessionFile: string | undefined,
   body: TerminalSidecar,
@@ -97,7 +122,23 @@ export default function factoryChildHandshake(pi: ExtensionAPI): void {
     name: 'caller_ping',
     parameters: pingParameters,
   });
-  pi.on('agent_end', (event) => {
+  let nudges = 0;
+  pi.on('agent_end', (event, ctx) => {
+    const step = afterFailedTurn(event.messages, nudges);
+    if (step.kind === 'nudge') {
+      nudges += 1;
+      setTimeout(() => {
+        // Pi may have retried on its own meanwhile.
+        if (ctx.isIdle()) {
+          pi.sendUserMessage(NUDGE_PROMPT);
+        }
+      }, step.delayMs);
+      return;
+    }
+    if (step.kind === 'exit') {
+      process.exit(1);
+    }
+    nudges = 0;
     if (process.env['PI_SUBAGENT_AUTO_EXIT'] !== '1' || !shouldAutoExit(event.messages)) {
       return;
     }

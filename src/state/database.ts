@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 export const APPLICATION_ID = 0x46_41_43_54; // "FACT"
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const STATE_DATABASE_RELATIVE_PATH = path.join('db', 'state.sqlite');
 
 const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
@@ -87,6 +87,16 @@ function assertCompatible(db: DatabaseSync, databasePath: string): void {
     storedSchemaVersion === SCHEMA_VERSION
   ) {
     return;
+  }
+
+  if (
+    applicationId === APPLICATION_ID &&
+    storedSchemaVersion !== null &&
+    storedSchemaVersion < SCHEMA_VERSION
+  ) {
+    throw new IncompatibleFactoryDatabaseError(
+      `factory database at ${databasePath} is schema ${storedSchemaVersion}; this controller needs schema ${SCHEMA_VERSION} and does not upgrade older databases. Finish or cancel its tickets with the older controller, then remove ${path.dirname(databasePath)} and start again.`,
+    );
   }
 
   if (applicationId === 0 && hasTable(db, 'meta')) {
@@ -180,73 +190,11 @@ export function openStateDatabase(
       }
     }
     assertCompatible(db, databasePath);
-    if (!readOnly) {
-      widenActionKinds(db);
-    }
     configureConnection(db, readOnly);
     return db;
   } catch (error: unknown) {
     db.close();
     throw error;
-  }
-}
-
-const addedActionKinds = ['prepare_wrapup_input', 'open_pane'];
-
-// Schema 2 grew two action kinds. A database created before them still has
-// the narrower CHECK, and SQLite cannot alter a CHECK, so its actions table
-// is rebuilt once with the same columns, rows, indexes, and triggers. The
-// schema version stays 2: readers see no difference.
-function widenActionKinds(db: DatabaseSync): void {
-  const current = (): string => {
-    const found = db
-      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'actions'")
-      .get();
-    return isRow(found) && typeof found['sql'] === 'string' ? found['sql'] : '';
-  };
-  if (addedActionKinds.every((kind) => current().includes(`'${kind}'`))) {
-    return;
-  }
-  // Foreign keys can only be switched outside a transaction.
-  db.exec('PRAGMA foreign_keys = OFF');
-  try {
-    immediateTransaction(db, () => {
-      const table = current();
-      if (addedActionKinds.every((kind) => table.includes(`'${kind}'`))) {
-        return;
-      }
-      const marker = "'open_diff'";
-      if (!table.includes(marker)) {
-        throw new FactoryDatabaseError('cannot upgrade the actions table: unknown definition');
-      }
-      const dependents = db
-        .prepare(
-          `SELECT sql FROM sqlite_master
-           WHERE tbl_name = 'actions' AND type IN ('index', 'trigger') AND sql IS NOT NULL`,
-        )
-        .all()
-        .flatMap((item) => (isRow(item) && typeof item['sql'] === 'string' ? [item['sql']] : []));
-      const widened = table.replace(
-        marker,
-        `${marker}, ${addedActionKinds.map((kind) => `'${kind}'`).join(', ')}`,
-      );
-      // Recreate under the same name: a rename would re-check triggers on
-      // other tables that refer to actions while it is missing.
-      db.exec('CREATE TEMP TABLE actions_previous AS SELECT * FROM actions');
-      db.exec('DROP TABLE actions');
-      db.exec(widened);
-      db.exec('INSERT INTO actions SELECT * FROM temp.actions_previous');
-      db.exec('DROP TABLE temp.actions_previous');
-      for (const statement of dependents) {
-        db.exec(statement);
-      }
-      const broken = db.prepare('PRAGMA foreign_key_check').all();
-      if (broken.length > 0) {
-        throw new FactoryDatabaseError('the widened actions table breaks a foreign key');
-      }
-    });
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON');
   }
 }
 

@@ -9,17 +9,19 @@ import {
   ticketId,
   zeroUsage,
   type FactorySnapshot,
+  type Retry,
   type ReviewVerdict,
   type RunPurpose,
   type RunRecord,
   type SessionRecord,
+  type StageName,
   type TaskRecord,
   type TaskStatus,
   type TerminalOutcome,
 } from '../domain.ts';
 import type { WidgetChild } from '../extension/widget.ts';
-import { stageEmoji } from '../runtime/policy.ts';
-import { parseReview } from '../validation/review.ts';
+import { stages } from '../stages/index.ts';
+import { parseReview } from '../stages/review/parse.ts';
 
 // Snapshots for the component gallery. They are built by hand, field by
 // field, so every scenario is a plain value that renders without a database.
@@ -68,9 +70,10 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         limits: { ...DEFAULT_LIMITS },
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },
         pullRequests: false,
+        stages: {},
         validation: { work: { commands: [] }, wrapup: { generated: [] } },
       },
-      retryable: false,
+      retry: null,
       stage: 'plan',
       status: 'active',
       statusReason: null,
@@ -107,13 +110,11 @@ export function addTasks(snapshot: FactorySnapshot, count = 6, longTitles = fals
     const title = titles[index] ?? `Task ${id}`;
     snapshot.tasks.push({
       blockedBy: (dependencies[id] ?? []).map((item) => taskId(item)),
-      blockingCount: null,
-      findingCount: null,
       ordinal: index + 1,
-      reviewRound: 0,
-      reviewVerdict: null,
       specHash: null,
+      stage: null,
       status: 'pending',
+      summaries: {},
       taskFile: `tickets/dpaez-factory-dashboard-11/${id}-task.md`,
       taskId: taskId(id),
       title: longTitles
@@ -131,10 +132,15 @@ export function task(snapshot: FactorySnapshot, id: string): TaskRecord {
   return found;
 }
 
+// Where a fixture task stands: not started, finished, or at a per-task stage.
+export type TaskPosition =
+  | Extract<TaskStatus, 'pending' | 'done' | 'cancelled'>
+  | { blocked?: true; stage: StageName };
+
 export function setTask(
   snapshot: FactorySnapshot,
   id: string,
-  status: TaskStatus,
+  position: TaskPosition,
   review: {
     blocking?: number;
     findings?: number;
@@ -143,12 +149,19 @@ export function setTask(
   } | null = null,
 ): void {
   const found = task(snapshot, id);
-  found.status = status;
+  if (typeof position === 'string') {
+    found.status = position;
+    found.stage = null;
+  } else {
+    found.status = position.blocked === true ? 'blocked' : 'active';
+    found.stage = position.stage;
+  }
   if (review !== null) {
-    found.reviewRound = review.round;
-    found.reviewVerdict = review.verdict;
-    found.findingCount = review.findings ?? 0;
-    found.blockingCount = review.blocking ?? 0;
+    found.summaries.review = {
+      counts: { blocking: review.blocking ?? 0, findings: review.findings ?? 0 },
+      label: review.verdict,
+      round: review.round,
+    };
   }
 }
 
@@ -198,6 +211,7 @@ export function run(
   const round = input.round ?? 0;
   const parsed =
     owner.stage === 'review' && terminal === 'subagent_done' ? parseReview(output, round) : null;
+  const purpose = input.purpose ?? 'initial';
   const created: RunRecord = {
     baseline: null,
     description: null,
@@ -206,9 +220,11 @@ export function run(
     id: runId(`run-${owner.logicalKey}-${sequence}`),
     inputHash: null,
     paneId: `pane-${snapshot.runs.length + 1}`,
+    // Only review returns work so far.
+    origin: purpose === 'return_to_work' ? 'review' : null,
     paneName: `${owner.stage} ${snapshot.ticket.displayRef}`,
     parentRunId: input.parent?.id ?? null,
-    purpose: input.purpose ?? 'initial',
+    purpose,
     resultContract: null,
     resultError: parsed?.kind === 'invalid' ? parsed.failures.join('\n') : null,
     resultHash: null,
@@ -275,7 +291,7 @@ export function pause(
   input: {
     code: string;
     question: string;
-    retryable?: boolean;
+    retry?: Retry;
     runId?: RunRecord | null;
     waiting?: boolean;
   },
@@ -283,7 +299,7 @@ export function pause(
   snapshot.execution.status = input.waiting === true ? 'waiting_for_user' : 'paused';
   snapshot.execution.statusReasonCode = input.code;
   snapshot.execution.statusReason = input.question;
-  snapshot.execution.retryable = input.retryable ?? false;
+  snapshot.execution.retry = input.retry ?? null;
   snapshot.attention.push({
     id: attentionId(`attention-${snapshot.attention.length + 1}`),
     kind: input.waiting === true ? 'agent_question' : 'policy_limit',
@@ -352,7 +368,7 @@ export function third(): FactorySnapshot {
     });
   }
   snapshot.execution.stage = 'work';
-  setTask(snapshot, '03', 'working');
+  setTask(snapshot, '03', { stage: 'work' });
   return snapshot;
 }
 
@@ -367,7 +383,7 @@ export function child(
     owner?.taskId === null || owner === undefined
       ? null
       : (snapshot.tasks.find((item) => item.taskId === owner.taskId) ?? null);
-  const glyph = stageEmoji[owner?.stage ?? 'plan'];
+  const glyph = stages[owner?.stage ?? 'plan'].emoji;
   return {
     activity: owner?.stage === 'review' ? 'reading src/lib/server/read.ts…' : 'running npm test…',
     context: '67K/200K ctx (33.5%)',
@@ -388,7 +404,7 @@ export function child(
 export function action(
   snapshot: FactorySnapshot,
   idempotencyKey: string,
-  kind: 'open_diff' | 'open_pane' | 'prepare_wrapup_input',
+  kind: 'open_diff' | 'open_pane' | 'prepare_input',
   forRun: RunRecord | null,
   failures: Array<string> = [],
 ): void {
@@ -403,13 +419,16 @@ export function action(
     retryOfActionId: null,
     status: 'pending' as const,
   };
-  if (kind === 'prepare_wrapup_input') {
+  if (kind === 'prepare_input') {
     snapshot.actions.push({
       ...base,
       failures,
       kind,
+      origin: null,
       purpose: 'validation_correction',
       runId: null,
+      stage: 'wrapup',
+      taskId: null,
     });
     return;
   }

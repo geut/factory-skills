@@ -1,0 +1,45 @@
+import type { ActionRecord, FactorySnapshot, PassedCheck, StageName } from '../domain.ts';
+import { planValidator } from '../validation/plan.ts';
+import type { Validator } from '../validation/report.ts';
+import { reviewValidator } from '../validation/review.ts';
+import { workValidator } from '../validation/work.ts';
+import { wrapupValidator } from '../validation/wrapup.ts';
+import type { InputStage, PreparedInput } from './index.ts';
+import { prepareQaInput, qaValidator } from './qa/effects.ts';
+import { prepareWorkInput } from './work/effects.ts';
+import { prepareWrapupInput } from './wrapup/effects.ts';
+
+export type InputContext = {
+  action: Extract<ActionRecord, { kind: 'prepare_input' }>;
+  deps: {
+    // Whether the action's execution is still the ticket's current one.
+    executionCurrent: boolean;
+    // The checks of each task's latest passed validation by `stage`.
+    passedChecks: (stage: StageName) => Array<PassedCheck>;
+    // The all-stage usage table so far, excluding wrap-up.
+    usage: () => string;
+  };
+  snapshot: FactorySnapshot;
+};
+
+// Input preparation reads the world outside the controller transaction and
+// never throws for a problem the human can fix: that is a `failed` result.
+export type InputResult<Prepared> =
+  | { input: Prepared; kind: 'ready' }
+  | { kind: 'failed'; message: string };
+
+export type StageEffects<S extends StageName> = {
+  validator: Validator<S>;
+} & (S extends InputStage
+  ? { prepareInput: (context: InputContext) => InputResult<PreparedInput[S]> }
+  : unknown);
+
+// The impure half of every stage. Only the action worker reads it; the
+// reducer must not import this module.
+export const effects: { [S in StageName]: StageEffects<S> } = {
+  plan: { validator: planValidator },
+  qa: { prepareInput: prepareQaInput, validator: qaValidator },
+  review: { validator: reviewValidator },
+  work: { prepareInput: prepareWorkInput, validator: workValidator },
+  wrapup: { prepareInput: prepareWrapupInput, validator: wrapupValidator },
+};

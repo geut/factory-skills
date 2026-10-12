@@ -1,9 +1,19 @@
 import { spawn, spawnSync } from 'node:child_process';
-import type { WorkCommand } from '../config.ts';
-import type { WorkCheck, WorkValidationOutcome } from '../domain.ts';
+import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
+import type { WorkValidationReport } from '../domain.ts';
+import {
+  errorReport,
+  failedReport,
+  failuresOf,
+  passedReport,
+  type ValidationCheck,
+  type Validator,
+} from './report.ts';
+
+export const WORK_VALIDATOR_VERSION = 'work.v1';
 
 export const COMMAND_OUTPUT_LIMIT = 16_384;
-export const VALIDATION_LEASE_MARGIN_MS = 30_000;
+const VALIDATION_LEASE_MARGIN_MS = 30_000;
 
 export function validationLeaseMs(commands: Array<Pick<WorkCommand, 'timeoutMs'>>): number {
   const budget = commands.reduce((total, command) => total + command.timeoutMs, 0);
@@ -69,7 +79,7 @@ export function collectWorkDiff(cwd: string): { diff: string } | { message: stri
   return { diff: parts.filter((part) => part.trim().length > 0).join('\n') };
 }
 
-function whitespaceCheck(cwd: string): WorkCheck | { message: string } {
+function whitespaceCheck(cwd: string): ValidationCheck | { message: string } {
   const tracked = git(cwd, ['diff', '--check', 'HEAD']);
   if (gitFailure(tracked)) {
     return { message: tracked.stderr.trim() || 'cannot run git diff --check' };
@@ -103,7 +113,7 @@ function whitespaceCheck(cwd: string): WorkCheck | { message: string } {
   };
 }
 
-function commitCheck(cwd: string, baseSha: string): WorkCheck | { message: string } {
+function commitCheck(cwd: string, baseSha: string): ValidationCheck | { message: string } {
   const head = git(cwd, ['rev-parse', 'HEAD']);
   if (head.code !== 0) {
     return { message: head.stderr.trim() || 'cannot read HEAD' };
@@ -183,7 +193,11 @@ export function runCommand(command: WorkCommand, cwd: string): Promise<CommandRe
   });
 }
 
-function commandCheck(command: WorkCommand, cwd: string, result: CommandResult): WorkCheck {
+export function commandCheck(
+  command: WorkCommand,
+  cwd: string,
+  result: CommandResult,
+): ValidationCheck {
   const location = `cwd ${cwd}`;
   if (result.timedOut) {
     const details = `${location}; timed out after ${command.timeoutMs}ms`;
@@ -213,17 +227,17 @@ function commandCheck(command: WorkCommand, cwd: string, result: CommandResult):
   };
 }
 
-export async function validateWork(input: {
+async function validateWork(input: {
   allowsEmptyDiff: boolean;
   baseSha: string;
   commands: Array<WorkCommand>;
   cwd: string;
-}): Promise<WorkValidationOutcome> {
+}): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
-    return { kind: 'error', message: collected.message };
+    return errorReport(WORK_VALIDATOR_VERSION, collected.message);
   }
-  const checks: Array<WorkCheck> = [];
+  const checks: Array<ValidationCheck> = [];
   if (!input.allowsEmptyDiff) {
     const present = collected.diff.trim().length > 0;
     checks.push({
@@ -239,33 +253,48 @@ export async function validateWork(input: {
   }
   const whitespace = whitespaceCheck(input.cwd);
   if ('message' in whitespace) {
-    return { kind: 'error', message: whitespace.message };
+    return errorReport(WORK_VALIDATOR_VERSION, whitespace.message);
   }
   checks.push(whitespace);
   const commit = commitCheck(input.cwd, input.baseSha);
   if ('message' in commit) {
-    return { kind: 'error', message: commit.message };
+    return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
   for (const command of input.commands) {
     const result = await runCommand(command, input.cwd);
     if (result.spawnError !== null) {
-      return { kind: 'error', message: result.spawnError };
+      return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
     }
     checks.push(commandCheck(command, input.cwd, result));
   }
-  const failures = checks
-    .filter((check) => check.status === 'failed')
-    .map((check) => `${check.name}: ${check.details}`);
+  const failures = failuresOf(checks);
   if (failures.length > 0) {
-    return { checks, failures, kind: 'failed' };
+    return failedReport(WORK_VALIDATOR_VERSION, checks, failures, null);
   }
   // Commands can write files (test reports, caches). The reviewer gets the
   // worktree as it stands after them, so review validation compares like
   // with like.
   const final = collectWorkDiff(input.cwd);
   if ('message' in final) {
-    return { kind: 'error', message: final.message };
+    return errorReport(WORK_VALIDATOR_VERSION, final.message);
   }
-  return { checks, diff: final.diff, kind: 'passed' };
+  return passedReport(WORK_VALIDATOR_VERSION, checks, { diff: final.diff });
 }
+
+export const workValidator: Validator<'work'> = {
+  leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
+  validate: ({ snapshot }) => {
+    const { policy, worktreeBaseSha, worktreePath } = snapshot.execution;
+    if (worktreePath === null || worktreeBaseSha === null) {
+      return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
+    }
+    return validateWork({
+      allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
+      baseSha: worktreeBaseSha,
+      commands: policy.validation.work.commands,
+      cwd: worktreePath,
+    });
+  },
+  version: WORK_VALIDATOR_VERSION,
+};

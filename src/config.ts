@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { StageSettings } from './stages/definition.ts';
+import { stageLimits, stages } from './stages/index.ts';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 export const INTERNAL_LABELS = ['investigation'] as const;
@@ -11,29 +13,16 @@ export type WorkCommand = {
   timeoutMs: number;
 };
 
-export type Limits = {
-  infrastructureRetries: number;
-  planCorrections: number;
-  reviewCorrections: number;
-  reviewRounds: number;
-  workCorrections: number;
-};
+// The controller's own limit, then each stage's (see src/stages/index.ts).
+const limitSpecs = { infrastructureRetries: { default: 3, min: 0 }, ...stageLimits };
 
-const LIMIT_KEYS = [
-  'infrastructureRetries',
-  'planCorrections',
-  'reviewCorrections',
-  'reviewRounds',
-  'workCorrections',
-] as const;
+export type Limits = Record<keyof typeof limitSpecs, number>;
 
-export const DEFAULT_LIMITS: Limits = {
-  infrastructureRetries: 3,
-  planCorrections: 3,
-  reviewCorrections: 3,
-  reviewRounds: 3,
-  workCorrections: 3,
-};
+const LIMIT_KEYS = Object.keys(limitSpecs) as Array<keyof typeof limitSpecs>;
+
+export const DEFAULT_LIMITS = Object.fromEntries(
+  LIMIT_KEYS.map((key) => [key, limitSpecs[key].default]),
+) as Limits;
 
 export type FactoryConfig = {
   github: { host: string; owner: string; pullRequests: boolean; repo: string } | null;
@@ -41,6 +30,7 @@ export type FactoryConfig = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
+  stages: Record<string, StageSettings>;
   validation: Validation;
 };
 
@@ -205,10 +195,13 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       if (limit === null) {
         return { kind: 'error', message: 'FACTORY.json limits must be non-negative integers.' };
       }
+      if (limit < limitSpecs[key].min) {
+        return {
+          kind: 'error',
+          message: `FACTORY.json limits.${key} must be at least ${limitSpecs[key].min}.`,
+        };
+      }
       limits[key] = limit;
-    }
-    if (limits.reviewRounds < 1) {
-      return { kind: 'error', message: 'FACTORY.json limits.reviewRounds must be at least 1.' };
     }
   }
 
@@ -269,6 +262,11 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     }
   }
 
+  const settings = readStageSettings(value['stages']);
+  if (settings.kind === 'error') {
+    return settings;
+  }
+
   return {
     config: {
       github,
@@ -276,10 +274,36 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       labels,
       limits,
       models: { plan, review, work },
+      stages: settings.stages,
       validation: { work: { commands }, wrapup: { generated } },
     },
     kind: 'ok',
   };
+}
+
+// `stages.<name>` holds an optional stage's settings, which that stage reads.
+export function readStageSettings(
+  value: unknown,
+): { kind: 'ok'; stages: Record<string, StageSettings> } | { kind: 'error'; message: string } {
+  if (value === undefined) {
+    return { kind: 'ok', stages: {} };
+  }
+  if (!isRecord(value)) {
+    return { kind: 'error', message: 'FACTORY.json stages must be an object.' };
+  }
+  const read: Record<string, StageSettings> = {};
+  for (const [name, raw] of Object.entries(value)) {
+    const definition = Object.values(stages).find((stage) => stage.name === name);
+    if (definition?.settings === undefined) {
+      return { kind: 'error', message: `FACTORY.json stages.${name} is not an optional stage.` };
+    }
+    const result = definition.settings(raw);
+    if (result.kind === 'error') {
+      return result;
+    }
+    read[name] = result.settings;
+  }
+  return { kind: 'ok', stages: read };
 }
 
 export function readFactoryConfig(factoryRoot: string): ConfigResult {

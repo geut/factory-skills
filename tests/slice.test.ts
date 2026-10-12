@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { DEFAULT_LIMITS } from '../src/config.ts';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent } from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
@@ -261,15 +262,10 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
   const policy: Policy = {
     codeRoot,
     labels: { map: {} },
-    limits: {
-      infrastructureRetries: 3,
-      planCorrections: 3,
-      reviewCorrections: 3,
-      reviewRounds: 3,
-      workCorrections: 3,
-    },
+    limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     pullRequests: false,
+    stages: {},
     validation: { work: { commands: [] }, wrapup: { generated: [] } },
   };
   applyControllerEvent(db, {
@@ -466,6 +462,55 @@ test('failed work validation resumes the same session and the limit pauses', asy
   );
   assert.equal(runtime.launches.filter((launch) => launch.stage === 'review').length, 0);
   assert.equal(runtime.launches.filter((launch) => launch.stage === 'work').length, 2);
+});
+
+test('at the work correction limit a reply resumes the worker with the answer', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      limits: { workCorrections: 0 },
+      models: { review: 'review-model', work: 'work-model' },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const first = runtime.launches.find((launch) => launch.stage === 'work');
+  if (first === undefined) {
+    throw new Error('missing work run');
+  }
+  runtime.emit(first.runId, { kind: 'subagent_done', output: 'no diff', usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  // The notice names the worker's run, so the hint offers a reply.
+  await waitFor(() => notified.some((message) => message.includes('Reply to resume the agent')));
+  assert.ok(notified.some((message) => message.includes('next: /factory reply proj-123.md')));
+  await service.command('reply proj-123 "Commit nothing; write the filter in src/store.ts"');
+  await waitFor(
+    () =>
+      runtime.launches.filter((launch) => launch.stage === 'work' && launch.mode === 'resume')
+        .length === 1,
+  );
+  const resumed = runtime.launches.filter((launch) => launch.stage === 'work').at(-1);
+  assert.match(resumed?.prompt ?? '', /The user answered:\nCommit nothing/);
+  assert.equal(resumed?.cwd, first.cwd);
 });
 
 test('work caller_ping resumes that work session and a failed resume keeps the answer', async () => {
@@ -693,7 +738,15 @@ function launchesOf(runtime: FakeRuntime, stage: string): FakeRuntime['launches'
 function taskRow(db: ReviewHarness['db'], task = '01'): Record<string, unknown> {
   const found: unknown = db
     .prepare(
-      `SELECT status, review_round, review_verdict, finding_count, blocking_count
+      // The task as review leaves it: where it stands, and review's summary.
+      `SELECT
+         CASE WHEN status = 'active' AND stage = 'review' THEN 'reviewing'
+              WHEN status = 'active' THEN 'working'
+              ELSE status END AS status,
+         coalesce(json_extract(summaries_json, '$.review.round'), 0) AS review_round,
+         json_extract(summaries_json, '$.review.label') AS review_verdict,
+         json_extract(summaries_json, '$.review.counts.findings') AS finding_count,
+         json_extract(summaries_json, '$.review.counts.blocking') AS blocking_count
        FROM tasks WHERE task_id = ?`,
     )
     .get(task);
@@ -748,7 +801,7 @@ test('changes requested resume the same worker, then round 2 resumes the same re
   const fix = launchesOf(runtime, 'work')[1];
   assert.equal(fix?.sessionId, work.sessionId);
   assert.equal(fix?.mode, 'resume');
-  assert.equal(fix?.purpose, 'review_changes');
+  assert.equal(fix?.purpose, 'return_to_work');
   assert.equal(fix?.cwd, work.cwd);
   assert.match(fix?.prompt ?? '', /R1-1 \[major\] Filter resets on reload/);
   assert.doesNotMatch(fix?.prompt ?? '', /R1-2/);
@@ -1124,7 +1177,9 @@ test('wrap-up launches from checked input with the tasks, findings, verification
   assert.doesNotMatch(wrapup.prompt, /^Wrap-up/m);
   assert.match(wrapup.prompt, /github\.pullRequests: false/);
   const prepared: unknown = db
-    .prepare("SELECT status FROM actions WHERE kind = 'prepare_wrapup_input'")
+    .prepare(
+      "SELECT status FROM actions WHERE kind = 'prepare_input' AND json_extract(payload_json, '$.stage') = 'wrapup'",
+    )
     .get();
   assert.deepEqual({ ...(prepared ?? {}) }, { status: 'succeeded' });
   await closeWhenIdle(db);
@@ -1414,5 +1469,123 @@ test('restart validates a finished wrap-up once and opens its panes once', async
     .prepare('SELECT count(*) AS n FROM validation_runs WHERE run_id = ?')
     .get(wrapup.runId);
   assert.deepEqual({ ...(validations ?? {}) }, { n: 1 });
+  await closeWhenIdle(db);
+});
+
+test('QA corrects its own output, returns a failing product to work, then hands review the tested diff', async () => {
+  const qa = {
+    commands: [
+      {
+        argv: [
+          process.execPath,
+          '-e',
+          "process.exit(require('node:fs').existsSync('product-ok.txt') ? 0 : 1)",
+        ],
+        name: 'e2e',
+      },
+    ],
+    enabled: true,
+  };
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      models: { review: 'review-model', work: 'work-model' },
+      stages: { qa },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, db, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  const nth = (stage: string, index: number) => {
+    const found = launchesOf(runtime, stage)[index];
+    if (found === undefined) {
+      throw new Error(`missing ${stage} run ${index + 1}`);
+    }
+    return found;
+  };
+  runtime.emit(nth('plan', 0).runId, {
+    kind: 'subagent_done',
+    output: 'files',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 1);
+  const work = launchesOf(runtime, 'work')[0];
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+
+  // QA is asked to prove AC1, then corrected for the files it did not write.
+  await waitFor(() => launchesOf(runtime, 'qa').length === 1);
+  const first = nth('qa', 0);
+  assert.match(first.prompt, /AC1: The filter survives a reload\./);
+  assert.equal(first.cwd, work.cwd);
+  runtime.emit(first.runId, { kind: 'subagent_done', output: 'tested', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'qa').length === 2);
+  const correction = launchesOf(runtime, 'qa')[1];
+  assert.match(correction?.prompt ?? '', /test-plan\.md is missing/);
+  assert.match(correction?.prompt ?? '', /AC1 \(The filter survives a reload\.\) has no test/);
+
+  // Now complete: the product still fails the e2e command, so work gets it back.
+  const qaDir = path.join(directory, 'qa', '01');
+  mkdirSync(path.join(qaDir, 'screenshots'), { recursive: true });
+  writeFileSync(
+    path.join(qaDir, 'test-plan.md'),
+    '| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC1 | e2e › AC1: filter survives a reload | screenshots/ac1.png |\n',
+  );
+  writeFileSync(path.join(qaDir, 'ledger.md'), '- Mobile layouts are not covered.\n');
+  writeFileSync(path.join(qaDir, 'screenshots', 'ac1.png'), 'png');
+  writeFileSync(path.join(work.cwd, 'filter.e2e.txt'), 'AC1 test\n');
+  runtime.emit(nth('qa', 1).runId, {
+    kind: 'subagent_done',
+    output: 'tested',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const returned = launchesOf(runtime, 'work')[1];
+  assert.equal(returned?.mode, 'resume');
+  assert.match(returned?.prompt ?? '', /QA round 1 requested changes/);
+  assert.match(returned?.prompt ?? '', /e2e \(.*\) failed/);
+
+  // Work fixes the product; QA runs again on the same session and passes.
+  writeFileSync(path.join(work.cwd, 'product-ok.txt'), 'ok\n');
+  runtime.emit(nth('work', 1).runId, {
+    kind: 'subagent_done',
+    output: 'fixed',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'qa').length === 3);
+  const again = launchesOf(runtime, 'qa')[2];
+  assert.equal(again?.mode, 'resume');
+  assert.match(again?.prompt ?? '', /QA round: 2/);
+  runtime.emit(nth('qa', 2).runId, {
+    kind: 'subagent_done',
+    output: 'passed',
+    usage: sampleUsage(),
+  });
+
+  // Review is given the diff QA left, tests included.
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  const review = launchesOf(runtime, 'review')[0];
+  assert.match(review?.prompt ?? '', /filter\.e2e\.txt/);
+  assert.match(review?.prompt ?? '', /screenshot AC1: passed/);
+  runtime.emit(nth('review', 0).runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve'),
+    usage: sampleUsage(),
+  });
+
+  // Wrap-up is told about the screenshot for the pull request.
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
+  assert.match(
+    launchesOf(runtime, 'wrapup')[0]?.prompt ?? '',
+    /QA screenshots[\s\S]*Task 01 screenshot AC1: .*qa\/01\/screenshots\/ac1\.png/,
+  );
   await closeWhenIdle(db);
 });

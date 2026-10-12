@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { StageSettings } from './stages/definition.ts';
+import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
+import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -94,7 +97,35 @@ export function sequentialIds(prefix: string): IdSource {
   };
 }
 
-export type Stage = 'plan' | 'work' | 'review' | 'wrapup' | 'done';
+// A validator's report on a run, typed by the stage whose validator wrote it.
+export type ValidationFinished = {
+  [S in StageName]: {
+    actionId: ActionId;
+    kind: 'validation_finished';
+    report: StageReports[S];
+    runId: RunId;
+    stage: S;
+  };
+}[StageName];
+
+// One check of a passed validation, as a later stage reads it back.
+export type PassedCheck = {
+  command: string | null;
+  evidencePath: string | null;
+  kind: string;
+  name: string;
+  status: string;
+  taskId: TaskId | null;
+};
+
+// A prepared input, typed by the stage that asked for it.
+export type InputReady = {
+  [S in InputStage]: { actionId: ActionId; input: PreparedInput[S]; kind: 'input_ready'; stage: S };
+}[InputStage];
+
+export type Stage = StageName | 'done';
+// A stage an agent runs; `done` is only an execution's position after the last one.
+export type StageName = 'plan' | 'work' | 'qa' | 'review' | 'wrapup';
 export type ExecutionStatus =
   | 'queued'
   | 'active'
@@ -106,21 +137,17 @@ export type ExecutionStatus =
   | 'ready_for_handoff'
   | 'complete'
   | 'cancelled';
-export type TaskStatus =
-  | 'pending'
-  | 'working'
-  | 'ready_for_review'
-  | 'reviewing'
-  | 'done'
-  | 'blocked'
-  | 'cancelled';
+export type TaskStatus = 'pending' | 'active' | 'done' | 'blocked' | 'cancelled';
 export type SessionStatus = 'prepared' | 'open' | 'completed' | 'abandoned';
 export type RunStatus = 'prepared' | 'starting' | 'running' | 'terminal';
 export type RunPurpose =
   | 'initial'
   | 'validation_correction'
   | 'human_reply'
-  | 'review_changes'
+  // Work fixing what a later stage found; `origin` names that stage.
+  | 'return_to_work'
+  // A later stage running again on a task whose work was returned.
+  | 'reentry'
   | 'manual_continue'
   | 'infrastructure_retry';
 export type TerminalKind =
@@ -137,13 +164,8 @@ export type AttentionKind = 'agent_question' | 'policy_limit' | 'manual_approval
 export type AttentionStatus = 'open' | 'answered' | 'resuming' | 'resolved' | 'cancelled';
 export type WorktreeStatus = 'preparing' | 'ready' | 'removed' | 'failed';
 
-export type WrapupInputPurpose = 'initial' | 'validation_correction' | 'human_reply';
-
-export type WorkInputPurpose =
-  | 'initial'
-  | 'validation_correction'
-  | 'human_reply'
-  | 'review_changes';
+// Why a stage's input is being prepared: the run it is for.
+export type InputPurpose = 'initial' | 'validation_correction' | 'human_reply' | 'return_to_work';
 export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
 export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
@@ -154,6 +176,8 @@ export type Policy = {
   models: { plan: string; review: string; work: string };
   // `github.pullRequests`: wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
+  // Optional stages' settings, by stage name; a stage absent here is off.
+  stages: Record<string, StageSettings>;
   validation: Validation;
 };
 
@@ -195,31 +219,21 @@ export type ResolvedTicket = {
 export type PlannedTask = {
   blockedBy: Array<TaskId>;
   ordinal: number;
+  // Optional per-task stages the task file turns off, such as `QA: none`.
+  skips: Array<StageName>;
   specHash: string;
   taskFile: string;
   taskId: TaskId;
   title: string;
 };
 
-export type PlanValidationOutcome =
-  | { kind: 'passed'; planPath: string; tasks: Array<PlannedTask> }
-  | { failures: Array<string>; kind: 'failed' };
+export type PlanValidationReport = ValidationReport<{
+  planPath: string;
+  tasks: Array<PlannedTask>;
+}>;
 
-export type WorkCheck = {
-  command: string | null;
-  details: string;
-  durationMs: number | null;
-  exitCode: number | null;
-  kind: 'diff' | 'command' | 'policy';
-  name: string;
-  outputExcerpt: string | null;
-  status: 'passed' | 'failed';
-};
-
-export type WorkValidationOutcome =
-  | { checks: Array<WorkCheck>; diff: string; kind: 'passed' }
-  | { checks: Array<WorkCheck>; failures: Array<string>; kind: 'failed' }
-  | { kind: 'error'; message: string };
+// The diff is the worktree after the validation commands ran.
+export type WorkValidationReport = ValidationReport<{ diff: string }>;
 
 export type ReviewFinding = {
   blocking: boolean;
@@ -240,31 +254,15 @@ export type ReviewResult = {
   verdict: ReviewVerdict;
 };
 
-export type ReviewCheck = {
-  details: string;
-  kind: 'schema' | 'policy' | 'diff';
-  name: string;
-  status: 'passed' | 'failed';
-};
-
 // `malformed` resumes the reviewer, `stale` re-validates the worker's diff,
 // and `unsafe` pauses: the reviewer was not isolated from the worker.
-export type ReviewValidationOutcome =
-  | { checks: Array<ReviewCheck>; kind: 'passed' }
-  | { checks: Array<ReviewCheck>; failures: Array<string>; kind: 'malformed' | 'stale' | 'unsafe' }
-  | { kind: 'error'; message: string };
+export type ReviewValidationReport = ValidationReport<
+  null,
+  { reason: 'malformed' | 'stale' | 'unsafe' }
+>;
 
-export type WrapupCheck = {
-  details: string;
-  kind: 'artifact' | 'diff' | 'policy' | 'schema';
-  name: string;
-  status: 'failed' | 'passed';
-};
-
-export type WrapupValidationOutcome =
-  | { checks: Array<WrapupCheck>; kind: 'passed' }
-  | { checks: Array<WrapupCheck>; failures: Array<string>; kind: 'failed' }
-  | { kind: 'error'; message: string };
+// The all-stage usage table, including the finished wrap-up run.
+export type WrapupValidationReport = ValidationReport<{ usage: string }, { usage: string }>;
 
 // What wrap-up validation compares against: taken when the first wrap-up
 // input is prepared, before the agent runs.
@@ -290,57 +288,9 @@ export type ReconcileObservation =
 export type ControllerEvent =
   | { kind: 'start'; policy: Policy; ticket: ResolvedTicket }
   | { kind: 'runtime_terminal'; runId: RunId; terminal: TerminalOutcome }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      outcome: PlanValidationOutcome;
-      runId: RunId;
-      stage: 'plan';
-    }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      outcome: WorkValidationOutcome;
-      runId: RunId;
-      stage: 'work';
-    }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      outcome: ReviewValidationOutcome;
-      runId: RunId;
-      stage: 'review';
-    }
-  | {
-      actionId: ActionId;
-      adrPath: string | null;
-      contextPath: string | null;
-      kind: 'work_input_ready';
-      taskType: string | null;
-    }
-  | { actionId: ActionId; kind: 'work_input_failed'; message: string }
-  | {
-      actionId: ActionId;
-      adrPath: string | null;
-      // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
-      baseline: string;
-      contextPath: string | null;
-      kind: 'wrapup_input_ready';
-      // The all-stage usage table so far, excluding wrap-up.
-      usage: string;
-      // One line per passing work-validation check, per task.
-      verification: Array<string>;
-    }
-  | { actionId: ActionId; kind: 'wrapup_input_failed'; message: string }
-  | {
-      actionId: ActionId;
-      kind: 'validation_finished';
-      outcome: WrapupValidationOutcome;
-      runId: RunId;
-      stage: 'wrapup';
-      // The all-stage usage table, including the finished wrap-up run.
-      usage: string;
-    }
+  | ValidationFinished
+  | InputReady
+  | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
   | {
       actionId: ActionId;
@@ -394,6 +344,22 @@ export type TicketRecord = {
   title: string;
 };
 
+// What `/factory retry` redoes for a paused or failed execution. An
+// execution with no retry target cannot be retried.
+export type Retry =
+  // The failed input preparation, with the same stage, task, and purpose.
+  | { kind: 'input' }
+  // The latest validation of `stage` for the task, then the stages after it.
+  | { kind: 'revalidate'; stage: StageName; taskId: TaskId }
+  // The latest finished run's validation.
+  | { kind: 'validate' }
+  // The failed worktree preparation.
+  | { kind: 'worktree' }
+  // A new launch of the latest run's session.
+  | { kind: 'relaunch' }
+  // A new resume carrying the stored reply.
+  | { kind: 'resume_reply' };
+
 export type ExecutionRecord = {
   factoryDir: string;
   generation: number;
@@ -404,7 +370,7 @@ export type ExecutionRecord = {
   message: string | null;
   planPath: string | null;
   policy: Policy;
-  retryable: boolean;
+  retry: Retry | null;
   stage: Stage;
   status: ExecutionStatus;
   statusReason: string | null;
@@ -418,15 +384,18 @@ export type ExecutionRecord = {
   worktreeStatus: WorktreeStatus | null;
 };
 
+// What one per-task stage last concluded about a task, for display and for
+// later stages: the round it reached, a short label, and counts behind it.
+export type TaskSummary = { counts: Record<string, number>; label: string; round: number };
+
 export type TaskRecord = {
   blockedBy: Array<TaskId>;
-  blockingCount: number | null;
-  findingCount: number | null;
   ordinal: number;
-  reviewRound: number;
-  reviewVerdict: ReviewVerdict | null;
   specHash: string | null;
+  // The per-task stage the task is at; set exactly while active or blocked.
+  stage: StageName | null;
   status: TaskStatus;
+  summaries: Partial<Record<StageName, TaskSummary>>;
   taskFile: string;
   taskId: TaskId;
   title: string;
@@ -438,7 +407,7 @@ export type SessionRecord = {
   model: string;
   piSessionId: string | null;
   sessionFile: string | null;
-  stage: 'plan' | 'work' | 'review' | 'wrapup';
+  stage: StageName;
   status: SessionStatus;
   taskId: TaskId | null;
   thinking: string;
@@ -452,6 +421,8 @@ export type RunRecord = {
   endedAt: string | null;
   id: RunId;
   inputHash: string | null;
+  // For a return_to_work run: the per-task stage that sent the task back.
+  origin: StageName | null;
   paneId: string | null;
   paneName: string | null;
   parentRunId: RunId | null;
@@ -525,19 +496,16 @@ export type ActionRecord =
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;
+      // What the run this input is for must fix, when it is a correction.
       failures: Array<string>;
-      kind: 'prepare_work_input';
-      purpose: WorkInputPurpose;
+      kind: 'prepare_input';
+      // For a return to work: the per-task stage that sent the task back.
+      origin: StageName | null;
+      purpose: InputPurpose;
       runId: null;
-      taskId: TaskId;
-    })
-  | (ActionBase & {
-      attentionReplyId: null;
-      attentionRequestId: null;
-      failures: Array<string>;
-      kind: 'prepare_wrapup_input';
-      purpose: WrapupInputPurpose;
-      runId: null;
+      stage: InputStage;
+      // Set exactly when the stage runs per task.
+      taskId: TaskId | null;
     })
   | (ActionBase & {
       attentionReplyId: null;

@@ -16,6 +16,8 @@ import {
 import { sha256 } from '../hash.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { stages } from '../stages/index.ts';
+import { parseReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import {
   githubCliClient,
@@ -23,7 +25,6 @@ import {
   type GithubClient,
   type TicketSource,
 } from '../tickets.ts';
-import { parseReview } from '../validation/review.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { ticketProgress, type TicketProgress } from './progress.ts';
@@ -33,6 +34,7 @@ import {
   firstSummaryLine,
   runListLabel,
   runOutcome,
+  correctsRun,
   runsInStartOrder,
   runStage,
   type RunOutcome,
@@ -253,6 +255,7 @@ export function createFactoryService(input: {
       limits: config.config.limits,
       models: config.config.models,
       pullRequests: config.config.github?.pullRequests ?? false,
+      stages: config.config.stages,
       validation: config.config.validation,
     };
   }
@@ -457,16 +460,8 @@ export function terminalSummary(
   }
   const outcome = runOutcome(snapshot, run);
   if (outcome === 'correcting' || outcome === 'paused') {
-    const prefixes = [`work-input:${runId}:correction:`, `wrapup-input:${runId}:correction`];
-    const queued = snapshot.actions.find(
-      (action) =>
-        (action.kind === 'prepare_work_input' || action.kind === 'prepare_wrapup_input') &&
-        prefixes.some((prefix) => action.idempotencyKey.startsWith(prefix)),
-    );
-    const failure =
-      queued?.kind === 'prepare_work_input' || queued?.kind === 'prepare_wrapup_input'
-        ? queued.failures[0]
-        : undefined;
+    const queued = snapshot.actions.find((action) => correctsRun(action, runId));
+    const failure = queued?.kind === 'prepare_input' ? queued.failures[0] : undefined;
     if (failure !== undefined && failure.length > 0) {
       return failure;
     }
@@ -488,11 +483,7 @@ function runStageMessage(snapshot: FactorySnapshot, runId: RunId): string {
     run === null
       ? null
       : (snapshot.sessions.find((session) => session.id === run.sessionId)?.stage ?? null);
-  return stage === 'work'
-    ? 'Work validation failed.'
-    : stage === 'wrapup'
-      ? 'Wrap-up validation failed.'
-      : 'Plan validation failed.';
+  return `${stages[stage ?? 'plan'].label} validation failed.`;
 }
 
 export function factoryPaths(cwd: string): { codeRoot: string; factoryRoot: string } {

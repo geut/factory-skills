@@ -1,5 +1,5 @@
 import { formatUsageTable } from '../controller/usage.ts';
-import { attentionId, type FactorySnapshot, type RunRecord } from '../domain.ts';
+import { attentionId, taskId, type FactorySnapshot, type RunRecord } from '../domain.ts';
 import {
   action,
   addTasks,
@@ -44,7 +44,7 @@ export function working(): Scenario {
 
 export function readyForReview(): Scenario {
   const snapshot = third();
-  setTask(snapshot, '03', 'reviewing');
+  setTask(snapshot, '03', { stage: 'review' });
   const work = run(snapshot, session(snapshot, 'work', '03'), { minutesAgo: 12, output: workDone });
   run(snapshot, session(snapshot, 'review', '03'), { minutesAgo: 1, round: 1, terminal: null });
   snapshot.execution.stage = 'review';
@@ -60,7 +60,7 @@ export function approvedNext(): Scenario {
     round: 1,
   });
   setTask(snapshot, '03', 'done', { findings: 1, round: 1, verdict: 'approve' });
-  setTask(snapshot, '04', 'working');
+  setTask(snapshot, '04', { stage: 'work' });
   snapshot.execution.stage = 'work';
   return { run: verdict, snapshot };
 }
@@ -79,7 +79,7 @@ function changes(round: number): Scenario {
       run(snapshot, work, {
         minutesAgo,
         output: workDone,
-        purpose: 'review_changes',
+        purpose: 'return_to_work',
         round: index - 1,
       });
     }
@@ -91,16 +91,21 @@ function changes(round: number): Scenario {
         `${majorFinding}\n\n${secondMajor}\n\n${minorFinding}`,
         'Two blocking problems remain in the error path.',
       ),
-      purpose: index === 1 ? 'initial' : 'review_changes',
+      purpose: index === 1 ? 'initial' : 'reentry',
       round: index,
     });
   }
-  setTask(snapshot, '03', 'working', {
-    blocking: 2,
-    findings: 3,
-    round,
-    verdict: 'changes_requested',
-  });
+  setTask(
+    snapshot,
+    '03',
+    { stage: 'work' },
+    {
+      blocking: 2,
+      findings: 3,
+      round,
+      verdict: 'changes_requested',
+    },
+  );
   snapshot.execution.stage = 'work';
   return { run: last, snapshot };
 }
@@ -110,7 +115,7 @@ export function changesRequested(): Scenario {
   // The worker is fixing round 2's findings.
   run(scenario.snapshot, session(scenario.snapshot, 'work', '03'), {
     minutesAgo: 1,
-    purpose: 'review_changes',
+    purpose: 'return_to_work',
     round: 2,
     terminal: null,
   });
@@ -120,7 +125,7 @@ export function changesRequested(): Scenario {
 export function roundLimit(): Scenario {
   const scenario = changes(3);
   const { snapshot } = scenario;
-  setTask(snapshot, '03', 'blocked');
+  setTask(snapshot, '03', { blocked: true, stage: 'review' });
   snapshot.execution.stage = 'review';
   const question = [
     'Review round 3 of 3 for task 03 still has blocking findings:',
@@ -140,7 +145,7 @@ export function blockedVerdict(): Scenario {
     output: review('blocked', 'none', 'The task file is missing, so the scope cannot be checked.'),
     round: 1,
   });
-  setTask(snapshot, '03', 'blocked', { round: 1, verdict: 'blocked' });
+  setTask(snapshot, '03', { blocked: true, stage: 'review' }, { round: 1, verdict: 'blocked' });
   snapshot.execution.stage = 'review';
   const question = [
     'The reviewer blocked task 03: The task file is missing, so the scope cannot be checked.',
@@ -152,7 +157,7 @@ export function blockedVerdict(): Scenario {
 
 export function malformed(): Scenario {
   const snapshot = third();
-  setTask(snapshot, '03', 'reviewing');
+  setTask(snapshot, '03', { stage: 'review' });
   run(snapshot, session(snapshot, 'work', '03'), { minutesAgo: 12, output: workDone });
   const reviewer = session(snapshot, 'review', '03');
   const bad = run(snapshot, reviewer, { minutesAgo: 4, output: 'Looks good to me.', round: 1 });
@@ -169,7 +174,7 @@ export function malformed(): Scenario {
 
 export function correctionLimit(): Scenario {
   const snapshot = third();
-  setTask(snapshot, '03', 'blocked');
+  setTask(snapshot, '03', { blocked: true, stage: 'work' });
   run(snapshot, session(snapshot, 'work', '03'), { minutesAgo: 30, output: workDone });
   const reviewer = session(snapshot, 'review', '03');
   let last = run(snapshot, reviewer, { minutesAgo: 20, output: 'fine', round: 1 });
@@ -202,7 +207,7 @@ export function staleDiff(): Scenario {
     round: 1,
   });
   staleAction(snapshot, work, stale);
-  setTask(snapshot, '03', 'working');
+  setTask(snapshot, '03', { stage: 'work' });
   snapshot.execution.stage = 'work';
   return { run: stale, snapshot };
 }
@@ -215,14 +220,19 @@ export function diffKeepsChanging(): Scenario {
     output: review('approve'),
     round: 1,
   });
-  setTask(snapshot, '03', 'blocked');
+  setTask(snapshot, '03', { blocked: true, stage: 'review' });
   snapshot.execution.stage = 'review';
   const question = [
     'The worktree changed again while review round 1 of task 03 ran.',
     'Something keeps writing files the diff includes. Check git status in /repo/.factory/worktrees/dpaez-factory-dashboard-11 and ignore generated files.',
     'Then run /factory retry dpaez/factory-dashboard#11 to validate the work and review it again.',
   ].join('\n');
-  pause(snapshot, { code: 'review_diff_changed', question, retryable: true, runId: again });
+  pause(snapshot, {
+    code: 'review_diff_changed',
+    question,
+    retry: { kind: 'revalidate', stage: 'work', taskId: taskId('03') },
+    runId: again,
+  });
   return { question, run: again, snapshot };
 }
 
@@ -253,7 +263,7 @@ export function askingUser(): Scenario {
 
 export function crashedRetry(): Scenario {
   const snapshot = third();
-  setTask(snapshot, '03', 'reviewing');
+  setTask(snapshot, '03', { stage: 'review' });
   run(snapshot, session(snapshot, 'work', '03'), { minutesAgo: 12, output: workDone });
   const reviewer = session(snapshot, 'review', '03');
   const crashed = run(snapshot, reviewer, { minutesAgo: 6, round: 1, terminal: 'crashed' });
@@ -293,7 +303,7 @@ export function wrapupRunning(): Scenario {
 export function otherTicket(): FactorySnapshot {
   const snapshot = blank({ displayRef: 'geut/factory-skills#12', title: 'Add /factory stop' });
   addTasks(snapshot, 2);
-  setTask(snapshot, '01', 'reviewing');
+  setTask(snapshot, '01', { stage: 'review' });
   run(snapshot, session(snapshot, 'review', '01'), { minutesAgo: 2, round: 1, terminal: null });
   snapshot.execution.stage = 'review';
   return snapshot;
@@ -419,7 +429,7 @@ export function wrapupCorrecting(): Scenario {
   if (run === null) {
     return scenario;
   }
-  action(snapshot, `wrapup-input:${run.id}:correction`, 'prepare_wrapup_input', null, [
+  action(snapshot, `wrapup-input:${run.id}:correction`, 'prepare_input', null, [
     '## Files does not list changed path src/lib/server/read.ts.',
     'Wrap-up changed product code: src/routes/+page.svelte. Route code changes back through work and review.',
   ]);

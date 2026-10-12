@@ -345,15 +345,17 @@ export function usageFromSession(jsonl: string): UsageTotals {
     if (!isRecord(message['usage'])) {
       continue;
     }
+    // Pi records each request's usage on its message, so the session's
+    // totals are the sum over every message.
     const raw = message['usage'];
-    usage.inputTokens = numberField(raw, 'input');
-    usage.outputTokens = numberField(raw, 'output');
-    usage.cacheReadTokens = numberField(raw, 'cacheRead');
-    usage.cacheWriteTokens = numberField(raw, 'cacheWrite');
-    usage.totalTokens = numberField(raw, 'totalTokens');
+    usage.inputTokens += numberField(raw, 'input');
+    usage.outputTokens += numberField(raw, 'output');
+    usage.cacheReadTokens += numberField(raw, 'cacheRead');
+    usage.cacheWriteTokens += numberField(raw, 'cacheWrite');
+    usage.totalTokens += numberField(raw, 'totalTokens');
     const cost = raw['cost'];
     if (isRecord(cost) && typeof cost['total'] === 'number') {
-      usage.costUsdMicros = Math.round(cost['total'] * 1_000_000);
+      usage.costUsdMicros += Math.round(cost['total'] * 1_000_000);
     }
   }
   return usage;

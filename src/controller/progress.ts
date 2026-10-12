@@ -1,26 +1,16 @@
-import type { FactorySnapshot, ReviewVerdict, RunRecord, Stage, TaskRecord } from '../domain.ts';
+import type {
+  FactorySnapshot,
+  ReviewVerdict,
+  RunRecord,
+  Stage,
+  StageName,
+  TaskRecord,
+} from '../domain.ts';
+import { stages } from '../stages/index.ts';
 
 // Read-only views of a snapshot for cards, the widget, and the gallery.
 
-export function runOutput(run: RunRecord): string {
-  if (run.resultJson === null) {
-    return '';
-  }
-  try {
-    const parsed: unknown = JSON.parse(run.resultJson);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'output' in parsed &&
-      typeof parsed.output === 'string'
-    ) {
-      return parsed.output;
-    }
-    return run.resultJson;
-  } catch {
-    return run.resultJson;
-  }
-}
+export { runOutput } from '../stages/output.ts';
 
 export function runVerdict(run: RunRecord): ReviewVerdict | null {
   if (run.resultStatus !== 'valid' || run.resultJson === null) {
@@ -104,13 +94,7 @@ export function readyTasks(snapshot: FactorySnapshot): Array<TaskRecord> {
 // The task being worked on or reviewed, else the next ready one.
 export function currentTask(snapshot: FactorySnapshot): TaskRecord | null {
   const active = snapshot.tasks
-    .filter(
-      (task) =>
-        task.status === 'working' ||
-        task.status === 'ready_for_review' ||
-        task.status === 'reviewing' ||
-        task.status === 'blocked',
-    )
+    .filter((task) => task.status === 'active' || task.status === 'blocked')
     .sort((left, right) => left.ordinal - right.ordinal);
   return active[0] ?? readyTasks(snapshot)[0] ?? null;
 }
@@ -129,19 +113,20 @@ export function nextAction(snapshot: FactorySnapshot): string | null {
     return `/factory retry ${ref}`;
   }
   if (execution.status === 'failed') {
-    return execution.retryable ? `/factory retry ${ref}` : null;
+    return execution.retry !== null ? `/factory retry ${ref}` : null;
   }
   if (execution.status !== 'paused') {
     return null;
   }
-  if (execution.retryable) {
+  if (execution.retry !== null) {
     return `/factory retry ${ref}`;
   }
   if (execution.statusReasonCode === 'review_isolation') {
     return 'Fix models.review in FACTORY.json, then start the ticket again';
   }
-  const open = snapshot.attention.some((item) => item.status === 'open');
-  return open ? `/factory reply ${ref} "answer"` : null;
+  // Only a notice that names the run that paused can take a reply.
+  const asked = snapshot.attention.some((item) => item.status === 'open' && item.runId !== null);
+  return asked ? `/factory reply ${ref} "answer"` : null;
 }
 
 export function needsUser(snapshot: FactorySnapshot): boolean {
@@ -155,11 +140,10 @@ export function needsUser(snapshot: FactorySnapshot): boolean {
   );
 }
 
-// The round of the task's latest review run, or null before its first review.
-export function latestReviewRound(snapshot: FactorySnapshot, task: TaskRecord): number | null {
+// The round of the task's latest run of `stage`, or null before its first.
+function latestRound(snapshot: FactorySnapshot, task: TaskRecord, stage: StageName): number | null {
   const session =
-    snapshot.sessions.find((item) => item.stage === 'review' && item.taskId === task.taskId) ??
-    null;
+    snapshot.sessions.find((item) => item.stage === stage && item.taskId === task.taskId) ?? null;
   if (session === null) {
     return null;
   }
@@ -169,17 +153,37 @@ export function latestReviewRound(snapshot: FactorySnapshot, task: TaskRecord): 
   return runs[0]?.semanticRound ?? null;
 }
 
-// `review r2`, `work`, or `fixing r1` after changes were requested.
+// `review r2`, `work`, or `fixing r1` after a later stage returned the task.
 export function stepLabel(snapshot: FactorySnapshot, task: TaskRecord): string {
   const stage = snapshot.execution.stage;
-  if (stage === 'review') {
-    const round = latestReviewRound(snapshot, task);
-    return round === null ? 'review' : `review r${round}`;
+  if (stage !== 'done' && stage !== 'work' && stages[stage].rounds) {
+    const round = latestRound(snapshot, task, stage);
+    return round === null ? stage : `${stage} r${round}`;
   }
-  if (task.reviewVerdict === 'changes_requested') {
-    return `fixing r${task.reviewRound}`;
+  // Work fixing what a later stage found: its return run, or the input queued for it.
+  const work = snapshot.sessions.find(
+    (item) => item.stage === 'work' && item.taskId === task.taskId,
+  );
+  const returnRun = [...snapshot.runs]
+    .reverse()
+    .find((run) => run.sessionId === work?.id && run.purpose === 'return_to_work');
+  const returnInput = [...snapshot.actions]
+    .reverse()
+    .find(
+      (action) =>
+        action.kind === 'prepare_input' &&
+        action.taskId === task.taskId &&
+        action.purpose === 'return_to_work',
+    );
+  const queued =
+    returnInput?.kind === 'prepare_input' && returnInput.origin !== null
+      ? (task.summaries[returnInput.origin]?.round ?? 0)
+      : 0;
+  const round = Math.max(returnRun?.semanticRound ?? 0, queued);
+  if (stage === 'work' && round > 0) {
+    return `fixing r${round}`;
   }
-  return 'work';
+  return stage === 'done' || stages[stage].scope !== 'task' ? 'work' : stage;
 }
 
 export type TicketProgress = {
