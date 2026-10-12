@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "gallery": "node --watch src/stories/server.ts",
     "lint": "oxlint .",
     "stories": "node src/stories/run.ts",
