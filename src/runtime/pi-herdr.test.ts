@@ -164,13 +164,42 @@ test('pane id comes from the nested herdr plugin pane payload', () => {
   assert.equal(parsePaneId('{"result":{"plugin_pane":{}}}'), null);
 });
 
-test('session usage reads the latest assistant totals', () => {
+test('session usage sums every request in the session', () => {
   const usage = usageFromSession(
-    `${JSON.stringify({ message: { usage: { cacheRead: 1, cacheWrite: 2, cost: { total: 0.001 }, input: 10, output: 4, totalTokens: 17 } } })}\n`,
+    [
+      JSON.stringify({
+        message: {
+          usage: {
+            cacheRead: 1,
+            cacheWrite: 2,
+            cost: { total: 0.001 },
+            input: 10,
+            output: 4,
+            totalTokens: 17,
+          },
+        },
+      }),
+      JSON.stringify({ message: { role: 'user' } }),
+      JSON.stringify({
+        message: {
+          usage: {
+            cacheRead: 100,
+            cacheWrite: 0,
+            cost: { total: 0.0025 },
+            input: 3,
+            output: 50,
+            totalTokens: 153,
+          },
+        },
+      }),
+      '',
+    ].join('\n'),
   );
-  assert.equal(usage.inputTokens, 10);
-  assert.equal(usage.totalTokens, 17);
-  assert.equal(usage.costUsdMicros, 1000);
+  assert.equal(usage.inputTokens, 13);
+  assert.equal(usage.outputTokens, 54);
+  assert.equal(usage.cacheReadTokens, 101);
+  assert.equal(usage.totalTokens, 170);
+  assert.equal(usage.costUsdMicros, 3500);
 });
 
 test('a done sidecar is ignored until this run prompt is in the session', () => {

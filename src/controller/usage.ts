@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ExecutionId } from '../domain.ts';
+import { flow } from '../stages/flow.ts';
+import { stages as definitions } from '../stages/index.ts';
 
 // The all-stage usage table. Stage rows sum per-run deltas; the total comes
 // from each session's latest cumulative snapshot, so a resumed session is
@@ -19,12 +21,11 @@ export type UsageRow = {
   total: number | null;
 };
 
-const stages = [
-  { label: 'Plan', stage: 'plan' },
-  { label: 'Work', stage: 'work' },
-  { label: 'Review', stage: 'review' },
-  { label: 'Wrap-up', stage: 'wrapup' },
-] as const;
+// Rows follow the flow, so every stage with sessions gets one.
+const stages = [...flow.ticket, ...flow.task, ...flow.closing].map((stage) => ({
+  label: definitions[stage].label,
+  stage,
+}));
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
