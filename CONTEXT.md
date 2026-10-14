@@ -68,3 +68,41 @@ Redoing a step that failed for infrastructure reasons, such as input preparation
 **Review verdict**:
 The reviewer agent's judgment on a task: approve, changes requested, or blocked. It is model judgment, unlike a validation report.
 _Avoid_: verdict, when a validation report is meant
+
+### Tracker and repository
+
+**Issue**:
+A work item in the issue tracker (GitHub, Linear, Jira). The factory may never have seen it.
+_Avoid_: ticket, when the factory has not started it
+
+**Ticket**:
+An issue, or a local document, that the factory has started.
+_Avoid_: issue, once the factory owns it
+
+**Backlog**:
+The issues in scope for the factory that are not yet tickets.
+
+**External review**:
+A review of a ticket's pull request by a human or an agent outside the factory. Each one is a round the factory's own review did not prevent.
+_Avoid_: review (alone), when the factory's review stage is meant
+
+**Tracker**:
+The system that holds issues and the backlog, such as GitHub Issues, Linear, or Jira.
+_Avoid_: provider
+
+**Code host**:
+The system that holds the repository and its pull requests, such as GitHub.
+_Avoid_: repo provider, provider
+
+**Pull request outcome**:
+What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.
+
+### Server and clients
+
+**Factory server**:
+The long-running process that owns the controller and serves the API. Pi, the dashboard, and webhooks are its clients.
+_Avoid_: daemon, backend
+
+**Factory stats**:
+Measures of how well a factory turns tickets into merged pull requests, compared across models and stages.
+_Avoid_: metrics, analytics
