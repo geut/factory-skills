@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
 import type { FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
@@ -6,6 +7,8 @@ import type { Actor } from '../domain.ts';
 // What a route may ask for while it handles a request.
 export type ApiContext = {
   commands: FactoryCommands;
+  // The server's connection; read routes only read it.
+  db: DatabaseSync | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
 };

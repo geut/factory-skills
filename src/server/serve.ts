@@ -200,6 +200,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       authorize: createAuthorizer(db, () => new Date().toISOString()),
       context: {
         commands,
+        db,
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
       },

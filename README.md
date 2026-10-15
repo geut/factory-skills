@@ -79,6 +79,22 @@ The server's routes are declared once, in [`src/api/routes.ts`](src/api/routes.t
 - Source runs and tests also check every response against its schema; the single executable does not.
 - A test fails when `openapi.json` no longer matches the routes. After changing a route, run `npm run openapi:update` and commit the document.
 
+### Reads
+
+Reads need a `read` token.
+
+| Route                        | Returns                                                                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/tickets`            | Each ticket's current execution: stage, status, progress, whether it needs a person, and who started it.                          |
+| `GET /v1/tickets/{key}`      | The same, plus tasks with dependencies and review state, questions with their replies, and usage.                                 |
+| `GET /v1/tickets/{key}/runs` | The ticket's runs, oldest first.                                                                                                  |
+| `GET /v1/runs/{id}`          | One run: purpose, round, outcome, model setup, latest validation and its checks, review findings, usage, and its latest activity. |
+| `GET /v1/agents`             | Runs that are starting or running.                                                                                                |
+
+- `/v1/tickets` filters by `status=open|finished|all` (default `open`), `stage`, `state` (the execution status), `needsUser=true|false`, and `ref`. Filters combine with AND; repeat one for OR, as in `?stage=review&stage=qa&needsUser=true`.
+- Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
+- A run's activity is the agent's latest assistant message in that run, read from its Pi session file.
+
 ### Commands
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.

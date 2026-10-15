@@ -109,6 +109,176 @@
       }
     },
     "/v1/tickets": {
+      "get": {
+        "operationId": "listTickets",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List tickets, filtered by status, stage, state, or whether they need a person",
+        "tags": [
+          "tickets"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "needsUser",
+            "schema": {
+              "description": "Only tickets waiting on a person (or not).",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Only tickets waiting on a person (or not)."
+          },
+          {
+            "in": "query",
+            "name": "ref",
+            "schema": {
+              "description": "A ticket ref, such as owner/repo#42.",
+              "type": "string"
+            },
+            "description": "A ticket ref, such as owner/repo#42."
+          },
+          {
+            "in": "query",
+            "name": "stage",
+            "schema": {
+              "description": "Repeat for any of several stages.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "plan",
+                    "qa",
+                    "review",
+                    "work",
+                    "wrapup",
+                    "done"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "plan",
+                      "qa",
+                      "review",
+                      "work",
+                      "wrapup",
+                      "done"
+                    ]
+                  }
+                }
+              ]
+            },
+            "description": "Repeat for any of several stages."
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "schema": {
+              "description": "Repeat for any of several execution statuses.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "active",
+                    "waiting_for_user",
+                    "paused",
+                    "resuming",
+                    "resume_failed",
+                    "failed",
+                    "ready_for_handoff",
+                    "complete",
+                    "cancelled"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "queued",
+                      "active",
+                      "waiting_for_user",
+                      "paused",
+                      "resuming",
+                      "resume_failed",
+                      "failed",
+                      "ready_for_handoff",
+                      "complete",
+                      "cancelled"
+                    ]
+                  }
+                }
+              ]
+            },
+            "description": "Repeat for any of several execution statuses."
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "default": "open",
+              "description": "Finished tickets have reached the done stage. They page.",
+              "type": "string",
+              "enum": [
+                "open",
+                "finished",
+                "all"
+              ]
+            },
+            "description": "Finished tickets have reached the done stage. They page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching tickets, newest change first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "operationId": "startTicket",
         "security": [
@@ -161,6 +331,207 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}": {
+      "get": {
+        "operationId": "getTicket",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Get a ticket",
+        "tags": [
+          "tickets"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ticket with its tasks, questions, and usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}/runs": {
+      "get": {
+        "operationId": "listTicketRuns",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List a ticket's runs",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ticket's runs, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runs/{id}": {
+      "get": {
+        "operationId": "getRun",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Get a run",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "get": {
+        "operationId": "listAgents",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List running agents",
+        "tags": [
+          "agents"
+        ],
+        "responses": {
+          "200": {
+            "description": "Agents whose runs are starting or running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentList"
                 }
               }
             }
@@ -568,6 +939,208 @@
         ],
         "additionalProperties": false
       },
+      "TicketPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TicketSummary"
+            }
+          },
+          "nextCursor": {
+            "description": "Pass as `cursor` for the next page; null on the last.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "TicketSummary": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "displayRef": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "description": "The generation; it grows with reruns."
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/TicketKey"
+          },
+          "needsUser": {
+            "type": "boolean",
+            "description": "Waiting for a reply, paused, failed, or ready for handoff."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "sourceRef": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup",
+              "done"
+            ]
+          },
+          "startedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Actor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The API client that started the ticket."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "active",
+              "waiting_for_user",
+              "paused",
+              "resuming",
+              "resume_failed",
+              "failed",
+              "ready_for_handoff",
+              "complete",
+              "cancelled"
+            ]
+          },
+          "statusReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "displayRef",
+          "execution",
+          "finishedAt",
+          "id",
+          "key",
+          "needsUser",
+          "progress",
+          "sourceRef",
+          "stage",
+          "startedBy",
+          "status",
+          "statusReason",
+          "title",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "Progress": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "step": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "label",
+                  "step"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task in work or review, such as `03/06 Overview page`."
+          },
+          "done": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "next": {
+            "description": "The Pi command a person runs next.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "current",
+          "done",
+          "next",
+          "total"
+        ],
+        "additionalProperties": false
+      },
+      "Actor": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          },
+          "onBehalfOf": {
+            "description": "As the client sent it. Unverified.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "client",
+          "onBehalfOf"
+        ],
+        "additionalProperties": false
+      },
       "CommandAccepted": {
         "type": "object",
         "properties": {
@@ -588,6 +1161,772 @@
         "required": [
           "message",
           "revision",
+          "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "TicketDetail": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "displayRef": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "description": "The generation; it grows with reruns."
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/TicketKey"
+          },
+          "needsUser": {
+            "type": "boolean",
+            "description": "Waiting for a reply, paused, failed, or ready for handoff."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/Progress"
+          },
+          "sourceRef": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup",
+              "done"
+            ]
+          },
+          "startedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Actor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The API client that started the ticket."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "active",
+              "waiting_for_user",
+              "paused",
+              "resuming",
+              "resume_failed",
+              "failed",
+              "ready_for_handoff",
+              "complete",
+              "cancelled"
+            ]
+          },
+          "statusReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "attention": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attention"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "createdAt",
+          "displayRef",
+          "execution",
+          "finishedAt",
+          "id",
+          "key",
+          "needsUser",
+          "progress",
+          "sourceRef",
+          "stage",
+          "startedBy",
+          "status",
+          "statusReason",
+          "title",
+          "updatedAt",
+          "attention",
+          "tasks",
+          "usage"
+        ],
+        "additionalProperties": false
+      },
+      "Attention": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent_question",
+              "policy_limit",
+              "manual_approval"
+            ]
+          },
+          "question": {
+            "type": "string"
+          },
+          "replies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionReply"
+            }
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "resuming",
+              "resolved",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "question",
+          "replies",
+          "runId",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "AttentionReply": {
+        "type": "object",
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Actor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answer": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "actor",
+          "answer",
+          "createdAt",
+          "current",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "plan",
+                  "qa",
+                  "review",
+                  "work",
+                  "wrapup"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "done",
+              "blocked",
+              "cancelled"
+            ]
+          },
+          "summaries": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "counts": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                },
+                "label": {
+                  "type": "string"
+                },
+                "round": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "counts",
+                "label",
+                "round"
+              ],
+              "additionalProperties": false
+            },
+            "description": "The latest result of each stage, such as the review round."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "blockedBy",
+          "id",
+          "ordinal",
+          "stage",
+          "status",
+          "summaries",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "costUsd": {
+            "type": "number"
+          },
+          "tokensCacheRead": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensCacheWrite": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensInput": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensOutput": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensTotal": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "costUsd",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
+          "tokensTotal"
+        ],
+        "additionalProperties": false
+      },
+      "RunPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            }
+          },
+          "nextCursor": {
+            "description": "Pass as `cursor` for the next page; null on the last.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "activity": {
+            "description": "The agent's latest assistant message in this run, from its session file.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "What the run led to, as the status cards say it."
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Review"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "prepared",
+              "starting",
+              "running",
+              "terminal"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terminalKind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/TicketKey"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Validation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest validation attempt."
+          }
+        },
+        "required": [
+          "activity",
+          "endedAt",
+          "id",
+          "model",
+          "outcome",
+          "purpose",
+          "review",
+          "round",
+          "sequence",
+          "stage",
+          "startedAt",
+          "status",
+          "task",
+          "terminalKind",
+          "thinking",
+          "ticket",
+          "usage",
+          "validation"
+        ],
+        "additionalProperties": false
+      },
+      "Review": {
+        "type": "object",
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "blocking": {
+                  "type": "boolean"
+                },
+                "evidence": {
+                  "type": "string"
+                },
+                "finding": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "major",
+                    "minor"
+                  ]
+                },
+                "suggestion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "blocking",
+                "evidence",
+                "finding",
+                "id",
+                "location",
+                "number",
+                "severity",
+                "suggestion",
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "round": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "summary": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "changes_requested",
+              "blocked"
+            ]
+          }
+        },
+        "required": [
+          "findings",
+          "round",
+          "summary",
+          "verdict"
+        ],
+        "additionalProperties": false
+      },
+      "Validation": {
+        "type": "object",
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationCheck"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "passed",
+              "failed",
+              "error"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attempt",
+          "checks",
+          "status",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "ValidationCheck": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "error",
+              "skipped"
+            ]
+          }
+        },
+        "required": [
+          "command",
+          "durationMs",
+          "exitCode",
+          "kind",
+          "name",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "AgentList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Agent"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "activity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "paneName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runId": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/TicketKey"
+          }
+        },
+        "required": [
+          "activity",
+          "model",
+          "paneName",
+          "runId",
+          "stage",
+          "startedAt",
+          "task",
           "ticket"
         ],
         "additionalProperties": false

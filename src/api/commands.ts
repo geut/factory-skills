@@ -3,19 +3,11 @@ import type { CommandOptions, CommandOutcome } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import { ProblemError, type ProblemType } from './problem.ts';
 import { defineRoute, type RouteResult } from './route.ts';
+import { TicketKey, TicketParams } from './schemas.ts';
 
 // Commands return once they are committed: 202 with the ticket and the
 // events.revision that recorded the command. Agents launch afterwards, so a
 // client waits for the event stream to pass that revision.
-
-const TicketKey = z
-  .string()
-  .regex(/^[a-z0-9-]+$/)
-  .meta({
-    description: 'A ticket key: the name of its factory directory, `<slug>-<hash8>`.',
-    example: 'geut-factory-skills-42-ab12cd34',
-    id: 'TicketKey',
-  });
 
 const CommandAccepted = z
   .object({
@@ -36,8 +28,6 @@ const CommandHeaders = z.object({
     description: 'Who the client acts for, such as a dashboard user. Stored, never verified.',
   }),
 });
-
-const TicketParams = z.object({ key: TicketKey });
 
 const StartTicket = z
   .union([

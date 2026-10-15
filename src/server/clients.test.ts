@@ -123,6 +123,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
       authorize: createAuthorizer(db, () => now),
       context: {
         commands: unusedCommands,
+        db: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
       },
