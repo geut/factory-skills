@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
+import type { Actor } from '../domain.ts';
 import {
   problem,
   PROBLEM_MEDIA_TYPE,
@@ -13,8 +14,9 @@ import type { ApiContext, Route, Scope } from './route.ts';
 export const MAX_BODY_BYTES = 1024 * 1024;
 
 export type RouterOptions = {
-  // Returns a problem when the request may not use a route with this scope.
-  authorize?: (request: IncomingMessage, scope: Scope) => Problem | null;
+  // Decides who sent a request to a route with a scope: the actor, or the
+  // problem to answer with. Without it, scoped routes have no actor.
+  authorize?: (request: IncomingMessage, scope: Scope) => { actor: Actor } | { problem: Problem };
   context: ApiContext;
   // Unexpected errors, already answered with internal_error.
   onError?: (error: unknown) => void;
@@ -135,12 +137,16 @@ export function createRouter(
     }
     const { route } = match.item;
 
+    let actor: Actor | null = null;
     if (route.scope !== null && options.authorize !== undefined) {
-      const denied = options.authorize(request, route.scope);
-      if (denied !== null) {
-        sendProblem(response, denied);
+      const decided = options.authorize(request, route.scope);
+      if ('problem' in decided) {
+        const challenge: Record<string, string> =
+          decided.problem.status === 401 ? { 'www-authenticate': 'Bearer' } : {};
+        sendProblem(response, decided.problem, challenge);
         return;
       }
+      actor = decided.actor;
     }
 
     const rawParams = Object.fromEntries(
@@ -185,6 +191,7 @@ export function createRouter(
     let result;
     try {
       result = await route.handler({
+        actor,
         body,
         context: options.context,
         params: params as Record<string, unknown>,

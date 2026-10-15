@@ -79,6 +79,24 @@ The server's routes are declared once, in [`src/api/routes.ts`](src/api/routes.t
 - Source runs and tests also check every response against its schema; the single executable does not.
 - A test fails when `openapi.json` no longer matches the routes. After changing a route, run `npm run openapi:update` and commit the document.
 
+### Tokens
+
+Every `/v1` route needs `Authorization: Bearer <token>`. A token belongs to a named API client and has a scope: `read` routes only look, `act` routes change tickets, and `act` includes `read`. Tokens are managed only from the command line, so whoever can reach the factory root decides who gets one:
+
+```sh
+dist/factory token create dashboard --scope act   # prints the token once
+dist/factory token list
+dist/factory token revoke dashboard
+```
+
+- The database keeps only each token's SHA-256. A lost token cannot be shown again; revoke it and create it again.
+- To rotate without downtime, create a client with a new name, switch the client over, then revoke the old one.
+- The server writes a `local` act token to `.factory/local.token` (mode `0600`) for Pi on the same machine. It replaces the token when the file is missing or the client was revoked.
+- `GET /v1/me` returns the client a token belongs to, to check a token.
+- Commands record the client that sent them. A client can add `X-Factory-On-Behalf-Of: <who>`, such as a dashboard user's name. The server stores it as given and never uses it for access.
+- An unknown or revoked token gets `401 unauthorized`; a `read` token on an `act` route gets `403 insufficient_scope`.
+- Keep tokens off browsers: a web client calls the API from its server.
+
 ## What you see
 
 Every status card names the ticket, the stage, and what the run led to, then the task and round:

@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 import { serve } from './server/serve.ts';
+import { runTokenCommand } from './server/token-cli.ts';
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string) => process.stderr.write(`${line}\n`);
 
-const usage = `Usage: factory serve
+const usage = `Usage:
+  factory serve     run the factory server for the repository in this directory
+  factory token     manage API client tokens (factory token --help)
 
-Runs the factory server for the repository in the current directory. Start it
-inside a Herdr pane; agents open in that pane's workspace.`;
+Start the server inside a Herdr pane; agents open in that pane's workspace.`;
 
 async function main(argv: Array<string>): Promise<number> {
-  const [command] = argv;
+  const [command, ...rest] = argv;
+  if (command === 'token') {
+    return runTokenCommand(rest, process.cwd(), { err: fail, out: say });
+  }
   if (command !== 'serve') {
     fail(usage);
     return command === undefined || command === '--help' ? 0 : 2;

@@ -1472,6 +1472,7 @@ export function reduce(input: {
       const version =
         snapshot.replies.filter((reply) => reply.requestId === attention.id).length + 1;
       snapshot.replies.push({
+        actor: event.actor ?? null,
         answer: event.answer,
         answerHash,
         id: ids.reply(),

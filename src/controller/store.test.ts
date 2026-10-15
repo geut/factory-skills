@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { randomIds } from '../domain.ts';
+import { randomIds, type Actor } from '../domain.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { blank } from '../stories/fixtures.ts';
 import { applyControllerEvent, loadCurrentByTicketKey } from './store.ts';
@@ -18,12 +18,13 @@ afterEach(() => {
 });
 
 // A started ticket, so its execution loads through the store.
-function started() {
+function started(actor: Actor | null = null) {
   const root = mkdtempSync(path.join(tmpdir(), 'factory-store-'));
   roots.push(root);
   const db = openStateDatabase(root, { create: true });
   const { execution, ticket } = blank();
   applyControllerEvent(db, {
+    actor,
     dedupeKey: 'start',
     event: {
       kind: 'start',
@@ -71,5 +72,14 @@ test('a stage the registry does not know does not load', () => {
   const { addSession, db, ticketId } = started();
   addSession('removed-stage', 'triage', null);
   assert.throws(() => loadCurrentByTicketKey(db, ticketId), /unknown stage triage/);
+  db.close();
+});
+
+test('a command records the API client behind it on its event', () => {
+  const { db } = started({ client: 'dashboard', onBehalfOf: 'diego' });
+  const event = db
+    .prepare("SELECT actor, actor_on_behalf_of FROM events WHERE dedupe_key = 'start'")
+    .get();
+  assert.deepEqual({ ...event }, { actor: 'dashboard', actor_on_behalf_of: 'diego' });
   db.close();
 });

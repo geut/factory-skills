@@ -28,4 +28,20 @@ CREATE TABLE server_lease (
   heartbeat_at TEXT NOT NULL
 ) STRICT;
 `,
+  // Schema 5: API clients and the actor behind each command.
+  4: `
+CREATE TABLE api_clients (
+  name         TEXT PRIMARY KEY CHECK (name GLOB '[a-z0-9]*' AND length(name) <= 64),
+  scope        TEXT NOT NULL CHECK (scope IN ('read', 'act')),
+  token_hash   TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at   TEXT
+) STRICT;
+
+ALTER TABLE events ADD COLUMN actor TEXT;
+ALTER TABLE events ADD COLUMN actor_on_behalf_of TEXT;
+ALTER TABLE attention_replies ADD COLUMN actor TEXT;
+ALTER TABLE attention_replies ADD COLUMN actor_on_behalf_of TEXT;
+`,
 };

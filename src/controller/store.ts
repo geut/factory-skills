@@ -12,6 +12,7 @@ import {
   ticketId,
   type ActionId,
   type ActionRecord,
+  type Actor,
   type AttentionRecord,
   type ControllerEvent,
   type ControllerResponse,
@@ -626,7 +627,12 @@ function loadReplies(db: DatabaseSync, execution: ExecutionId): Array<ReplyRecor
     .all(execution)
     .map((item) => {
       const record = row(item);
+      const client = nullableText(record, 'actor');
       return {
+        actor:
+          client === null
+            ? null
+            : { client, onBehalfOf: nullableText(record, 'actor_on_behalf_of') },
         answer: text(record, 'answer'),
         answerHash: text(record, 'answer_hash'),
         id: replyId(text(record, 'id')),
@@ -1115,8 +1121,9 @@ function updateAttention(db: DatabaseSync, attention: AttentionRecord, now: stri
 function insertReply(db: DatabaseSync, reply: ReplyRecord, now: string): void {
   db.prepare(
     `INSERT INTO attention_replies
-      (id, request_id, version, answer, answer_hash, idempotency_key, is_current, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, request_id, version, answer, answer_hash, idempotency_key, is_current, created_at,
+       actor, actor_on_behalf_of)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     reply.id,
     reply.requestId,
@@ -1126,6 +1133,8 @@ function insertReply(db: DatabaseSync, reply: ReplyRecord, now: string): void {
     reply.idempotencyKey,
     reply.isCurrent ? 1 : 0,
     now,
+    reply.actor?.client ?? null,
+    reply.actor?.onBehalfOf ?? null,
   );
 }
 
@@ -1383,6 +1392,7 @@ function eventRunId(event: ControllerEvent): string | null {
 function insertInputEvent(
   db: DatabaseSync,
   input: {
+    actor: Actor | null;
     dedupeKey: string;
     executionId: ExecutionId | null;
     failed: boolean;
@@ -1395,8 +1405,9 @@ function insertInputEvent(
 ): void {
   db.prepare(
     `INSERT INTO events
-      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json, processing_status, processed_at)
-     VALUES (?, ?, ?, 'input', ?, ?, ?, '{}', ?, ?)`,
+      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json, processing_status,
+       processed_at, actor, actor_on_behalf_of)
+     VALUES (?, ?, ?, 'input', ?, ?, ?, '{}', ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.executionId,
@@ -1406,12 +1417,16 @@ function insertInputEvent(
     input.dedupeKey,
     input.failed ? 'failed' : 'processed',
     input.now,
+    input.actor?.client ?? null,
+    input.actor?.onBehalfOf ?? null,
   );
 }
 
 export function applyControllerEvent(
   db: DatabaseSync,
   input: {
+    // The API client behind a command; null for the runtime, validators, and Pi.
+    actor?: Actor | null;
     dedupeKey: string;
     event: ControllerEvent;
     ids: IdSource;
@@ -1444,6 +1459,7 @@ export function applyControllerEvent(
     }
     if (reduction.response.kind === 'status') {
       insertInputEvent(db, {
+        actor: input.actor ?? null,
         dedupeKey: input.dedupeKey,
         executionId: reduction.snapshot?.execution.id ?? current?.execution.id ?? null,
         failed: false,

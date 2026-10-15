@@ -6,7 +6,7 @@ CREATE TABLE schema_meta (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 4);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 5);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -283,6 +283,8 @@ CREATE TABLE attention_replies (
   idempotency_key TEXT NOT NULL UNIQUE,
   is_current      INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0, 1)),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  actor           TEXT,
+  actor_on_behalf_of TEXT,
 
   UNIQUE (request_id, version),
   UNIQUE (request_id, answer_hash),
@@ -404,6 +406,10 @@ CREATE TABLE events (
   received_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   processed_at      TEXT,
   processing_error  TEXT,
+  -- The API client that sent a command, and who it said it acted for. The
+  -- second is the client's claim and is never used for access.
+  actor             TEXT,
+  actor_on_behalf_of TEXT,
 
   FOREIGN KEY (execution_id, task_id)
     REFERENCES tasks(execution_id, task_id),
@@ -894,8 +900,19 @@ CREATE TABLE server_lease (
   heartbeat_at TEXT NOT NULL
 ) STRICT;
 
+-- An API client: a named holder of a factory server token. Only the SHA-256
+-- of the token is stored; the CLI shows the token once. `act` includes `read`.
+CREATE TABLE api_clients (
+  name         TEXT PRIMARY KEY CHECK (name GLOB '[a-z0-9]*' AND length(name) <= 64),
+  scope        TEXT NOT NULL CHECK (scope IN ('read', 'act')),
+  token_hash   TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+  created_at   TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at   TEXT
+) STRICT;
+
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 COMMIT;

@@ -2,23 +2,24 @@
 
 This directory is the persistence boundary for the deterministic factory controller. The SQLite database at `<factory-root>/db/state.sqlite` is authoritative. Dashboard reads use the SQL views below. The controller does not write a JSON state file.
 
-The schema is version 4. A read-write open upgrades a schema 3 database in place with the forward-only steps in [`upgrades.ts`](upgrades.ts). A read-only open of an older database fails until something opens it read-write once. Databases older than schema 3, and legacy databases with the old `meta` table, are rejected with a message telling the operator to back them up or remove them.
+The schema is version 5. A read-write open upgrades a schema 3 database in place with the forward-only steps in [`upgrades.ts`](upgrades.ts). A read-only open of an older database fails until something opens it read-write once. Databases older than schema 3, and legacy databases with the old `meta` table, are rejected with a message telling the operator to back them up or remove them.
 
 ## Model
 
-| Table                                     | Purpose                                                            |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `tickets`                                 | Stable external ticket identity and source.                        |
-| `ticket_executions`                       | Explicit rerun generations and the current workflow state.         |
-| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                      |
-| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session.      |
-| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.        |
-| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                           |
-| `actions`                                 | Transactional outbox leased by the runtime dispatcher.             |
-| `events`                                  | Deduplicated inputs and a monotonic dashboard/change cursor.       |
-| `validation_runs`, `validation_checks`    | Checks for a finished run. A pass does not require a result hash.  |
-| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                           |
-| `server_lease`                            | The factory server that owns the database, its URL, and heartbeat. |
+| Table                                     | Purpose                                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| `tickets`                                 | Stable external ticket identity and source.                                             |
+| `ticket_executions`                       | Explicit rerun generations and the current workflow state.                              |
+| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                                           |
+| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session.                           |
+| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.                             |
+| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                                                |
+| `actions`                                 | Transactional outbox leased by the runtime dispatcher.                                  |
+| `events`                                  | Deduplicated inputs, the API client behind each command, and a monotonic change cursor. |
+| `validation_runs`, `validation_checks`    | Checks for a finished run. A pass does not require a result hash.                       |
+| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                                                |
+| `server_lease`                            | The factory server that owns the database, its URL, and heartbeat.                      |
+| `api_clients`                             | Named API clients, their scope, and the SHA-256 of their token.                         |
 
 Accepted stage output is stored on `agent_runs.result_json`. Review findings do not need a separate audit tree in v0; the normalized review result stays with the review run and the latest verdict/counts are projected onto its task.
 

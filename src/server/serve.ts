@@ -12,6 +12,7 @@ import { createFactoryService, factoryPaths } from '../controller/service.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
+import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import {
   acquireServerLease,
   HEARTBEAT_MS,
@@ -173,6 +174,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   let document: Record<string, unknown> | null = null;
   const http = createServer(
     createRouter({
+      authorize: createAuthorizer(db, () => new Date().toISOString()),
       context: {
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
@@ -209,6 +211,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     return { kind: 'error', message: heldMessage(factoryRoot, acquired.lease) };
   }
 
+  ensureLocalClient(db, factoryRoot, new Date().toISOString());
   const handshake = handshakePath(factoryRoot);
   const runtime =
     input.runtime?.({ handshakePath: handshake, piBin }) ??

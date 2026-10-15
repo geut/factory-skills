@@ -69,6 +69,44 @@
           }
         }
       }
+    },
+    "/v1/me": {
+      "get": {
+        "operationId": "getMe",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Check a token and see which client it belongs to",
+        "tags": [
+          "clients"
+        ],
+        "responses": {
+          "200": {
+            "description": "The client behind the token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -166,6 +204,27 @@
           "openapi"
         ],
         "additionalProperties": {}
+      },
+      "Me": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The API client the token belongs to."
+          },
+          "onBehalfOf": {
+            "description": "The X-Factory-On-Behalf-Of header, as sent. Never verified.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "onBehalfOf"
+        ],
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

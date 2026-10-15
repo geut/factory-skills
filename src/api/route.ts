@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { z } from 'zod';
+import type { Actor } from '../domain.ts';
 
 // What a route may ask for while it handles a request. Later routes add the
 // controller service and the database here.
@@ -28,6 +29,8 @@ export type RouteInput<
   Q extends z.ZodObject | undefined,
   B extends z.ZodType | undefined,
 > = {
+  // The API client behind the request; null on routes that need no token.
+  actor: Actor | null;
   body: Output<B>;
   context: ApiContext;
   params: Output<P>;

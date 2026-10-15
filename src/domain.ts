@@ -311,7 +311,13 @@ export type ControllerEvent =
       sessionFile: string;
     }
   | { actionId: ActionId; kind: 'launch_failed'; message: string; runId: RunId }
-  | { answer: string; idempotencyKey: string; kind: 'reply'; ticketId: TicketId }
+  | {
+      actor?: Actor;
+      answer: string;
+      idempotencyKey: string;
+      kind: 'reply';
+      ticketId: TicketId;
+    }
   | { idempotencyKey: string; kind: 'retry'; ticketId: TicketId }
   | { kind: 'reconciled'; observation: ReconcileObservation; runId: RunId };
 
@@ -449,7 +455,12 @@ export type AttentionRecord = {
   status: AttentionStatus;
 };
 
+// The API client that sent a command, and who it said it acted for. The second
+// is the client's own claim: shown, never trusted for access.
+export type Actor = { client: string; onBehalfOf: string | null };
+
 export type ReplyRecord = {
+  actor: Actor | null;
   answer: string;
   answerHash: string;
   id: ReplyId;

@@ -176,7 +176,9 @@ test('a response that breaks its schema fails only when responses are validated'
 test('authorize can refuse a route by its scope', async () => {
   const guarded = await start({
     authorize: (_request, scope) =>
-      scope === 'act' ? problem('insufficient_scope', 'Needs act.') : null,
+      scope === 'act'
+        ? { problem: problem('insufficient_scope', 'Needs act.') }
+        : { actor: { client: 'reader', onBehalfOf: null } },
   });
   const refused = await fetch(`${guarded}/v1/things/t1`, {
     body: JSON.stringify({ ref: 'x' }),

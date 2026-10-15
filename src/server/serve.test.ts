@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -105,4 +113,15 @@ test('serve publishes its OpenAPI document without a token', async () => {
   const missing = await fetch(`${server.url}/v1/nothing`);
   assert.equal(missing.status, 404);
   assert.equal(missing.headers.get('content-type'), 'application/problem+json');
+});
+
+test('serve gives Pi a private local token that the API accepts', async () => {
+  const { cwd, env } = project();
+  const server = await start(cwd, env);
+  const file = path.join(cwd, '.factory', 'local.token');
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  const token = readFileSync(file, 'utf8').trim();
+  const me = await fetch(`${server.url}/v1/me`, { headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual(await me.json(), { name: 'local', onBehalfOf: null });
+  assert.equal((await fetch(`${server.url}/v1/me`)).status, 401);
 });
