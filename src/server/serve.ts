@@ -4,6 +4,9 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { getAsset, isSea } from 'node:sea';
 import type { DatabaseSync } from 'node:sqlite';
+import { buildOpenApiDocument } from '../api/openapi.ts';
+import { createRouter } from '../api/router.ts';
+import { apiRoutes } from '../api/routes.ts';
 import { readFactoryConfig } from '../config.ts';
 import { createFactoryService, factoryPaths } from '../controller/service.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
@@ -166,16 +169,25 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     return { kind: 'error', message: heldMessage(factoryRoot, existing) };
   }
 
-  const http = createServer((request, response) => {
-    if (request.method === 'GET' && request.url === '/health') {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ instanceId, status: 'ok' }));
-      return;
-    }
-    response.writeHead(404, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ status: 404, title: 'Not found' }));
-  });
   const instanceId = randomUUID();
+  let document: Record<string, unknown> | null = null;
+  const http = createServer(
+    createRouter({
+      context: {
+        instanceId,
+        openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+      },
+      onError: (error) => {
+        input.out(
+          `API error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+        );
+      },
+      routes: apiRoutes,
+      // Source runs and tests check every response against its schema; the
+      // single executable trusts the types.
+      validateResponses: !isSea(),
+    }),
+  );
   let port: number;
   try {
     port = await listen(http, host, input.port ?? config.config.server.port);

@@ -1,13 +1,16 @@
 name: CI
 
-# Only code changes need the checks: src/ and tests/ hold the code, and the rest
-# of this list changes how it installs, typechecks, formats or lints.
+# Only code changes need the checks: src/, tests/, and scripts/ hold the code,
+# openapi.json must match it, and the rest of this list changes how it installs,
+# typechecks, formats or lints.
 on:
   push:
     branches: [main]
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/**'
+      - 'openapi.json'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -18,6 +21,8 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/**'
+      - 'openapi.json'
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'

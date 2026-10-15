@@ -8,6 +8,7 @@
     "format:check": "oxfmt --check .",
     "gallery": "node --watch src/stories/server.ts",
     "lint": "oxlint .",
+    "openapi:update": "node --test --test-update-snapshots src/api/openapi.test.ts",
     "stories": "node src/stories/run.ts",
     "stories:update": "STORIES_UPDATE=1 node --test src/stories/stories.test.ts",
     "test": "node --test",
@@ -36,5 +37,9 @@
     "skills": [
       "./skills"
     ]
+  },
+  "dependencies": {
+    "zod": "^4.6.7",
+    "zod-openapi": "^6.0.2"
   }
 }

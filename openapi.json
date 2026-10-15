@@ -1,0 +1,179 @@
+{
+  "info": {
+    "description": "The factory server API. Reads need a `read` token, commands an `act` token. Errors are RFC 9457 problem details.",
+    "title": "Factory API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "security": [],
+        "summary": "Check that the server is running",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "The server is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "security": [],
+        "summary": "Get the OpenAPI document",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "This document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenApiDocument"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "description": "The server instance holding the lease. It changes on every start."
+          },
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        },
+        "required": [
+          "instanceId",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "insufficient_scope",
+              "internal_error",
+              "invalid_state",
+              "method_not_allowed",
+              "not_found",
+              "not_waiting_for_reply",
+              "ticket_not_found",
+              "tracker_unavailable",
+              "umbrella_issue",
+              "unauthorized",
+              "unsupported_media_type",
+              "validation_error"
+            ],
+            "description": "A stable code clients can switch on."
+          }
+        },
+        "required": [
+          "status",
+          "title",
+          "type"
+        ],
+        "additionalProperties": false,
+        "description": "An RFC 9457 problem details object."
+      },
+      "FieldError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Where the problem is, such as `body.ref` or `query.stage`."
+          }
+        },
+        "required": [
+          "message",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "OpenApiDocument": {
+        "type": "object",
+        "properties": {
+          "openapi": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "openapi"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "description": "An API client token from `factory token create <name> --scope read|act`. Routes list the scope they need; `act` includes `read`.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  }
+}

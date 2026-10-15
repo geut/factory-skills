@@ -93,3 +93,16 @@ test('closing a server releases the lease for the next one', async () => {
   const second = await start(cwd, env);
   assert.notEqual(second.instanceId, first.instanceId);
 });
+
+test('serve publishes its OpenAPI document without a token', async () => {
+  const { cwd, env } = project();
+  const server = await start(cwd, env);
+  const response = await fetch(`${server.url}/openapi.json`);
+  assert.equal(response.status, 200);
+  const document = (await response.json()) as Record<string, unknown>;
+  assert.equal(document['openapi'], '3.1.0');
+
+  const missing = await fetch(`${server.url}/v1/nothing`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get('content-type'), 'application/problem+json');
+});

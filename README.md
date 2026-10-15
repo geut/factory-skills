@@ -70,6 +70,15 @@ dist/factory serve
 - On SIGINT or SIGTERM it stops dispatching, releases the lease, and exits. Agent panes keep running, and the next start adopts them with `recover()`.
 - It upgrades a schema 3 database in place the first time it opens it.
 
+### API
+
+The server's routes are declared once, in [`src/api/routes.ts`](src/api/routes.ts), with Zod schemas. The router validates every request against them, and the OpenAPI 3.1 document is generated from the same list. `GET /openapi.json` serves it without a token, and [`openapi.json`](openapi.json) is the committed copy that clients generate their types from.
+
+- Routes live under `/v1`. `/health` and `/openapi.json` sit outside it.
+- Errors are RFC 9457 `application/problem+json` with a stable `type` code, listed in [`src/api/problem.ts`](src/api/problem.ts). A `validation_error` lists each bad field, such as `body.ref` or `query.stage`.
+- Source runs and tests also check every response against its schema; the single executable does not.
+- A test fails when `openapi.json` no longer matches the routes. After changing a route, run `npm run openapi:update` and commit the document.
+
 ## What you see
 
 Every status card names the ticket, the stage, and what the run led to, then the task and round:
@@ -94,6 +103,7 @@ Above the editor, the widget keeps each unfinished ticket's progress on screen b
 ```text
 src/extension/     Pi /factory command
 src/server/        factory serve: HTTP server and owner lease
+src/api/           routes, router, problem errors, OpenAPI document
 src/cli.ts         the factory executable's entry point
 scripts/           single executable build
 src/controller/    commands, pure reducer, SQLite persistence
