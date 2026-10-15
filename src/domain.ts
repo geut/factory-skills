@@ -287,7 +287,7 @@ export type ReconcileObservation =
   | { kind: 'terminal'; terminal: TerminalOutcome };
 
 export type ControllerEvent =
-  | { kind: 'start'; policy: Policy; ticket: ResolvedTicket }
+  | { factoryVersion?: string; kind: 'start'; policy: Policy; ticket: ResolvedTicket }
   | { kind: 'runtime_terminal'; runId: RunId; terminal: TerminalOutcome }
   | ValidationFinished
   | InputReady
@@ -369,6 +369,8 @@ export type Retry =
 
 export type ExecutionRecord = {
   factoryDir: string;
+  // The factory package version and commit that ran it, for stats.
+  factoryVersion: string | null;
   generation: number;
   id: ExecutionId;
   inputFetchedAt: string;

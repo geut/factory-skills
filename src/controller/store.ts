@@ -519,6 +519,7 @@ function hydrate(
   };
   const executionRecord: ExecutionRecord = {
     factoryDir: text(executionRow, 'factory_dir'),
+    factoryVersion: nullableText(executionRow, 'factory_version'),
     generation: integer(executionRow, 'generation'),
     id: execution,
     inputFetchedAt: nullableText(executionRow, 'input_fetched_at') ?? '',
@@ -919,8 +920,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
        retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
-       message, message_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       message, message_at, created_at, updated_at, factory_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -947,7 +948,42 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     now,
     now,
     now,
+    execution.factoryVersion,
   );
+}
+
+// Opens a new interval in status_history when an execution or a task enters a
+// different stage or status, closing the one it leaves.
+function recordStatus(
+  db: DatabaseSync,
+  input: {
+    executionId: string;
+    now: string;
+    stage: string | null;
+    status: string;
+    taskId: string | null;
+  },
+): void {
+  const open = db
+    .prepare(
+      `SELECT id, stage, status FROM status_history
+       WHERE execution_id = ? AND task_id IS ? AND ended_at IS NULL
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(input.executionId, input.taskId);
+  if (open !== undefined && open['stage'] === input.stage && open['status'] === input.status) {
+    return;
+  }
+  if (open !== undefined) {
+    db.prepare('UPDATE status_history SET ended_at = ? WHERE id = ?').run(
+      input.now,
+      Number(open['id']),
+    );
+  }
+  db.prepare(
+    `INSERT INTO status_history (execution_id, task_id, stage, status, started_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(input.executionId, input.taskId, input.stage, input.status, input.now);
 }
 
 function updateExecution(
@@ -1309,6 +1345,13 @@ function persist(
   } else if (!same(before.execution, after.execution)) {
     updateExecution(db, before.execution, after.execution, now);
   }
+  recordStatus(db, {
+    executionId: after.execution.id,
+    now,
+    stage: after.execution.stage,
+    status: after.execution.status,
+    taskId: null,
+  });
 
   for (const task of after.tasks) {
     const previous = before?.tasks.find((item) => item.taskId === task.taskId) ?? null;
@@ -1328,6 +1371,13 @@ function persist(
         task.taskId,
       );
     }
+    recordStatus(db, {
+      executionId: after.execution.id,
+      now,
+      stage: task.stage,
+      status: task.status,
+      taskId: task.taskId,
+    });
   }
   for (const session of after.sessions) {
     const previous = before?.sessions.find((item) => item.id === session.id) ?? null;
@@ -1689,6 +1739,16 @@ export function requeueOrphanedValidations(
           now,
           text(record, 'execution_id'),
         );
+        const failed = db
+          .prepare('SELECT stage FROM ticket_executions WHERE id = ?')
+          .get(text(record, 'execution_id'));
+        recordStatus(db, {
+          executionId: text(record, 'execution_id'),
+          now,
+          stage: failed === undefined ? null : String(failed['stage']),
+          status: 'failed',
+          taskId: null,
+        });
         continue;
       }
       db.prepare(

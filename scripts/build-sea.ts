@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { build } from 'esbuild';
+import { sourceVersion } from '../src/version.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const dist = path.join(root, 'dist');
@@ -25,7 +26,10 @@ await build({
   // CommonJS has no import.meta; source runs use it to find files next to them.
   banner: { js: "const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;" },
   bundle: true,
-  define: { 'import.meta.url': '__importMetaUrl' },
+  define: {
+    FACTORY_BUILD_VERSION: JSON.stringify(sourceVersion(root)),
+    'import.meta.url': '__importMetaUrl',
+  },
   entryPoints: [path.join(root, 'src', 'cli.ts')],
   format: 'cjs',
   legalComments: 'none',

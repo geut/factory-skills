@@ -612,6 +612,7 @@ function reduceStart(
     attention: [],
     execution: {
       factoryDir: event.ticket.factoryDir,
+      factoryVersion: event.factoryVersion ?? null,
       generation: 1,
       id: executionId,
       inputFetchedAt: event.ticket.fetchedAt,

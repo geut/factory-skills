@@ -210,6 +210,7 @@ The factory reads issues through a **tracker** and pull requests through a **cod
 
 ```json
 {
+  "name": "factory-skills on Sonnet",
   "models": { "work": "work-model", "review": "review-model" },
   "tracker": {
     "kind": "github",

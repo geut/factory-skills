@@ -6,7 +6,7 @@ CREATE TABLE schema_meta (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 5);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 6);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -66,6 +66,8 @@ CREATE TABLE ticket_executions (
   worktree_head_sha     TEXT,
   message               TEXT,
   message_at            TEXT,
+  -- The factory package version and commit that ran this execution.
+  factory_version       TEXT,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   finished_at           TEXT,
@@ -911,8 +913,72 @@ CREATE TABLE api_clients (
   revoked_at   TEXT
 ) STRICT;
 
+-- This factory's identity, so its stats can be told apart from another
+-- factory's after an export. The display name lives in FACTORY.json.
+CREATE TABLE factory_identity (
+  singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+  factory_id TEXT NOT NULL CHECK (length(factory_id) = 36),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+) STRICT;
+
+INSERT INTO factory_identity (singleton, factory_id) VALUES (1, lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6))));
+
+-- Every stage and status an execution or a task has been in, and when. The
+-- open interval has no ended_at. Stats measure stage, waiting, and factory
+-- time from it.
+CREATE TABLE status_history (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  execution_id TEXT NOT NULL REFERENCES ticket_executions(id) ON DELETE CASCADE,
+  -- Null for the execution itself.
+  task_id      TEXT,
+  stage        TEXT,
+  status       TEXT NOT NULL,
+  started_at   TEXT NOT NULL,
+  ended_at     TEXT
+) STRICT;
+
+CREATE INDEX status_history_open
+ON status_history(execution_id, task_id, ended_at);
+
+-- A ticket's pull request, recorded at handoff or found by its branch, and
+-- what happened to it since. Sync and webhooks upsert these by GitHub id.
+CREATE TABLE pull_requests (
+  execution_id   TEXT PRIMARY KEY REFERENCES ticket_executions(id) ON DELETE CASCADE,
+  url            TEXT NOT NULL CHECK (length(trim(url)) > 0),
+  number         INTEGER,
+  head_branch    TEXT,
+  author         TEXT,
+  state          TEXT NOT NULL CHECK (state IN ('open', 'merged', 'closed')),
+  opened_at      TEXT,
+  merged_at      TEXT,
+  closed_at      TEXT,
+  recorded_at    TEXT NOT NULL,
+  last_synced_at TEXT
+) STRICT;
+
+CREATE TABLE pull_request_reviews (
+  review_id    TEXT PRIMARY KEY,
+  execution_id TEXT NOT NULL REFERENCES pull_requests(execution_id) ON DELETE CASCADE,
+  author       TEXT NOT NULL,
+  author_type  TEXT NOT NULL CHECK (author_type IN ('human', 'bot')),
+  state        TEXT NOT NULL CHECK (
+    state IN ('approved', 'changes_requested', 'commented', 'dismissed', 'pending')
+  ),
+  -- A comment counts toward an external review round only with a body.
+  has_body     INTEGER NOT NULL CHECK (has_body IN (0, 1)),
+  commit_sha   TEXT,
+  submitted_at TEXT
+) STRICT;
+
+CREATE TABLE pull_request_commits (
+  execution_id TEXT NOT NULL REFERENCES pull_requests(execution_id) ON DELETE CASCADE,
+  sha          TEXT NOT NULL,
+  committed_at TEXT,
+  PRIMARY KEY (execution_id, sha)
+) STRICT;
+
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 
 COMMIT;

@@ -57,6 +57,8 @@ export type FactoryConfig = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
+  // How people tell this factory apart from others in exported stats.
+  name: string | null;
   // Where `factory serve` listens. Bind 0.0.0.0 to publish the port from a sandbox.
   server: { host: string; port: number };
   stages: Record<string, StageSettings>;
@@ -294,6 +296,7 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       labels,
       limits,
       models: { plan, review, work },
+      name: readString(value, 'name'),
       server,
       stages: settings.stages,
       tracker,

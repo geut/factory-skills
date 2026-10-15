@@ -23,6 +23,7 @@ import { parseReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
+import { factoryVersion } from '../version.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
 import {
@@ -330,7 +331,7 @@ export function createFactoryService(input: {
     }
     mkdirSync(resolved.ticket.factoryDir, { recursive: true });
     const applied = apply(
-      { kind: 'start', policy, ticket: resolved.ticket },
+      { factoryVersion: factoryVersion(), kind: 'start', policy, ticket: resolved.ticket },
       dedupe(options, `command:start:${resolved.ticket.id}`),
       'command',
       options.actor,

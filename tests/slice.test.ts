@@ -790,6 +790,10 @@ test('an approving review marks the task done and launches one wrap-up run', asy
   await closeWhenIdle(db);
 });
 
+// Each stage once per stretch, in order.
+const stagesOf = (steps: Array<string>): Array<string | undefined> =>
+  steps.map((step) => step.split('/')[0]).filter((step, index, steps) => step !== steps[index - 1]);
+
 test('changes requested resume the same worker, then round 2 resumes the same reviewer', async () => {
   const { db, review, runtime, service, work } = await reachReview();
   runtime.emit(review.runId, {
@@ -830,6 +834,26 @@ test('changes requested resume the same worker, then round 2 resumes the same re
   });
   await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
   assert.equal(taskRow(db)['review_round'], 2);
+
+  // Status history replays the path, including the return to work.
+  const history = (task: string | null) =>
+    db
+      .prepare('SELECT stage, status, ended_at FROM status_history WHERE task_id IS ? ORDER BY id')
+      .all(task)
+      .map((item) => `${String(item['stage'])}/${String(item['status'])}`)
+      .filter((step, index, steps) => step !== steps[index - 1]);
+  assert.deepEqual(stagesOf(history(null)), ['plan', 'work', 'review', 'work', 'review', 'wrapup']);
+  const task = String(db.prepare('SELECT task_id FROM tasks').get()?.['task_id']);
+  assert.deepEqual(stagesOf(history(task)), ['null', 'work', 'review', 'work', 'review', 'null']);
+  assert.equal(history(task).at(-1), 'null/done');
+  const open = db
+    .prepare('SELECT count(*) AS n FROM status_history WHERE task_id IS ? AND ended_at IS NULL')
+    .get(task);
+  assert.equal(open?.['n'], 1);
+  assert.match(
+    String(db.prepare('SELECT factory_version FROM ticket_executions').get()?.['factory_version']),
+    /^\d+\.\d+\.\d+/,
+  );
   await closeWhenIdle(db);
 });
 
