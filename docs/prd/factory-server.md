@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-15
 - **Decided in:** [Factory server with a REST API, auth, tracker ports, and stats](https://github.com/geut/factory-skills/issues/14). Each section links the ticket that holds its reasoning.
+- **Build tickets:** sub-issues of [Factory server with a REST API](https://github.com/geut/factory-skills/issues/25)
 - **Builds on:** [ADR-001](../../ADR.md), [ADR-003](../adr/0003-a-factory-server-owns-the-controller.md)
 
 ## Summary
@@ -25,7 +26,7 @@ Tracker and code host access goes behind two ports, so Linear or Jira can be add
 
 ## Non-goals
 
-- Dashboard screens. factory-dashboard owns them, and gets a requirements issue.
+- Dashboard screens. factory-dashboard owns them; see [Become a factory API client and command center](https://github.com/dpaez/factory-dashboard/issues/16).
 - Linear and Jira adapters. Only the seam is built.
 - Deployment, TLS, headless mode (no Herdr), users, and OAuth.
 - Aggregating stats across factories. Only the export that makes it possible is built.
@@ -245,7 +246,7 @@ Measures are SQL views over raw facts:
 
 ## Requirements handed to other repos
 
-- **factory-dashboard:**
+- **factory-dashboard**, handed off as [Become a factory API client and command center](https://github.com/dpaez/factory-dashboard/issues/16):
   - Drop `DB_URL` and the schema pin, and supersede the read-only ADRs.
   - Vendor `openapi.json` at a pinned commit and generate the client with openapi-typescript and openapi-fetch.
   - Hold the URL and an `act` token on the SvelteKit server. Consume SSE server-side and relay it to the browser.
