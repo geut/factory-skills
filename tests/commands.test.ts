@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { latestRevision } from '../src/controller/store.ts';
+import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { createClient } from '../src/server/clients.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
 import { openStateDatabase } from '../src/state/database.ts';
-import type { GithubClient } from '../src/tickets.ts';
 
 // The command routes, end to end: bearer auth, the router, and the controller,
 // with a fake runtime in place of Herdr.
@@ -51,8 +51,8 @@ async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),
     JSON.stringify({
-      github: { owner: 'geut', repo: 'factory-skills' },
       models: { review: 'review-model', work: 'work-model' },
+      tracker: { kind: 'github', owner: 'geut', repo: 'factory-skills' },
     }),
   );
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');

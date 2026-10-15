@@ -411,11 +411,11 @@ export function validateWrapup(input: {
   const policy: Array<string> = [];
   if (!input.pullRequests) {
     if (pushed) {
-      policy.push(`The branch was pushed, but github.pullRequests is off.`);
+      policy.push(`The branch was pushed, but codeHost.pullRequests is off.`);
     }
     if (!commands) {
       policy.push(
-        'github.pullRequests is off, so ## Merge commands must list commit and merge commands.',
+        'codeHost.pullRequests is off, so ## Merge commands must list commit and merge commands.',
       );
     }
   } else if (dirty) {
@@ -427,7 +427,7 @@ export function validateWrapup(input: {
     }
   } else if (url === null) {
     policy.push(
-      'The worktree is clean and github.pullRequests is on, so ## Merge commands needs the pull-request URL.',
+      'The worktree is clean and codeHost.pullRequests is on, so ## Merge commands needs the pull-request URL.',
     );
   } else {
     let found: ReturnType<PullRequestLookup>;

@@ -7,7 +7,7 @@ A [Pi](https://pi.dev) package that runs one ticket from planning through work, 
 Pi loads `src/extension/index.ts` and the `skills/` directory from this package. The controller runs in the [factory server](#factory-server), and Pi is one of its clients: `/factory start`, `reply`, `retry`, and `complete` go to the server's API with the token in `.factory/local.token`, while `status`, the ticket and agents views, the widget, and the status cards read `.factory/db/state.sqlite` directly. Pi looks for new events about once a second and shows the cards the server posted since. With no server running, a command says how to start one and changes nothing. Any number of Pi sessions can watch the same factory. `.factory/FACTORY.json` must already exist and name distinct `models.work` and `models.review`. `models.plan` defaults to the work model.
 
 ```text
-/factory start <github-url | owner/repo#n | KEY-123 | local-file>
+/factory start <github-url | owner/repo#n | #n | local-file>
 /factory start --text <id> <ticket text>
 /factory reply <ticket> "answer"
 /factory retry <ticket>
@@ -15,7 +15,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory status <ticket>
 ```
 
-`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. A parent GitHub issue with sub-issues is rejected. After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The planner still hands off with the `factory.plan.v3` template.
+`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The planner still hands off with the `factory.plan.v3` template.
 
 `caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
 
@@ -47,9 +47,9 @@ The wrap-up agent returns the `factory.wrapup.v1` handoff. The controller keeps 
 - wrap-up changed no product code: a change it makes must be documentation, or a generated artifact listed in `validation.wrapup.generated`, and must be named in `## Files`;
 - in the factory root only `CONTEXT.md`, `PRD.md`, and `learnings/` may change; no `wrapup.md` or `visuals/`;
 - nothing was committed or merged, and the branch still exists;
-- `github.pullRequests` decides whether a push and a pull request are allowed: never when it is off or the worktree has uncommitted changes; with a clean worktree, the pull request must exist for the branch.
+- `codeHost.pullRequests` decides whether a push and a pull request are allowed: never when it is off or the worktree has uncommitted changes; with a clean worktree, the pull request must exist for the branch.
 
-A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `github.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
+A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `codeHost.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
 
 ## Factory server
 
@@ -185,6 +185,14 @@ Child sessions follow the named skill, return only the versioned template in tha
 | run          | One pane launch. A resume or retry creates a new run. |
 | factory root | Untracked `.factory/` in the code repository.         |
 
+## Tracker and code host
+
+The factory reads issues through a **tracker** and pull requests through a **code host**, configured in `FACTORY.json` as `tracker` and `codeHost`. Each is an adapter behind a fixed interface; GitHub is the only one so far, and it works through the `gh` CLI. An operation an adapter cannot do fails with "not supported", and asking for one in `FACTORY.json` stops the server at startup. The old `github` and `keys` blocks are refused with a message saying what replaced them.
+
+- `tracker` resolves issue refs: an issue URL, `owner/repo#n`, or `#n` for the configured repository. Local markdown or JSON files and `--text` tickets bypass it.
+- **Parent and blocking links must be native.** The factory reads GitHub's sub-issues and "blocked by" links, not `## Parent` or `## Blocked by` headings in an issue body. An issue with sub-issues is an umbrella: start each sub-issue instead.
+- `codeHost.pullRequests` is on unless it is `false`. When it is on and the worktree is clean, wrap-up pushes the branch and opens the pull request.
+
 ## Factory root
 
 ```text
@@ -203,8 +211,13 @@ Child sessions follow the named skill, return only the versioned template in tha
 ```json
 {
   "models": { "work": "work-model", "review": "review-model" },
-  "github": { "owner": "geut", "repo": "factory-skills", "pullRequests": false },
-  "keys": { "PROJ": { "provider": "github" } },
+  "tracker": {
+    "kind": "github",
+    "owner": "geut",
+    "repo": "factory-skills",
+    "backlog": { "labels": ["factory"] }
+  },
+  "codeHost": { "kind": "github", "owner": "geut", "repo": "factory-skills", "pullRequests": true },
   "server": { "host": "127.0.0.1", "port": 7731 },
   "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
   "stages": {

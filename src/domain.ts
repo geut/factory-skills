@@ -174,7 +174,7 @@ export type Policy = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
-  // `github.pullRequests`: wrap-up may push the branch and open a pull request.
+  // `codeHost.pullRequests`: wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
   // Optional stages' settings, by stage name; a stage absent here is off.
   stages: Record<string, StageSettings>;
@@ -211,7 +211,8 @@ export type ResolvedTicket = {
   fetchedAt: string;
   id: TicketId;
   labels: Array<string>;
-  sourceKind: 'github' | 'file' | 'text';
+  // `file`, `text`, or the tracker's kind, such as `github`.
+  sourceKind: string;
   sourceRef: string;
   title: string;
 };

@@ -15,10 +15,10 @@ import {
   type FactoryCommands,
   type FactoryService,
 } from '../controller/service.ts';
+import type { GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
-import type { GithubClient } from '../tickets.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import { createEventHub } from './events.ts';
 import {

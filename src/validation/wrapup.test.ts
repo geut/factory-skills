@@ -285,7 +285,7 @@ test('with pull requests off, a push fails and commands are required', async () 
   git(value.worktree, ['push', '-u', 'origin', branch]);
   assert.match(
     failures(await validate(value, baseline, handoff(value))),
-    /pushed, but github\.pullRequests is off/,
+    /pushed, but codeHost\.pullRequests is off/,
   );
 });
 

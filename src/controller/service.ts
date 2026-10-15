@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
 import { ghPullRequest } from '../actions/wrapup.ts';
-import { readFactoryConfig } from '../config.ts';
+import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
   randomIds,
   type Actor,
@@ -15,17 +15,13 @@ import {
   type TerminalOutcome,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { stages } from '../stages/index.ts';
 import { parseReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
-import {
-  githubCliClient,
-  resolveTicket,
-  type GithubClient,
-  type TicketSource,
-} from '../tickets.ts';
+import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
@@ -300,7 +296,7 @@ export function createFactoryService(input: {
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,
-      pullRequests: config.config.github?.pullRequests ?? false,
+      pullRequests: pullRequestsAllowed(config.config),
       stages: config.config.stages,
       validation: config.config.validation,
     };
@@ -320,11 +316,10 @@ export function createFactoryService(input: {
     }
     const resolved = resolveTicket({
       codeRoot: input.codeRoot,
-      config: config.config,
       factoryRoot: input.factoryRoot,
       fetchedAt: now(),
-      github,
       source,
+      tracker: createGithubTracker(config.config.tracker, github),
     });
     if (resolved.kind === 'error') {
       return {

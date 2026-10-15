@@ -1,6 +1,6 @@
 ---
 name: factory-wrapup
-description: Prepare an approved ticket for human submission by updating durable knowledge, summarizing scope and verification, teaching material flows with progressive visuals, and providing the merge handoff. Use only after review approval. When github.pullRequests is true, push the committed branch and create or update the pull request. It never commits or merges.
+description: Prepare an approved ticket for human submission by updating durable knowledge, summarizing scope and verification, teaching material flows with progressive visuals, and providing the merge handoff. Use only after review approval. Unless codeHost.pullRequests is false, push the committed branch and create or update the pull request. It never commits or merges.
 ---
 
 # Factory Wrap-up
@@ -29,7 +29,7 @@ Read [references/panes-handoff.md](references/panes-handoff.md) for the two huma
 
 ## Open or update the pull request
 
-Read `github.pullRequests` in `.factory/FACTORY.json`. When it is missing or false, skip this section and use the merge commands below. Do not push.
+Read `codeHost.pullRequests` in `.factory/FACTORY.json`; the controller also passes it in your prompt. It is on unless it is `false`. When it is false, skip this section and use the merge commands below. Do not push.
 
 When it is true, inspect the worktree:
 
@@ -70,7 +70,7 @@ If push or `gh` fails, report the command and its error. Do not claim a pull req
 
 ## Prepare merge commands
 
-Inspect the actual code root, worktree path, ticket branch, base branch, and changed files. When `github.pullRequests` is not true, or the worktree has uncommitted changes, print commands with those exact values and do not execute them. Because the factory does not commit, include this sequence when the worktree has uncommitted changes:
+Inspect the actual code root, worktree path, ticket branch, base branch, and changed files. When `codeHost.pullRequests` is false, or the worktree has uncommitted changes, print commands with those exact values and do not execute them. Because the factory does not commit, include this sequence when the worktree has uncommitted changes:
 
 ```sh
 git -C "<worktree>" status --short
@@ -94,7 +94,7 @@ git -C "<code-root>" branch -d "<ticket-branch>"
 
 Do not show cleanup unless the ticket is committed and the user can first verify the merge.
 
-In a controller run, let the controller record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to `wrapup` / `ready_for_handoff`. Only the human completion action moves it to `done` / `complete`. In a direct invocation, report the result without inventing operational state edits; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, or clean up the worktree. Push and open or update a pull request only in the section above, and only when `github.pullRequests` is true. The human owns the merge.
+In a controller run, let the controller record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to `wrapup` / `ready_for_handoff`. Only the human completion action moves it to `done` / `complete`. In a direct invocation, report the result without inventing operational state edits; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, or clean up the worktree. Push and open or update a pull request only in the section above, and only when `codeHost.pullRequests` is on. The human owns the merge.
 
 ## Output
 

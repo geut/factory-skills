@@ -159,7 +159,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         `Branch: ${input.worktreeBranch}`,
         `Base branch: ${input.baseBranch ?? 'unknown'}`,
         `Model: ${input.model}. Tools: ${childToolList(tools)}.`,
-        `github.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
+        `codeHost.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
         '',
         'Tasks:',
         ...input.tasks.map(
@@ -189,7 +189,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
         input.usage,
         '',
-        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless github.pullRequests allows it.',
+        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless codeHost.pullRequests allows it.',
       ].join('\n'),
   },
   runBaseline: (prepared) => prepared.baseline,

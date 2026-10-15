@@ -16,9 +16,9 @@ import {
   type RunId,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
+import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { openStateDatabase } from '../src/state/database.ts';
-import type { GithubClient } from '../src/tickets.ts';
 
 const roots: Array<string> = [];
 const scratch = path.join(process.cwd(), '.scratch');
@@ -64,9 +64,9 @@ function repo(withGit = false): { codeRoot: string; factoryRoot: string } {
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
-      github: { owner: 'geut', repo: 'factory-skills' },
-      keys: { PROJ: { provider: 'github' } },
+      codeHost: { kind: 'github', owner: 'geut', pullRequests: false, repo: 'factory-skills' },
       models: { review: 'review-model', work: 'work-model' },
+      tracker: { kind: 'github', owner: 'geut', repo: 'factory-skills' },
     })}\n`,
   );
   return { codeRoot, factoryRoot };
@@ -319,7 +319,7 @@ test('github umbrella issues do not create an execution', async () => {
     listSubIssues: () => [{ body: '', number: 7, title: 'Concrete slice', url: null }],
   };
   const service = createFactoryService({ codeRoot, factoryRoot, github: umbrella, runtime });
-  const text = await service.command('start PROJ-6');
+  const text = await service.command('start #6');
   assert.match(text, /umbrella/);
   assert.equal(runtime.launches.length, 0);
 });
@@ -1175,7 +1175,8 @@ test('wrap-up launches from checked input with the tasks, findings, verification
   assert.match(wrapup.prompt, /^Review\s+1\s+20\s/m);
   assert.match(wrapup.prompt, /Models: plan work-model · work work-model · review review-model/);
   assert.doesNotMatch(wrapup.prompt, /^Wrap-up/m);
-  assert.match(wrapup.prompt, /github\.pullRequests: false/);
+  // No codeHost block: pull requests default to on.
+  assert.match(wrapup.prompt, /codeHost\.pullRequests: true/);
   const prepared: unknown = db
     .prepare(
       "SELECT status FROM actions WHERE kind = 'prepare_input' AND json_extract(payload_json, '$.stage') = 'wrapup'",
