@@ -101,6 +101,17 @@ _Avoid_: write-back, sync
 **Pull request outcome**:
 What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.
 
+**External review round**:
+A commit on a ticket's pull request that drew at least one review asking for changes, or commenting, from someone other than the pull request's author.
+_Avoid_: review round, when the factory's own review stage is meant
+
+**Follow-up commit**:
+A commit pushed to a ticket's pull request after handoff.
+
+**Abandoned**:
+A ticket whose pull request was closed without merging.
+_Avoid_: cancelled (a person stopping the ticket)
+
 ### Server and clients
 
 **Factory server**:
@@ -114,3 +125,30 @@ _Avoid_: user, app, consumer
 **Factory stats**:
 Measures of how well a factory turns tickets into merged pull requests, compared across models and stages.
 _Avoid_: metrics, analytics
+
+### Stats
+
+**Model setup**:
+A model and its thinking level, as used for one stage. Stage measures are compared per model setup.
+_Avoid_: model, when the thinking level matters
+
+**Factory configuration**:
+The model setup of every stage that worked on a ticket. Ticket outcomes are compared per factory configuration.
+
+**Factory version**:
+The package version and commit of the factory that ran a ticket, so a change to skills is not mistaken for a better model.
+
+**Stage time**:
+Wall-clock time a ticket, or a task in a per-task stage, spends in a stage, excluding waiting time.
+
+**Agent time**:
+Time an agent's runs are actually running.
+
+**Waiting time**:
+Time a ticket spends waiting on a person: waiting for a reply, paused, or failed to resume.
+
+**Factory time**:
+Time from a ticket's start to handoff, excluding waiting time.
+
+**Human intervention**:
+Something a person had to do for a ticket: answer a question, unblock a limit pause, reply, retry, or complete it by hand.
