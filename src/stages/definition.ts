@@ -35,6 +35,8 @@ export type Outcome =
       notice?: string;
       // For the stage that plans: the tasks to register, from its plan.
       plan?: { path: string; tasks: Array<PlannedTask> };
+      // For the closing stage: the pull request it checked, if any.
+      pullRequestUrl?: string;
       summary?: TaskSummary;
     }
   | { failures: Array<string>; kind: 'correct' }

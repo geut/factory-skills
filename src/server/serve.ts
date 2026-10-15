@@ -16,7 +16,7 @@ import {
   type FactoryService,
 } from '../controller/service.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
-import type { GithubClient } from '../ports/github.ts';
+import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
@@ -166,6 +166,20 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     return config;
   }
   const { host } = config.config.server;
+  // Ask only for what the tracker can do; better to stop here than to fail later.
+  const tracker = config.config.tracker;
+  if (tracker !== null) {
+    const capabilities = createGithubTracker(
+      tracker,
+      input.github ?? githubCliClient(),
+    ).capabilities;
+    if (Object.keys(tracker.status).length > 0 && !capabilities.has('status')) {
+      return {
+        kind: 'error',
+        message: `The ${tracker.kind} tracker cannot show statuses; remove tracker.status from FACTORY.json.`,
+      };
+    }
+  }
 
   let db: DatabaseSync;
   try {

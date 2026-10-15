@@ -852,6 +852,24 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       runId: null,
     };
   }
+  if (kind === 'update_ticket_source' && typeof payload['comment'] === 'string') {
+    const issueStatus = payload['issueStatus'];
+    const update = payload['update'];
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      comment: payload['comment'],
+      issueStatus:
+        issueStatus === 'clear' || issueStatus === 'in_progress' || issueStatus === 'in_review'
+          ? issueStatus
+          : null,
+      kind,
+      runId: null,
+      update:
+        update === 'cancelled' || update === 'handoff' || update === 'paused' ? update : 'started',
+    };
+  }
   throw new FactoryDatabaseError(`unsupported action ${kind}`);
 }
 
@@ -879,6 +897,12 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ slug: action.slug });
     case 'notify_attention':
       return jsonText({ message: action.message });
+    case 'update_ticket_source':
+      return jsonText({
+        comment: action.comment,
+        issueStatus: action.issueStatus,
+        update: action.update,
+      });
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -1801,6 +1825,17 @@ export function claimNextAction(
       executionId: executionId(text(record, 'execution_id')),
     };
   });
+}
+
+// Tracker updates a previous server leased and never finished go back to
+// pending. Their comment marker keeps a second attempt from posting twice.
+export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): void {
+  db.prepare(
+    `UPDATE actions
+     SET status = 'pending', lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+         updated_at = ?
+     WHERE kind = 'update_ticket_source' AND status = 'leased'`,
+  ).run(now);
 }
 
 export function finishLeasedAction(

@@ -563,6 +563,19 @@ export type ActionRecord =
       kind: 'notify_attention';
       message: string;
       runId: null;
+    })
+  // A tracker update: a comment on the ticket's issue and, when mapped, a
+  // status label. It is best effort: a failure is a warning, never a pause.
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      // Markdown for the comment.
+      comment: string;
+      // The status to show on the issue; null leaves it, `clear` removes it.
+      issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
+      kind: 'update_ticket_source';
+      runId: null;
+      update: 'cancelled' | 'handoff' | 'paused' | 'started';
     });
 
 export type FactorySnapshot = {

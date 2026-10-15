@@ -230,6 +230,12 @@ function pauseWithNotice(
     runId: input.runId ?? null,
     status: 'open',
   });
+  trackerUpdate(snapshot, input.ids, {
+    comment: pausedComment(snapshot, input.question),
+    issueStatus: null,
+    key: `paused:${snapshot.attention.at(-1)?.id ?? ''}`,
+    update: 'paused',
+  });
   const attention = snapshot.attention.at(-1);
   if (attention === undefined) {
     return;
@@ -248,6 +254,53 @@ function pauseWithNotice(
     runId: null,
     status: 'pending',
   });
+}
+
+// Queues a tracker update for a ticket that came from a tracker: a comment and,
+// when given, a status. Local files and --text tickets have no issue to update.
+export function trackerUpdate(
+  snapshot: FactorySnapshot,
+  ids: IdSource,
+  input: {
+    comment: string;
+    issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
+    key: string;
+    update: 'cancelled' | 'handoff' | 'paused' | 'started';
+  },
+): void {
+  if (snapshot.ticket.sourceKind === 'file' || snapshot.ticket.sourceKind === 'text') {
+    return;
+  }
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    comment: input.comment,
+    id: ids.action(),
+    idempotencyKey: `tracker:${snapshot.execution.id}:${input.key}`,
+    issueStatus: input.issueStatus,
+    kind: 'update_ticket_source',
+    lastError: null,
+    maxAttempts: 3,
+    retryOfActionId: null,
+    runId: null,
+    status: 'pending',
+    update: input.update,
+  });
+}
+
+// The comment a pause that needs a person leaves on the issue.
+function pausedComment(snapshot: FactorySnapshot, question: string): string {
+  return [
+    'The factory paused this ticket and needs a person:',
+    '',
+    question
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n'),
+    '',
+    `Answer from the dashboard, or in Pi with \`/factory reply ${snapshot.ticket.commandRef} "answer"\`.`,
+  ].join('\n');
 }
 
 // A prepared session for one stage, launched with that stage's model and thinking.
@@ -556,6 +609,12 @@ function applyTerminal(
       snapshot.execution.status = 'waiting_for_user';
       snapshot.execution.retry = null;
       if (attention !== undefined) {
+        trackerUpdate(snapshot, ids, {
+          comment: pausedComment(snapshot, terminal.question),
+          issueStatus: null,
+          key: `paused:${attention.id}`,
+          update: 'paused',
+        });
         snapshot.actions.push({
           attempts: 0,
           attentionReplyId: null,
@@ -659,6 +718,12 @@ function reduceStart(
   const run = addRun(created, session, null, 'initial', 0, ids, prompt);
   run.description = childDescription(event.ticket.title);
   launchAction(created, run, prompt, 'launch', ids, event.policy.codeRoot);
+  trackerUpdate(created, ids, {
+    comment: 'The factory started working on this issue.',
+    issueStatus: 'in_progress',
+    key: 'started',
+    update: 'started',
+  });
   return finish(created, `Planning queued for ${event.ticket.displayRef}.`);
 }
 
@@ -933,6 +998,7 @@ function handOff(
   run: RunRecord,
   notice: string,
   ids: IdSource,
+  pullRequestUrl: string | null,
 ): Reduction {
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
@@ -968,6 +1034,15 @@ function handOff(
       name: `🔀 ${ref}`,
     },
   );
+  trackerUpdate(snapshot, ids, {
+    comment:
+      pullRequestUrl === null
+        ? 'The factory finished this ticket. Its handoff has the merge commands.'
+        : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
+    issueStatus: 'in_review',
+    key: `handoff:${run.id}`,
+    update: 'handoff',
+  });
   resolveOpen(snapshot);
   snapshot.attention.push({
     id: ids.attention(),
@@ -1081,7 +1156,14 @@ function applyOutcome(
       }
       const step = nextStep(snapshot, session.stage, task?.taskId ?? null);
       if (step.kind === 'handoff') {
-        return handOff(snapshot, session, run, outcome.notice ?? '', ids);
+        return handOff(
+          snapshot,
+          session,
+          run,
+          outcome.notice ?? '',
+          ids,
+          outcome.pullRequestUrl ?? null,
+        );
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;
       if (task !== null && !sameTask) {

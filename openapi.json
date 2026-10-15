@@ -1624,6 +1624,13 @@
           "title": {
             "type": "string"
           },
+          "trackerWarnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tracker updates that failed. The ticket went on regardless."
+          },
           "updatedAt": {
             "type": "string"
           }
@@ -1644,6 +1651,7 @@
           "status",
           "statusReason",
           "title",
+          "trackerWarnings",
           "updatedAt"
         ],
         "additionalProperties": false
@@ -1877,6 +1885,13 @@
           "title": {
             "type": "string"
           },
+          "trackerWarnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tracker updates that failed. The ticket went on regardless."
+          },
           "updatedAt": {
             "type": "string"
           },
@@ -1912,6 +1927,7 @@
           "status",
           "statusReason",
           "title",
+          "trackerWarnings",
           "updatedAt",
           "attention",
           "tasks",

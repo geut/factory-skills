@@ -3,6 +3,7 @@ import type { TrackerConfig } from '../config.ts';
 import {
   UnsupportedOperation,
   type IssueLink,
+  type TrackerCapability,
   type Resolved,
   type Tracker,
   type TrackerIssue,
@@ -34,8 +35,15 @@ type IssueLocator = { host: string; number: number; owner: string; repo: string 
 
 // The calls the adapter makes. Tests pass a stand-in.
 export type GithubClient = {
+  addComment?: (input: Omit<IssueLocator, 'host'>, body: string) => void;
+  editLabels?: (
+    input: Omit<IssueLocator, 'host'>,
+    add: Array<string>,
+    remove: Array<string>,
+  ) => void;
   fetchIssue: (input: IssueLocator) => GithubIssue;
   listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
+  listComments?: (input: Omit<IssueLocator, 'host'>) => Array<string>;
   listIssues?: (input: {
     host: string;
     labels: Array<string>;
@@ -82,8 +90,43 @@ function relatedIssues(path: string): Array<RelatedIssue> {
   );
 }
 
+function gh(args: Array<string>, input?: string): void {
+  const result = spawnSync('gh', args, {
+    encoding: 'utf8',
+    ...(input === undefined ? {} : { input }),
+  });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
+  }
+}
+
 export function githubCliClient(): GithubClient {
   return {
+    addComment: (input, body) => {
+      gh(
+        [
+          'issue',
+          'comment',
+          String(input.number),
+          '--repo',
+          `${input.owner}/${input.repo}`,
+          '--body-file',
+          '-',
+        ],
+        body,
+      );
+    },
+    editLabels: (input, add, remove) => {
+      gh([
+        'issue',
+        'edit',
+        String(input.number),
+        '--repo',
+        `${input.owner}/${input.repo}`,
+        ...(add.length === 0 ? [] : ['--add-label', add.join(',')]),
+        ...(remove.length === 0 ? [] : ['--remove-label', remove.join(',')]),
+      ]);
+    },
     fetchIssue(input) {
       const payload = ghJson([
         'issue',
@@ -125,6 +168,18 @@ export function githubCliClient(): GithubClient {
       relatedIssues(
         `repos/${input.owner}/${input.repo}/issues/${input.number}/dependencies/blocked_by`,
       ),
+    listComments: (input) => {
+      const payload = ghJson([
+        'api',
+        '--paginate',
+        '--slurp',
+        `repos/${input.owner}/${input.repo}/issues/${input.number}/comments`,
+      ]);
+      const comments = Array.isArray(payload) ? payload.flat() : [];
+      return comments.flatMap((item) =>
+        isRecord(item) && typeof item['body'] === 'string' ? [item['body']] : [],
+      );
+    },
     listIssues: (input) => {
       const payload = ghJson([
         'issue',
@@ -250,7 +305,14 @@ function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
 export function createGithubTracker(config: TrackerConfig | null, client: GithubClient): Tracker {
   const listBlockedBy = client.listBlockedBy;
   const listIssues = client.listIssues;
-  const capabilities: Array<'backlog' | 'blockedBy' | 'children'> = ['children'];
+  const capabilities: Array<TrackerCapability> = ['children'];
+  const { addComment, editLabels, listComments } = client;
+  if (addComment !== undefined && listComments !== undefined) {
+    capabilities.push('comment');
+  }
+  if (editLabels !== undefined) {
+    capabilities.push('status');
+  }
   if (listBlockedBy !== undefined) {
     capabilities.push('blockedBy');
   }
@@ -269,6 +331,16 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
     children: (issue) => {
       const at = locate(issue);
       return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
+    },
+    comment: (issue, markdown, marker) => {
+      if (addComment === undefined || listComments === undefined) {
+        throw new UnsupportedOperation('github', 'comments');
+      }
+      const at = locate(issue);
+      if (listComments(at).some((body) => body.includes(marker))) {
+        return;
+      }
+      addComment(at, `${markdown}\n\n${marker}`);
     },
     kind: 'github',
     listBacklog: (query) => {
@@ -300,6 +372,19 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
         return { kind: 'error', message: messageOf(error), reason: 'tracker_unavailable' };
       }
       return { issue: trackerIssue(issue, ref), kind: 'issue' };
+    },
+    setStatus: (issue, status) => {
+      if (editLabels === undefined) {
+        throw new UnsupportedOperation('github', 'status labels');
+      }
+      const mapped = config?.status ?? {};
+      const labels = Object.values(mapped).map((item) => item.label);
+      const add = status === 'clear' ? undefined : mapped[status]?.label;
+      const remove = labels.filter((label) => label !== add);
+      if (add === undefined && (status !== 'clear' || remove.length === 0)) {
+        return;
+      }
+      editLabels(locate(issue), add === undefined ? [] : [add], remove);
     },
   };
 }

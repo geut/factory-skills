@@ -24,6 +24,7 @@ import type {
   TerminalOutcome,
   WrapupValidationDetail,
 } from '../domain.ts';
+import type { Tracker, TrackerIssue } from '../ports/tracker.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
@@ -90,6 +91,8 @@ export async function dispatchPending(input: {
   runtime: FactorySubagentRuntime;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
+  // The tracker for tracker updates, or null when FACTORY.json has none.
+  tracker: () => Tracker | null;
 }): Promise<void> {
   for (;;) {
     if (input.stopped()) {
@@ -140,6 +143,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    tracker: () => Tracker | null;
   },
   action: ActionRecord,
   snapshot: FactorySnapshot,
@@ -161,6 +165,8 @@ async function perform(
       input.notify(attentionCard(snapshot, action.message));
       finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
       return null;
+    case 'update_ticket_source':
+      return updateTicketSource(input, action, snapshot);
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -277,6 +283,57 @@ function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
 
 // Runs the validator for the run's stage and records its report. A
 // long-running validator holds its action lease for as long as it declares.
+// Writes a tracker update. A tracker that keeps failing leaves the action
+// failed, which the API shows as a warning; the ticket goes on either way.
+async function updateTicketSource(
+  input: { db: DatabaseSync; now: () => string; tracker: () => Tracker | null },
+  action: Extract<ActionRecord, { kind: 'update_ticket_source' }>,
+  snapshot: FactorySnapshot,
+): Promise<RunId | null> {
+  const tracker = input.tracker();
+  if (tracker === null) {
+    finishLeasedAction(input.db, action.id, input.now(), 'failed', 'FACTORY.json has no tracker.');
+    return null;
+  }
+  const issue: TrackerIssue = {
+    body: snapshot.ticket.body,
+    displayRef: snapshot.ticket.displayRef,
+    id: snapshot.ticket.id,
+    labels: snapshot.ticket.labels,
+    ref: snapshot.ticket.commandRef,
+    title: snapshot.ticket.title,
+    url: snapshot.ticket.sourceRef,
+  };
+  // The marker makes a retried comment a no-op, even after a crash.
+  const marker = `<!-- factory:${action.idempotencyKey} -->`;
+  let failure = '';
+  for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
+    try {
+      if (tracker.capabilities.has('comment')) {
+        tracker.comment(issue, action.comment, marker);
+      }
+      if (action.issueStatus !== null && tracker.capabilities.has('status')) {
+        tracker.setStatus(issue, action.issueStatus);
+      }
+      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
+      return null;
+    } catch (error: unknown) {
+      failure = messageOf(error);
+      if (attempt < action.maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  finishLeasedAction(
+    input.db,
+    action.id,
+    input.now(),
+    'failed',
+    `Tracker update failed: ${failure}`,
+  );
+  return null;
+}
+
 async function runValidation(
   input: { db: DatabaseSync; findPullRequest: PullRequestLookup; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,

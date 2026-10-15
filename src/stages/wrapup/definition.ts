@@ -78,7 +78,13 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
   conclude: (_view, _run, report) =>
     report.status === 'passed'
-      ? { kind: 'accept', notice: report.detail.usage }
+      ? {
+          kind: 'accept',
+          notice: report.detail.usage,
+          ...(report.detail.pullRequest === null
+            ? {}
+            : { pullRequestUrl: report.detail.pullRequest.url }),
+        }
       : { failures: report.failures, kind: 'correct' },
   contract,
   corrections: {

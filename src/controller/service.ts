@@ -23,7 +23,7 @@ import {
   type PullRequestOutcome,
 } from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
-import type { IssueLink } from '../ports/tracker.ts';
+import type { IssueLink, Tracker } from '../ports/tracker.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { stages } from '../stages/index.ts';
@@ -53,6 +53,7 @@ import {
   loadSnapshotByRun,
   recordCard,
   requeueOrphanedPanes,
+  requeueOrphanedTrackerUpdates,
   requeueOrphanedValidations,
   ticketKeyOf,
   type ApplyResult,
@@ -214,6 +215,12 @@ export function createFactoryService(input: {
       return createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
     });
   const findPullRequest: PullRequestLookup = (url) => pullRequestLookup(codeHost())(url);
+  const trackerFor = (): Tracker | null => {
+    const config = readFactoryConfig(input.factoryRoot);
+    return config.kind === 'ok' && config.config.tracker !== null
+      ? createGithubTracker(config.config.tracker, github)
+      : null;
+  };
 
   function recordPullRequestOutcome(executionId: string, outcome: PullRequestOutcome): void {
     const at = now();
@@ -386,6 +393,7 @@ export function createFactoryService(input: {
           now,
           runtime,
           stopped: () => stopped,
+          tracker: trackerFor,
         });
       } while (rerun && !stopped);
     } finally {
@@ -459,6 +467,7 @@ export function createFactoryService(input: {
     }
     requeueOrphanedValidations(db, now(), liveValidations);
     requeueOrphanedPanes(db, now());
+    requeueOrphanedTrackerUpdates(db, now());
     await drain();
     for (const run of listActiveRuns(db)) {
       if (run.paneId !== null) {
