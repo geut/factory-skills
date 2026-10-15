@@ -103,6 +103,10 @@ Reads need a `read` token.
 - A comment line every 15 s keeps proxies from closing the connection.
 - `EventPayload` in `openapi.json` types `data`. OpenAPI 3.1 cannot type a stream's items, so clients parse events themselves.
 
+### Stats
+
+`/v1/stats/summary`, `/stages`, `/configurations`, `/tickets`, and `/export` (`read`) report how the factory turns tickets into merged pull requests, by stage and model setup, as defined in [`docs/stats-v1.md`](docs/stats-v1.md). `from` and `to` select tickets by start time. Every response names the factory (`factoryId`, created with the database), the factory versions its tickets ran on, and `definitions: "stats.v1"`. Set `name` in `FACTORY.json` to tell factories apart in an export.
+
 ### Commands
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.

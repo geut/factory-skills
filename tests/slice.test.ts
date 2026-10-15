@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { createRouter } from '../src/api/router.ts';
+import { apiRoutes } from '../src/api/routes.ts';
+import { unusedCommands } from '../src/api/testing.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent } from '../src/controller/store.ts';
@@ -16,10 +20,12 @@ import {
   type RunId,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
-import type { CodeHost, PullRequestInfo } from '../src/ports/code-host.ts';
+import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
 import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { openStateDatabase } from '../src/state/database.ts';
+import { runFacts, ticketFacts } from '../src/stats/facts.ts';
+import { stageMeasures, summarize } from '../src/stats/measures.ts';
 
 const roots: Array<string> = [];
 const scratch = path.join(process.cwd(), '.scratch');
@@ -1621,8 +1627,13 @@ test('QA corrects its own output, returns a failing product to work, then hands 
   await closeWhenIdle(db);
 });
 
-// A code host whose pull request for the ticket's branch is in `state`.
-function codeHostWith(state: PullRequestInfo['state'], found: Array<string>): CodeHost {
+// A code host whose pull request for the ticket's branch is in `state`, or
+// that finds none when `state` is null.
+function codeHostWith(
+  state: PullRequestInfo['state'] | null,
+  found: Array<string>,
+  reviews?: PullRequestOutcome['reviews'],
+): CodeHost {
   const pullRequest = (branch: string): PullRequestInfo => ({
     author: 'dpaez',
     closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
@@ -1630,20 +1641,20 @@ function codeHostWith(state: PullRequestInfo['state'], found: Array<string>): Co
     mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
-    state,
+    state: state ?? 'open',
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   return {
     findPullRequest: (branch) => {
       found.push(branch);
-      return pullRequest(branch);
+      return state === null ? null : pullRequest(branch);
     },
     kind: 'github',
     pullRequest: () => null,
     pullRequestOutcome: (current) => ({
       commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
       pullRequest: current,
-      reviews: [
+      reviews: reviews ?? [
         {
           author: 'reviewer',
           authorType: 'human',
@@ -1659,9 +1670,12 @@ function codeHostWith(state: PullRequestInfo['state'], found: Array<string>): Co
   };
 }
 
-async function handedOff(state: PullRequestInfo['state']) {
+async function handedOff(
+  state: PullRequestInfo['state'] | null,
+  reviews?: PullRequestOutcome['reviews'],
+) {
   const found: Array<string> = [];
-  const harness = await reachWrapup({}, () => codeHostWith(state, found));
+  const harness = await reachWrapup({}, () => codeHostWith(state, found, reviews));
   harness.runtime.emit(harness.wrapup.runId, {
     kind: 'subagent_done',
     output: handoff(harness.wrapup.cwd, harness.branch),
@@ -1738,5 +1752,113 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
     }),
     null,
   );
+  await closeWhenIdle(db);
+});
+
+const review = (
+  id: string,
+  author: string,
+  authorType: 'bot' | 'human',
+  state: PullRequestOutcome['reviews'][number]['state'],
+  commitSha: string,
+  hasBody = true,
+) => ({ author, authorType, commitSha, hasBody, id, state, submittedAt: '2026-10-15T13:00:00Z' });
+
+test('external review rounds count commits that drew pushback, split human and bot', async () => {
+  const { db, service } = await handedOff('merged', [
+    review('R1', 'reviewer', 'human', 'changes_requested', 'c1'),
+    review('R2', 'reviewer', 'human', 'commented', 'c1'),
+    review('R3', 'coderabbitai[bot]', 'bot', 'commented', 'c2'),
+    review('R4', 'coderabbitai[bot]', 'bot', 'commented', 'c3', false),
+    review('R5', 'dpaez', 'human', 'commented', 'c4'),
+    review('R6', 'reviewer', 'human', 'approved', 'c5'),
+  ]);
+  await service.syncPullRequests();
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(ticket?.outcome, 'merged');
+  assert.deepEqual(ticket?.externalReviewRounds, { bot: 1, human: 1, total: 2 });
+  assert.equal(
+    ticket?.configuration,
+    'plan=work-model · medium review=review-model · high work=work-model · medium wrapup=work-model · medium',
+  );
+  const summary = summarize(ticketFacts(db, { now: new Date().toISOString() }));
+  assert.equal(summary.mergeRate, 1);
+  assert.equal(summary.externalReviewRounds.median, 2);
+  assert.ok(ticket !== undefined && ticket.leadMs !== null && ticket.factoryMs !== null);
+  await closeWhenIdle(db);
+});
+
+test('a ticket finished without a known pull request is unknown: no merge rate, but its cost counts', async () => {
+  const { db, service } = await handedOff(null);
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 0 });
+  await service.command('complete proj-123');
+  const facts = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(facts[0]?.outcome, 'unknown');
+  assert.equal(facts[0]?.interventions.manualCompletes, 1);
+  const summary = summarize(facts);
+  assert.equal(summary.mergeRate, null);
+  assert.equal(summary.outcomes.unknown, 1);
+  // The fake runtime reports tokens and no cost; both are totalled.
+  assert.equal(summary.tokens, facts[0]?.tokens);
+  assert.ok(summary.tokens > 0);
+
+  const stages = stageMeasures(
+    runFacts(
+      db,
+      facts.map((item) => item.execution),
+    ),
+  );
+  const review = stages.find((row) => row.stage === 'review');
+  assert.equal(review?.model, 'review-model');
+  assert.equal(review?.firstPassAcceptance, 1);
+  assert.equal(review?.reviewRoundsPerTask, 1);
+  await closeWhenIdle(db);
+});
+
+test('the stats routes answer for the factory, and the export is NDJSON', async () => {
+  const { db, service } = await handedOff('merged');
+  await service.syncPullRequests();
+  const server = createServer(
+    createRouter({
+      context: {
+        commands: unusedCommands,
+        db,
+        events: null,
+        instanceId: 'test',
+        openapi: () => ({ openapi: '3.1.0' }),
+        webhooks: null,
+      },
+      routes: apiRoutes,
+      validateResponses: true,
+    }),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const base = `http://127.0.0.1:${typeof address === 'object' && address !== null ? address.port : 0}`;
+  const summary = (await (await fetch(`${base}/v1/stats/summary`)).json()) as {
+    definitions: string;
+    factoryId: string;
+    factoryVersions: Array<string>;
+    outcomes: { merged: number };
+  };
+  assert.equal(summary.definitions, 'stats.v1');
+  assert.match(summary.factoryId, /^[0-9a-f-]{36}$/);
+  assert.equal(summary.outcomes.merged, 1);
+  assert.equal(summary.factoryVersions.length, 1);
+  for (const route of ['stages', 'configurations', 'tickets']) {
+    assert.equal((await fetch(`${base}/v1/stats/${route}`)).status, 200, route);
+  }
+  const later = await (await fetch(`${base}/v1/stats/summary?from=2999-01-01T00:00:00Z`)).json();
+  assert.equal((later as { started: number }).started, 0);
+  const exported = await fetch(`${base}/v1/stats/export`);
+  assert.equal(exported.headers.get('content-type'), 'application/x-ndjson');
+  const lines = (await exported.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { factoryId: string; type: string });
+  assert.equal(lines.filter((line) => line.type === 'ticket').length, 1);
+  assert.ok(lines.filter((line) => line.type === 'run').length > 1);
+  assert.ok(lines.every((line) => line.factoryId === summary.factoryId));
+  server.close();
   await closeWhenIdle(db);
 });

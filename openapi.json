@@ -611,6 +611,344 @@
         }
       }
     },
+    "/v1/stats/summary": {
+      "get": {
+        "operationId": "getStatsSummary",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Factory totals: outcomes, merge rate, review rounds, cost, time, and interventions",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Tickets started at or after this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started at or after this time."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Tickets started before this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started before this time."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals for the tickets started in the window.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats/stages": {
+      "get": {
+        "operationId": "getStatsStages",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Stage measures per model setup",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Tickets started at or after this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started at or after this time."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Tickets started before this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started before this time."
+          },
+          {
+            "in": "query",
+            "name": "groupBy",
+            "schema": {
+              "default": "setup",
+              "description": "Rows per stage and model setup.",
+              "type": "string",
+              "const": "setup"
+            },
+            "description": "Rows per stage and model setup."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stage measures per model setup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsStages"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats/configurations": {
+      "get": {
+        "operationId": "getStatsConfigurations",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Ticket outcomes per factory configuration",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Tickets started at or after this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started at or after this time."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Tickets started before this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started before this time."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket outcomes per factory configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsConfigurations"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats/tickets": {
+      "get": {
+        "operationId": "getStatsTickets",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Ticket fact rows for drill-down",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Tickets started at or after this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started at or after this time."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Tickets started before this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started before this time."
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One fact row per ticket, oldest start first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsTickets"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats/export": {
+      "get": {
+        "operationId": "exportStats",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Export raw ticket and run facts as NDJSON",
+        "tags": [
+          "stats"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "description": "Tickets started at or after this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started at or after this time."
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "description": "Tickets started before this time.",
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "description": "Tickets started before this time."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`. Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets/{key}/replies": {
       "post": {
         "operationId": "replyToTicket",
@@ -2149,6 +2487,652 @@
           "startedAt",
           "task",
           "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "StatsSummary": {
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "factoryVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "externalReviewRounds": {
+            "type": "object",
+            "properties": {
+              "bot": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "distribution": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "description": "Tickets with a merged or abandoned pull request, by their number of rounds."
+              },
+              "human": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "median": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "bot",
+              "distribution",
+              "human",
+              "median"
+            ],
+            "additionalProperties": false
+          },
+          "followUpCommits": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "handedOff": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "interventions": {
+            "$ref": "#/components/schemas/Interventions"
+          },
+          "medianMs": {
+            "type": "object",
+            "properties": {
+              "factory": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "handoffToMerge": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "lead": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "waiting": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "factory",
+              "handoffToMerge",
+              "lead",
+              "waiting"
+            ],
+            "additionalProperties": false
+          },
+          "mergeRate": {
+            "description": "Merged over merged, abandoned, and cancelled. Open and unknown are left out.",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "neededAPerson": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Tickets with at least one human intervention."
+          },
+          "outcomes": {
+            "type": "object",
+            "properties": {
+              "abandoned": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "cancelled": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "merged": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "open": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "abandoned",
+              "cancelled",
+              "merged",
+              "open",
+              "unknown"
+            ],
+            "additionalProperties": false
+          },
+          "started": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "definitions",
+          "factoryId",
+          "factoryVersions",
+          "costUsd",
+          "externalReviewRounds",
+          "followUpCommits",
+          "handedOff",
+          "interventions",
+          "medianMs",
+          "mergeRate",
+          "neededAPerson",
+          "outcomes",
+          "started",
+          "tokens"
+        ],
+        "additionalProperties": false
+      },
+      "Interventions": {
+        "type": "object",
+        "properties": {
+          "limitPauses": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "manualCompletes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "manualRetries": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "questions": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "replies": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "stops": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "limitPauses",
+          "manualCompletes",
+          "manualRetries",
+          "questions",
+          "replies",
+          "stops"
+        ],
+        "additionalProperties": false
+      },
+      "StatsStages": {
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "factoryVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsStageRow"
+            }
+          }
+        },
+        "required": [
+          "definitions",
+          "factoryId",
+          "factoryVersions",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "StatsStageRow": {
+        "type": "object",
+        "properties": {
+          "acceptedOutputs": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "agentMs": {
+            "type": "number"
+          },
+          "correctionsPerAcceptedOutput": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "costUsdPerAcceptedOutput": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "firstPassAcceptance": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "infrastructureLost": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "model": {
+            "type": "string"
+          },
+          "returnsToWork": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "description": "By the stage that sent the task back."
+          },
+          "reviewRoundsPerTask": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "setup": {
+            "type": "string",
+            "description": "The model setup: model and thinking level."
+          },
+          "stage": {
+            "type": "string"
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "tokensPerAcceptedOutput": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "acceptedOutputs",
+          "agentMs",
+          "correctionsPerAcceptedOutput",
+          "costUsdPerAcceptedOutput",
+          "firstPassAcceptance",
+          "infrastructureLost",
+          "model",
+          "returnsToWork",
+          "reviewRoundsPerTask",
+          "runs",
+          "setup",
+          "stage",
+          "thinking",
+          "tokensPerAcceptedOutput"
+        ],
+        "additionalProperties": false
+      },
+      "StatsConfigurations": {
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "factoryVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsConfigurationRow"
+            }
+          }
+        },
+        "required": [
+          "definitions",
+          "factoryId",
+          "factoryVersions",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "StatsConfigurationRow": {
+        "type": "object",
+        "properties": {
+          "configuration": {
+            "type": "string",
+            "description": "The model setup of every stage, `stage=setup …`."
+          },
+          "interventions": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "medianCostUsd": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "medianExternalReviewRounds": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "medianFactoryMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "merged": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "mergeRate": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "tickets": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "configuration",
+          "interventions",
+          "medianCostUsd",
+          "medianExternalReviewRounds",
+          "medianFactoryMs",
+          "merged",
+          "mergeRate",
+          "tickets"
+        ],
+        "additionalProperties": false
+      },
+      "StatsTickets": {
+        "type": "object",
+        "properties": {
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "factoryVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatsTicketRow"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "definitions",
+          "factoryId",
+          "factoryVersions",
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "StatsTicketRow": {
+        "type": "object",
+        "properties": {
+          "agentMs": {
+            "type": "number"
+          },
+          "configuration": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "displayRef": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "string"
+          },
+          "externalReviewRounds": {
+            "type": "object",
+            "properties": {
+              "bot": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "human": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "bot",
+              "human",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "factoryMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "factoryVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "followUpCommits": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "handedOffAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoffToMergeMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "interventions": {
+            "$ref": "#/components/schemas/Interventions"
+          },
+          "key": {
+            "type": "string"
+          },
+          "leadMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mergedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "abandoned",
+              "cancelled",
+              "merged",
+              "open",
+              "unknown"
+            ]
+          },
+          "overheadMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stageMs": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "startToHandoffMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "waitingMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "agentMs",
+          "configuration",
+          "costUsd",
+          "displayRef",
+          "execution",
+          "externalReviewRounds",
+          "factoryMs",
+          "factoryVersion",
+          "followUpCommits",
+          "handedOffAt",
+          "handoffToMergeMs",
+          "interventions",
+          "key",
+          "leadMs",
+          "mergedAt",
+          "outcome",
+          "overheadMs",
+          "stageMs",
+          "startedAt",
+          "startToHandoffMs",
+          "tokens",
+          "waitingMs"
         ],
         "additionalProperties": false
       },
