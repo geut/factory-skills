@@ -107,6 +107,10 @@ What happened to a ticket's pull request after handoff: its external reviews, wh
 The long-running process that owns the controller and serves the API. Pi, the dashboard, and webhooks are its clients.
 _Avoid_: daemon, backend
 
+**API client**:
+A named holder of a factory server token, such as `local` (Pi) or `dashboard`. Every command records the client that sent it as its actor.
+_Avoid_: user, app, consumer
+
 **Factory stats**:
 Measures of how well a factory turns tickets into merged pull requests, compared across models and stages.
 _Avoid_: metrics, analytics
