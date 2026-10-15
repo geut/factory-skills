@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-sea.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "gallery": "node --watch src/stories/server.ts",
@@ -16,8 +17,10 @@
     "@earendil-works/pi-coding-agent": "*",
     "@nkzw/eslint-plugin": "^2.0.0",
     "@nkzw/oxlint-config": "^2.0.1",
+    "esbuild": "^0.28.2",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.9.2"
   },
   "peerDependencies": {

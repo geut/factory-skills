@@ -89,6 +89,9 @@ export type FactoryService = {
   recover: () => Promise<void>;
   runningChildren: () => Array<RunningChildRow>;
   status: (ref: string) => string;
+  // Stops dispatching and waits for the action in progress. Agent panes keep
+  // running; the next host adopts them with recover().
+  stop: () => Promise<void>;
   ticketDetail: (ref: string | null) => TicketDetail | string;
 };
 
@@ -100,6 +103,8 @@ export function createFactoryService(input: {
   findPullRequest?: PullRequestLookup;
   github?: GithubClient;
   ids?: IdSource;
+  // Recorded on every action this service claims; see claimNextAction.
+  leaseOwner?: string;
   notify?: (message: string) => void;
   now?: () => string;
   onActivity?: () => void;
@@ -115,6 +120,7 @@ export function createFactoryService(input: {
   const liveValidations = new Set<string>();
   let dispatching = false;
   let rerun = false;
+  let stopped = false;
 
   const apply = (
     event: ControllerEvent,
@@ -134,6 +140,9 @@ export function createFactoryService(input: {
   };
 
   async function drain(): Promise<void> {
+    if (stopped) {
+      return;
+    }
     if (dispatching) {
       rerun = true;
       return;
@@ -151,15 +160,17 @@ export function createFactoryService(input: {
           factoryRoot: input.factoryRoot,
           findPullRequest: input.findPullRequest ?? ghPullRequest,
           ids,
+          leaseOwner: input.leaseOwner ?? 'factory-controller',
           liveValidations,
           notify,
           now,
           runtime,
+          stopped: () => stopped,
         });
-      } while (rerun);
+      } while (rerun && !stopped);
     } finally {
       dispatching = false;
-      if (rerun) {
+      if (rerun && !stopped) {
         void drain();
       } else {
         onActivity();
@@ -233,6 +244,13 @@ export function createFactoryService(input: {
       if (run.paneId !== null) {
         arm(run.runId);
       }
+    }
+  }
+
+  async function stop(): Promise<void> {
+    stopped = true;
+    while (dispatching) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
 
@@ -435,6 +453,7 @@ export function createFactoryService(input: {
     recover,
     runningChildren: () => listRunningChildren(db),
     status,
+    stop,
     ticketDetail,
   };
 }

@@ -1612,9 +1612,12 @@ export function requeueOrphanedValidations(
   });
 }
 
+// `owner` names the process holding the lease: the factory server's instance
+// id, or the Pi-hosted controller's fixed name.
 export function claimNextAction(
   db: DatabaseSync,
   now: string,
+  owner = 'factory-controller',
 ): { action: ActionRecord; executionId: ExecutionId } | null {
   return immediateTransaction(db, () => {
     const found = db
@@ -1631,10 +1634,10 @@ export function claimNextAction(
     const claimed = db
       .prepare(
         `UPDATE actions
-         SET status = 'leased', lease_owner = 'factory-controller', lease_token = ?, lease_expires_at = ?, updated_at = ?
+         SET status = 'leased', lease_owner = ?, lease_token = ?, lease_expires_at = ?, updated_at = ?
          WHERE id = ? AND status = 'pending'`,
       )
-      .run(randomUUID(), expires, now, id);
+      .run(owner, randomUUID(), expires, now, id);
     if (claimed.changes !== 1) {
       return null;
     }

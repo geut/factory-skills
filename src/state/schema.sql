@@ -2,11 +2,11 @@ BEGIN IMMEDIATE;
 
 CREATE TABLE schema_meta (
   singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 3),
+  schema_version INTEGER NOT NULL CHECK (schema_version > 0),
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 3);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 4);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -881,8 +881,21 @@ BEGIN
   SELECT RAISE(ABORT, 'running validation requires the current execution');
 END;
 
+-- The factory server that owns this database: the only process allowed to
+-- dispatch actions. A server takes the row at startup, refreshes heartbeat_at
+-- while it runs, and deletes the row when it stops. Clients find the server
+-- through url. See ADR-003.
+CREATE TABLE server_lease (
+  singleton    INTEGER PRIMARY KEY CHECK (singleton = 1),
+  instance_id  TEXT NOT NULL CHECK (length(trim(instance_id)) > 0),
+  url          TEXT NOT NULL CHECK (length(trim(url)) > 0),
+  pid          INTEGER NOT NULL CHECK (pid > 0),
+  started_at   TEXT NOT NULL,
+  heartbeat_at TEXT NOT NULL
+) STRICT;
+
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 COMMIT;

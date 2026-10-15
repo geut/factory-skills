@@ -4,6 +4,7 @@ import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+export const DEFAULT_SERVER = { host: '127.0.0.1', port: 7731 };
 export const INTERNAL_LABELS = ['investigation'] as const;
 export type InternalLabel = (typeof INTERNAL_LABELS)[number];
 
@@ -30,6 +31,8 @@ export type FactoryConfig = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
+  // Where `factory serve` listens. Bind 0.0.0.0 to publish the port from a sandbox.
+  server: { host: string; port: number };
   stages: Record<string, StageSettings>;
   validation: Validation;
 };
@@ -262,6 +265,14 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     }
   }
 
+  const server = readServer(value['server']);
+  if (server === null) {
+    return {
+      kind: 'error',
+      message: 'FACTORY.json server needs a non-empty host and an integer port from 1 to 65535.',
+    };
+  }
+
   const settings = readStageSettings(value['stages']);
   if (settings.kind === 'error') {
     return settings;
@@ -274,11 +285,27 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       labels,
       limits,
       models: { plan, review, work },
+      server,
       stages: settings.stages,
       validation: { work: { commands }, wrapup: { generated } },
     },
     kind: 'ok',
   };
+}
+
+function readServer(value: unknown): FactoryConfig['server'] | null {
+  if (value === undefined) {
+    return { ...DEFAULT_SERVER };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const host = value['host'] === undefined ? DEFAULT_SERVER.host : readString(value, 'host');
+  const port = value['port'] ?? DEFAULT_SERVER.port;
+  if (host === null || typeof port !== 'number' || !Number.isInteger(port)) {
+    return null;
+  }
+  return port >= 1 && port <= 65_535 ? { host, port } : null;
 }
 
 // `stages.<name>` holds an optional stage's settings, which that stage reads.

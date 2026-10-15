@@ -81,13 +81,19 @@ export async function dispatchPending(input: {
   factoryRoot: string;
   findPullRequest: PullRequestLookup;
   ids: IdSource;
+  leaseOwner: string;
   liveValidations: Set<string>;
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
+  // True once the host is shutting down: leave the remaining actions pending.
+  stopped: () => boolean;
 }): Promise<void> {
   for (;;) {
-    const claimed = claimNextAction(input.db, input.now());
+    if (input.stopped()) {
+      return;
+    }
+    const claimed = claimNextAction(input.db, input.now(), input.leaseOwner);
     if (claimed === null) {
       return;
     }

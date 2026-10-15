@@ -51,6 +51,25 @@ The wrap-up agent returns the `factory.wrapup.v1` handoff. The controller keeps 
 
 A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `github.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
 
+## Factory server
+
+The factory server hosts the controller outside Pi, so tickets keep moving with no Pi session open ([ADR-003](docs/adr/0003-a-factory-server-owns-the-controller.md)). It is moving in step by step: today it dispatches, recovers runs, and answers `/health`. The API, tokens, and Pi as a client follow in the [build tickets](https://github.com/geut/factory-skills/issues/25). Do not run `/factory` in Pi for a factory root a server owns.
+
+Build the single executable, then run it from the repository root inside a Herdr pane:
+
+```sh
+npm run build          # writes dist/factory for this OS and architecture
+dist/factory serve
+```
+
+`npm run build` bundles `src/cli.ts` with esbuild and injects it into a copy of the running `node` ([single executable applications](https://nodejs.org/api/single-executable-applications.html)). Build on the platform that runs it. `node src/cli.ts serve` runs the same server from source.
+
+- The server refuses to start outside Herdr. It needs `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`, plus `herdr` and `pi` on `PATH`; `FACTORY_PI_BIN` overrides the path to `pi`.
+- It listens on `server.host` and `server.port` from `FACTORY.json`, `127.0.0.1:7731` by default. Bind `0.0.0.0` to publish the port from a sandbox. The server warns when it listens off loopback, because it speaks plain HTTP.
+- One server owns a factory root. It holds a lease row in SQLite with its URL and a heartbeat, and a second server refuses to start while that lease is live. A lease whose process is gone, or whose heartbeat is older than 15 s, is taken over.
+- On SIGINT or SIGTERM it stops dispatching, releases the lease, and exits. Agent panes keep running, and the next start adopts them with `recover()`.
+- It upgrades a schema 3 database in place the first time it opens it.
+
 ## What you see
 
 Every status card names the ticket, the stage, and what the run led to, then the task and round:
@@ -74,6 +93,9 @@ Above the editor, the widget keeps each unfinished ticket's progress on screen b
 
 ```text
 src/extension/     Pi /factory command
+src/server/        factory serve: HTTP server and owner lease
+src/cli.ts         the factory executable's entry point
+scripts/           single executable build
 src/controller/    commands, pure reducer, SQLite persistence
 src/actions/       leased dispatcher, worktree preparation
 src/runtime/       FactorySubagentRuntime, fake, pi-herdr adapter
@@ -117,6 +139,7 @@ Child sessions follow the named skill, return only the versioned template in tha
   "models": { "work": "work-model", "review": "review-model" },
   "github": { "owner": "geut", "repo": "factory-skills", "pullRequests": false },
   "keys": { "PROJ": { "provider": "github" } },
+  "server": { "host": "127.0.0.1", "port": 7731 },
   "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
   "stages": {
     "qa": {

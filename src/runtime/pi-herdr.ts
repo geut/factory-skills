@@ -526,6 +526,8 @@ function noop(): void {
 export function createPiHerdrRuntime(options?: {
   events?: PaneExitSource | null;
   freshBin?: string;
+  // The child handshake extension Pi loads with -e; the source file by default.
+  handshakePath?: string;
   piBin?: string;
   pollMs?: number;
   run?: CommandRunner;
@@ -534,6 +536,7 @@ export function createPiHerdrRuntime(options?: {
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
   const piBin = options?.piBin ?? 'pi';
+  const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
   const pollMs = options?.pollMs ?? childPollMs;
@@ -599,7 +602,7 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
-        handshakePath: handshakeExtensionPath(),
+        handshakePath,
         model: spec.model,
         piBin,
         promptFile,

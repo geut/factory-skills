@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { allowsEmptyDiff, DEFAULT_COMMAND_TIMEOUT_MS, parseFactoryConfig } from './config.ts';
+import {
+  allowsEmptyDiff,
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  DEFAULT_SERVER,
+  parseFactoryConfig,
+} from './config.ts';
 
 const models = { review: 'review-model', work: 'work-model' };
 
@@ -50,4 +55,24 @@ test('review limits default to 3 and reviewRounds needs at least one round', () 
   assert.equal(parsed.config.limits.reviewCorrections, 0);
   assert.equal(parseFactoryConfig({ limits: { reviewRounds: 0 }, models }).kind, 'error');
   assert.equal(parseFactoryConfig({ limits: { reviewRounds: 1.5 }, models }).kind, 'error');
+});
+
+test('server defaults to loopback and accepts a published host and port', () => {
+  const defaults = parseFactoryConfig({ models });
+  assert.equal(defaults.kind, 'ok');
+  if (defaults.kind !== 'ok') {
+    return;
+  }
+  assert.deepEqual(defaults.config.server, DEFAULT_SERVER);
+
+  const published = parseFactoryConfig({ models, server: { host: '0.0.0.0', port: 8080 } });
+  assert.equal(published.kind, 'ok');
+  if (published.kind !== 'ok') {
+    return;
+  }
+  assert.deepEqual(published.config.server, { host: '0.0.0.0', port: 8080 });
+
+  for (const server of [{ port: 0 }, { port: '8080' }, { host: ' ' }, 'localhost']) {
+    assert.equal(parseFactoryConfig({ models, server }).kind, 'error');
+  }
 });

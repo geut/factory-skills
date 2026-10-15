@@ -9,6 +9,7 @@
 ## Summary
 
 The factory controller moves out of the Pi session into a **factory server** that serves a REST API. Pi, factory-dashboard, and code-host webhooks become clients. The API lets the dashboard become a command center:
+
 - see tickets and the backlog
 - start, reply to, retry, complete, cancel, stop, and rerun tickets
 - read **factory stats**: how well the factory turns tickets into merged pull requests, by stage and model setup
@@ -83,28 +84,28 @@ Decided in [API surface v1](https://github.com/geut/factory-skills/issues/21). T
 
 ### Reads (`read` scope)
 
-| Route | Returns |
-| --- | --- |
-| `GET /v1/tickets` | Current execution per ticket: stage, status, progress, needs-user, actor, PR link, tracker update warnings. Filters are ANDed, and a repeated filter means OR: `status=open\|finished\|all`, `stage=<registry stage>\|done`, `state=<execution status>`, `needsUser=true`, `ref=`. |
-| `GET /v1/tickets/{key}` | Adds tasks with dependencies and review state, open attention with replies, and usage totals. `?execution=n` selects a generation. |
-| `GET /v1/tickets/{key}/executions` | Every generation of the ticket. |
-| `GET /v1/tickets/{key}/runs`, `GET /v1/runs/{id}` | Purpose, round, outcome, model setup, timestamps, validation report and checks, review findings, usage, and the agent's latest activity text. |
-| `GET /v1/agents` | Running agents. |
-| `GET /v1/backlog?refresh=true` | Open tracker issues that are not yet tickets, flagged blocked or umbrella (with children). |
-| `GET /v1/events` | SSE (see below). |
-| `GET /v1/stats/*` | See section 7. |
+| Route                                             | Returns                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/tickets`                                 | Current execution per ticket: stage, status, progress, needs-user, actor, PR link, tracker update warnings. Filters are ANDed, and a repeated filter means OR: `status=open\|finished\|all`, `stage=<registry stage>\|done`, `state=<execution status>`, `needsUser=true`, `ref=`. |
+| `GET /v1/tickets/{key}`                           | Adds tasks with dependencies and review state, open attention with replies, and usage totals. `?execution=n` selects a generation.                                                                                                                                                 |
+| `GET /v1/tickets/{key}/executions`                | Every generation of the ticket.                                                                                                                                                                                                                                                    |
+| `GET /v1/tickets/{key}/runs`, `GET /v1/runs/{id}` | Purpose, round, outcome, model setup, timestamps, validation report and checks, review findings, usage, and the agent's latest activity text.                                                                                                                                      |
+| `GET /v1/agents`                                  | Running agents.                                                                                                                                                                                                                                                                    |
+| `GET /v1/backlog?refresh=true`                    | Open tracker issues that are not yet tickets, flagged blocked or umbrella (with children).                                                                                                                                                                                         |
+| `GET /v1/events`                                  | SSE (see below).                                                                                                                                                                                                                                                                   |
+| `GET /v1/stats/*`                                 | See section 7.                                                                                                                                                                                                                                                                     |
 
 ### Commands (`act` scope)
 
-| Route | Pi command |
-| --- | --- |
-| `POST /v1/tickets {ref}` or `{text, id}` | `/factory start` |
-| `POST /v1/tickets/{key}/replies {answer}` | `/factory reply` |
-| `POST /v1/tickets/{key}/retries` | `/factory retry` |
-| `POST /v1/tickets/{key}/complete` | `/factory complete` |
-| `POST /v1/tickets/{key}/cancel {reason?}` | `/factory cancel` |
-| `POST /v1/runs/{id}/stop` | `/factory stop` |
-| `POST /v1/tickets/{key}/reruns` | `/factory rerun` |
+| Route                                     | Pi command          |
+| ----------------------------------------- | ------------------- |
+| `POST /v1/tickets {ref}` or `{text, id}`  | `/factory start`    |
+| `POST /v1/tickets/{key}/replies {answer}` | `/factory reply`    |
+| `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
+| `POST /v1/tickets/{key}/complete`         | `/factory complete` |
+| `POST /v1/tickets/{key}/cancel {reason?}` | `/factory cancel`   |
+| `POST /v1/runs/{id}/stop`                 | `/factory stop`     |
+| `POST /v1/tickets/{key}/reruns`           | `/factory rerun`    |
 
 - A command returns `202 {ticket, revision}` once its transaction commits; `revision` is the committed `events.revision`.
 - Problems found before the commit (resolution, an umbrella issue, the wrong state) come back synchronously as 4xx. Agent launches happen afterwards.
@@ -114,6 +115,7 @@ Decided in [API surface v1](https://github.com/geut/factory-skills/issues/21). T
 ### Live updates
 
 `GET /v1/events` streams thin events:
+
 - `id: <revision>`, `event: <kind>`, `data: {ticket, task?, run?, actor?}`. Clients refetch what changed.
 - The stream resumes from `Last-Event-ID` or `?since=`.
 - A heartbeat comment is sent every 15 s.
@@ -157,6 +159,7 @@ Decided in [Tracker and code host ports](https://github.com/geut/factory-skills/
   - `KEY-123` means whatever the tracker says it means.
   - GitHub refs stay as `#n`, `owner/repo#n`, or a URL.
   - Local file and `--text` tickets bypass the tracker.
+
 - **Tracker reads:**
   - `resolve(ref)`
   - `children(issue)` and `blockedBy(issue)`, using native links only. The dead `## Parent` / `## Blocked by` parser is deleted, and the README says native links are required.
@@ -200,6 +203,7 @@ Decided in [Factory stats model](https://github.com/geut/factory-skills/issues/2
 ### Facts stored
 
 Measures are SQL views over raw facts:
+
 - **New tables:**
   - pull requests: execution, url, state, merged/closed at, last synced
   - PR reviews: GitHub review id, author, author type, state, commit, submitted at
