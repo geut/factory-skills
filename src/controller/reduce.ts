@@ -24,6 +24,7 @@ import { childDescription } from '../runtime/policy.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
 import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
+import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
@@ -681,7 +682,7 @@ function reduceStart(
     execution: {
       factoryDir: event.ticket.factoryDir,
       factoryVersion: event.factoryVersion ?? null,
-      generation: 1,
+      generation: event.generation ?? 1,
       id: executionId,
       inputFetchedAt: event.ticket.fetchedAt,
       inputHash: event.ticket.contentHash,
@@ -921,7 +922,7 @@ function begin(
           maxAttempts: 3,
           retryOfActionId: null,
           runId: null,
-          slug: snapshot.execution.factoryDir.split('/').at(-1) ?? snapshot.execution.id,
+          slug: worktreeSlugFor(snapshot.execution.factoryDir, snapshot.execution.generation),
           status: 'pending',
         });
         return 'Preparing the worktree.';
@@ -1471,6 +1472,9 @@ export function reduce(input: {
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
     }
+    case 'rerun':
+      // The store retires the old generation and applies the start itself.
+      return reject(existing, 'A rerun is applied as a start.');
     case 'cancel': {
       if (event.ticketId !== snapshot.ticket.id) {
         return reject(existing, 'Cancel does not match the current ticket.');

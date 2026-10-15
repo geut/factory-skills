@@ -6,6 +6,7 @@ export type ParsedCommand =
   | { kind: 'retry'; ref: string }
   | { kind: 'complete'; ref: string }
   | { kind: 'stop'; ref: string }
+  | { kind: 'rerun'; ref: string }
   | { kind: 'cancel'; reason: string | null; ref: string }
   | { kind: 'status'; ref: string }
   | { kind: 'agents' }
@@ -18,7 +19,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|stop|cancel|status <ticket> | /factory agents | /factory ticket',
+        'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -81,6 +82,11 @@ export function parseFactoryCommand(args: string): ParsedCommand {
         ref: cut === -1 ? rest : rest.slice(0, cut),
       };
     }
+    case 'rerun':
+      if (rest.length === 0) {
+        return { kind: 'invalid', message: 'Usage: /factory rerun <ticket>' };
+      }
+      return { kind: 'rerun', ref: rest };
     case 'stop':
       if (rest.length === 0) {
         return { kind: 'invalid', message: 'Usage: /factory stop <ticket>' };
@@ -99,7 +105,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|stop|cancel|status <ticket> | /factory agents | /factory ticket',
+          'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
       };
   }
 }

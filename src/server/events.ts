@@ -1,5 +1,5 @@
-import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { keyOfFactoryDir } from '../controller/keys.ts';
 import { latestRevision } from '../controller/store.ts';
 import type { Actor } from '../domain.ts';
 
@@ -73,7 +73,7 @@ export function readEvents(db: DatabaseSync, after: number, limit = BATCH): Arra
       revision: Number(item['revision']),
       run: item['run_id'] == null ? null : String(item['run_id']),
       task: item['task_id'] == null ? null : String(item['task_id']),
-      ticket: item['factory_dir'] == null ? null : path.basename(String(item['factory_dir'])),
+      ticket: item['factory_dir'] == null ? null : keyOfFactoryDir(String(item['factory_dir'])),
     }));
 }
 

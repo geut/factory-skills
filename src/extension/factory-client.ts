@@ -147,6 +147,12 @@ export function createFactoryClient(input: {
           ? { ref: parsed.source.value }
           : { id: parsed.source.id, text: parsed.source.body },
       );
+    } else if (parsed.kind === 'rerun') {
+      const key = keyFor(open, parsed.ref);
+      if (key === null) {
+        return `No factory execution matches ${parsed.ref}.`;
+      }
+      sent = await post(url, `/v1/tickets/${key}/reruns`, undefined);
     } else if (parsed.kind === 'cancel') {
       const key = keyFor(open, parsed.ref);
       if (key === null) {

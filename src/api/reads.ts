@@ -6,6 +6,7 @@ import { runOutcome } from '../controller/run-card.ts';
 import {
   listCurrentTicketRefs,
   loadCurrentByFactoryKey,
+  loadGeneration,
   loadCurrentByTicketKey,
   ticketKeyOf,
 } from '../controller/store.ts';
@@ -526,13 +527,42 @@ function runOf(db: DatabaseSync, snapshot: FactorySnapshot, run: RunRecord): z.i
   };
 }
 
-function ticketByKey(db: DatabaseSync, key: string): FactorySnapshot {
+// The ticket's current generation, or generation `execution` when given.
+function ticketByKey(db: DatabaseSync, key: string, execution?: number): FactorySnapshot {
   const snapshot = loadCurrentByFactoryKey(db, key);
   if (snapshot === null) {
     throw new ProblemError('ticket_not_found', `No ticket ${key}.`);
   }
-  return snapshot;
+  if (execution === undefined || execution === snapshot.execution.generation) {
+    return snapshot;
+  }
+  const older = loadGeneration(db, snapshot.ticket.id, execution);
+  if (older === null) {
+    throw new ProblemError('not_found', `Ticket ${key} has no execution ${execution}.`);
+  }
+  return older;
 }
+
+const ExecutionQuery = {
+  execution: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .meta({ description: 'A generation of the ticket; the current one by default.' }),
+};
+
+const Execution = z
+  .object({
+    createdAt: z.string(),
+    current: z.boolean(),
+    finishedAt: z.string().nullable(),
+    generation: z.int().positive(),
+    stage: z.enum(ticketStages),
+    status: z.enum(executionStatuses),
+    statusReason: z.string().nullable(),
+  })
+  .meta({ id: 'Execution' });
 
 function currentTickets(db: DatabaseSync): Array<FactorySnapshot> {
   return listCurrentTicketRefs(db).flatMap((ref) => {
@@ -619,14 +649,14 @@ const listTickets = defineRoute({
 });
 
 const getTicket = defineRoute({
-  handler: ({ context, params }) => {
+  handler: ({ context, params, query }) => {
     const db = database(context);
-    return { body: detailOf(db, ticketByKey(db, params.key)), status: 200 };
+    return { body: detailOf(db, ticketByKey(db, params.key, query.execution)), status: 200 };
   },
   method: 'GET',
   operationId: 'getTicket',
   path: '/v1/tickets/{key}',
-  request: { params: TicketParams },
+  request: { params: TicketParams, query: z.object(ExecutionQuery) },
   responses: {
     200: { description: 'The ticket with its tasks, questions, and usage.', schema: TicketDetail },
   },
@@ -638,7 +668,7 @@ const getTicket = defineRoute({
 const listRuns = defineRoute({
   handler: ({ context, params, query }) => {
     const db = database(context);
-    const snapshot = ticketByKey(db, params.key);
+    const snapshot = ticketByKey(db, params.key, query.execution);
     const runs = [...snapshot.runs].sort((left, right) => left.sequence - right.sequence);
     const offset = decodeCursor(query.cursor);
     const items = runs.slice(offset, offset + query.limit).map((run) => runOf(db, snapshot, run));
@@ -648,13 +678,49 @@ const listRuns = defineRoute({
   method: 'GET',
   operationId: 'listTicketRuns',
   path: '/v1/tickets/{key}/runs',
-  request: { params: TicketParams, query: z.object(PagedQuery) },
+  request: { params: TicketParams, query: z.object({ ...PagedQuery, ...ExecutionQuery }) },
   responses: {
     200: { description: "The ticket's runs, oldest first.", schema: page(Run, 'RunPage') },
   },
   scope: 'read',
   summary: "List a ticket's runs",
   tags: ['runs'],
+});
+
+const listExecutions = defineRoute({
+  handler: ({ context, params }) => {
+    const db = database(context);
+    const ticket = ticketByKey(db, params.key).ticket;
+    const items = db
+      .prepare(
+        `SELECT generation, stage, status, status_reason, created_at, finished_at, is_current
+         FROM ticket_executions WHERE ticket_id = ? ORDER BY generation`,
+      )
+      .all(ticket.id)
+      .map((item) => ({
+        createdAt: String(item['created_at']),
+        current: Number(item['is_current']) === 1,
+        finishedAt: item['finished_at'] == null ? null : String(item['finished_at']),
+        generation: Number(item['generation']),
+        stage: String(item['stage']) as z.infer<typeof Execution>['stage'],
+        status: String(item['status']) as z.infer<typeof Execution>['status'],
+        statusReason: item['status_reason'] == null ? null : String(item['status_reason']),
+      }));
+    return { body: { items }, status: 200 };
+  },
+  method: 'GET',
+  operationId: 'listTicketExecutions',
+  path: '/v1/tickets/{key}/executions',
+  request: { params: TicketParams },
+  responses: {
+    200: {
+      description: "The ticket's generations, oldest first; reruns add one each.",
+      schema: z.object({ items: z.array(Execution) }).meta({ id: 'ExecutionList' }),
+    },
+  },
+  scope: 'read',
+  summary: "List a ticket's executions",
+  tags: ['tickets'],
 });
 
 const getRun = defineRoute({
@@ -718,4 +784,4 @@ const listAgents = defineRoute({
   tags: ['agents'],
 });
 
-export const readRoutes = [listTickets, getTicket, listRuns, getRun, listAgents];
+export const readRoutes = [listTickets, getTicket, listExecutions, listRuns, getRun, listAgents];

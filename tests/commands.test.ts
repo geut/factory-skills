@@ -273,3 +273,39 @@ test('cancel ends a ticket once, with or without a reason', async () => {
   const late = await post(f, `/v1/tickets/${ticket}/replies`, { answer: 'x' });
   assert.equal(late.status, 409);
 });
+
+test('a rerun adds a generation, and earlier ones stay readable', async () => {
+  const f = await factory();
+  const { ticket } = await started(f);
+  const active = await post(f, `/v1/tickets/${ticket}/reruns`);
+  assert.equal(active.status, 409);
+  assert.equal(((await active.json()) as { type: string }).type, 'invalid_state');
+
+  await post(f, `/v1/tickets/${ticket}/cancel`);
+  const rerun = await post(f, `/v1/tickets/${ticket}/reruns`);
+  assert.equal(rerun.status, 202);
+  assert.equal(((await rerun.json()) as { ticket: string }).ticket, ticket);
+  await until(() => f.runtime.launches.length === 2);
+
+  const read = async <T>(route: string): Promise<T> =>
+    (await (
+      await fetch(`${f.base}${route}`, { headers: { authorization: `Bearer ${f.token}` } })
+    ).json()) as T;
+  const executions = await read<{
+    items: Array<{ current: boolean; generation: number; status: string }>;
+  }>(`/v1/tickets/${ticket}/executions`);
+  assert.deepEqual(
+    executions.items.map((item) => [item.generation, item.status, item.current]),
+    [
+      [1, 'cancelled', false],
+      [2, 'active', true],
+    ],
+  );
+  assert.equal((await read<{ execution: number }>(`/v1/tickets/${ticket}`)).execution, 2);
+  const first = await read<{ execution: number; status: string }>(
+    `/v1/tickets/${ticket}?execution=1`,
+  );
+  assert.deepEqual([first.execution, first.status], [1, 'cancelled']);
+  const runs = await read<{ items: Array<unknown> }>(`/v1/tickets/${ticket}/runs?execution=1`);
+  assert.equal(runs.items.length, 1);
+});

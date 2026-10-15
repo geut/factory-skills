@@ -170,6 +170,20 @@ const cancelTicket = defineRoute({
   tags: ['commands'],
 });
 
+const rerunTicket = defineRoute({
+  handler: ({ actor, context, headers, params }) =>
+    answer(context.commands.rerun(params.key, options(actor, headers))),
+  method: 'POST',
+  operationId: 'rerunTicket',
+  path: '/v1/tickets/{key}/reruns',
+  request: { headers: CommandHeaders, params: TicketParams },
+  responses: accepted,
+  scope: 'act',
+  summary:
+    'Run a complete, cancelled, or failed ticket again as a new generation, from a fresh copy of its issue',
+  tags: ['commands'],
+});
+
 const stopRun = defineRoute({
   handler: ({ actor, context, headers, params }) =>
     answer(context.commands.stopRun(params.id, options(actor, headers))),
@@ -190,5 +204,6 @@ export const commandRoutes = [
   retryTicket,
   completeTicket,
   cancelTicket,
+  rerunTicket,
   stopRun,
 ];

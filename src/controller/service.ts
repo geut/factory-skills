@@ -34,6 +34,7 @@ import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import { markPullRequestSynced, recordCommit, recordPullRequest, recordReview } from './facts.ts';
+import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
 import {
@@ -93,6 +94,8 @@ export type FactoryCommands = {
   cancel: (key: string, reason: string | null, options: CommandOptions) => CommandOutcome;
   complete: (key: string, options: CommandOptions) => CommandOutcome;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
+  // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
+  rerun: (key: string, options: CommandOptions) => CommandOutcome;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
   start: (source: TicketSource, options: CommandOptions) => CommandOutcome;
   // Stops one running agent by its run id; the ticket pauses.
@@ -320,7 +323,7 @@ export function createFactoryService(input: {
     }
     recordPullRequestOutcome(String(found['id']), codeHost().pullRequestOutcome(pullRequest));
     void drain();
-    return path.basename(String(found['factory_dir']));
+    return keyOfFactoryDir(String(found['factory_dir']));
   }
 
   let backlogCache: { at: number; fetchedAt: string; items: Array<BacklogItem> } | null = null;
@@ -726,6 +729,71 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
+  // A rerun fetches the ticket's source again and starts generation N+1 in
+  // `<ticket dir>/r<N>`, on its own worktree and branch.
+  function rerunCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+    const policy = policyFromConfig();
+    if (typeof policy === 'string') {
+      return { kind: 'refused', message: policy, reason: 'factory_config' };
+    }
+    const config = readFactoryConfig(input.factoryRoot);
+    if (config.kind === 'error') {
+      return { kind: 'refused', message: config.message, reason: 'factory_config' };
+    }
+    const { ticket } = snapshot;
+    const source: TicketSource =
+      ticket.sourceKind === 'text'
+        ? { body: ticket.body, id: ticket.commandRef, kind: 'text' }
+        : { kind: 'ref', value: ticket.commandRef };
+    const resolved = resolveTicket({
+      codeRoot: input.codeRoot,
+      factoryRoot: input.factoryRoot,
+      fetchedAt: now(),
+      source,
+      tracker: createGithubTracker(config.config.tracker, github),
+    });
+    if (resolved.kind === 'error') {
+      return {
+        kind: 'refused',
+        message: resolved.message,
+        reason: resolved.reason ?? 'invalid_ref',
+      };
+    }
+    const generation = snapshot.execution.generation + 1;
+    const factoryDir = generationDir(ticketDirOf(snapshot.execution.factoryDir), generation);
+    mkdirSync(factoryDir, { recursive: true });
+    const applied = apply(
+      {
+        kind: 'rerun',
+        previous: snapshot.execution.id,
+        start: {
+          factoryVersion: factoryVersion(),
+          generation,
+          kind: 'start',
+          policy,
+          ticket: { ...resolved.ticket, factoryDir },
+        },
+      },
+      dedupe(options, `rerun:${snapshot.execution.id}`),
+      'command',
+      options.actor,
+    );
+    return committed(applied, ticket.displayRef, 'invalid_state');
+  }
+
+  async function rerunTicket(ref: string): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    const result = rerunCommitted(snapshot, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
+    await drain();
+    return report(result.applied, ref);
+  }
+
   // Cancel commits first, then closes every agent pane the ticket still had.
   function cancelCommitted(
     snapshot: FactorySnapshot,
@@ -794,6 +862,7 @@ export function createFactoryService(input: {
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
+    rerun: (key, options) => byKey(key, (snapshot) => rerunCommitted(snapshot, options)),
     retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
     start: (source, options) => accepted(startCommitted(source, options)),
     stopRun: (id, options) => {
@@ -853,6 +922,8 @@ export function createFactoryService(input: {
           return stopAgent(parsed.ref);
         case 'cancel':
           return cancelTicket(parsed.ref, parsed.reason);
+        case 'rerun':
+          return rerunTicket(parsed.ref);
         case 'status':
           return status(parsed.ref);
         case 'agents':

@@ -17,11 +17,12 @@ import { apiRoutes } from '../src/api/routes.ts';
 import { unusedCommands } from '../src/api/testing.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import { createFactoryService } from '../src/controller/service.ts';
-import { applyControllerEvent } from '../src/controller/store.ts';
+import { applyControllerEvent, loadGeneration } from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
 import {
   executionId,
   randomIds,
+  runId,
   ticketId,
   type Policy,
   type ResolvedTicket,
@@ -1985,4 +1986,57 @@ test('cancelling a running ticket closes its panes and tab and leaves its worktr
   db.close();
   assert.match(await service.command('reply proj-123 "too late"'), /not waiting for a reply/);
   assert.match(await service.command('cancel proj-123'), /is cancelled/);
+});
+
+test('rerunning a cancelled ticket starts generation 2 on a new branch, and generation 1 stays readable', async () => {
+  const { factoryRoot, runtime, service } = await reachWork();
+  await service.command('cancel proj-123');
+  const before = runtime.launches.length;
+  const answer = await service.command('rerun proj-123');
+  assert.match(answer, /Planning queued|stage: plan/);
+  await waitFor(() => runtime.launches.length === before + 1);
+  const plan = runtime.launches.at(-1);
+  assert.equal(plan?.stage, 'plan');
+  assert.equal(plan?.mode, 'launch');
+
+  const db = openStateDatabase(factoryRoot);
+  const generations = db
+    .prepare(
+      'SELECT generation, status, is_current, factory_dir FROM ticket_executions ORDER BY generation',
+    )
+    .all()
+    .map((item) => [
+      item['generation'],
+      item['status'],
+      item['is_current'],
+      String(item['factory_dir']),
+    ]);
+  assert.equal(generations.length, 2);
+  assert.deepEqual(generations[0]?.slice(0, 3), [1, 'cancelled', 0]);
+  assert.deepEqual(generations[1]?.slice(0, 3), [2, 'active', 1]);
+  assert.match(String(generations[1]?.[3]), /\/r2$/);
+  const ticket = String(db.prepare('SELECT id FROM tickets').get()?.['id']);
+  assert.equal(loadGeneration(db, ticketId(ticket), 1)?.execution.status, 'cancelled');
+
+  // Plan generation 2 so it prepares its own worktree and branch.
+  const directory = String(generations[1]?.[3]);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  runtime.emit(plan?.runId ?? runId('none'), {
+    kind: 'subagent_done',
+    output: 'files',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => runtime.launches.filter((launch) => launch.stage === 'work').length === 2);
+  const branches = db
+    .prepare('SELECT worktree_branch FROM ticket_executions ORDER BY generation')
+    .all()
+    .map((item) => String(item['worktree_branch']));
+  assert.match(branches[0] ?? '', /^factory\/proj-123-[0-9a-f]{8}$/);
+  assert.match(branches[1] ?? '', /^factory\/proj-123-[0-9a-f]{8}-r2$/);
+  db.close();
+
+  assert.match(
+    await service.command('rerun proj-123'),
+    /only a complete, cancelled, or failed ticket can be rerun/,
+  );
 });

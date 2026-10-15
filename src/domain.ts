@@ -203,6 +203,15 @@ export type TerminalOutcome =
   | { kind: 'gap_exit'; message: string }
   | { kind: 'cancelled'; message: string };
 
+export type StartEvent = {
+  factoryVersion?: string;
+  // 1 for a first start; a rerun passes N+1.
+  generation?: number;
+  kind: 'start';
+  policy: Policy;
+  ticket: ResolvedTicket;
+};
+
 export type ResolvedTicket = {
   body: string;
   commandRef: string;
@@ -298,7 +307,10 @@ export type ReconcileObservation =
   | { kind: 'terminal'; terminal: TerminalOutcome };
 
 export type ControllerEvent =
-  | { factoryVersion?: string; kind: 'start'; policy: Policy; ticket: ResolvedTicket }
+  | StartEvent
+  // A new generation of a finished ticket: the current one is retired, then
+  // `start` creates generation N+1.
+  | { kind: 'rerun'; previous: ExecutionId; start: StartEvent }
   | { kind: 'runtime_terminal'; runId: RunId; terminal: TerminalOutcome }
   | ValidationFinished
   | InputReady

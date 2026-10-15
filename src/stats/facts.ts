@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { factoryIdentity } from '../controller/facts.ts';
+import { keyOfFactoryDir } from '../controller/keys.ts';
 
 // Fact rows for factory stats, `stats.v1`, computed on every read from the raw
 // tables (status history, runs, usage, pull requests). Nothing is stored
@@ -317,7 +318,7 @@ export function ticketFacts(
         ),
         stops: count("SELECT count(*) AS n FROM events WHERE execution_id = ? AND kind = 'stop'"),
       },
-      key: factoryDir.slice(factoryDir.lastIndexOf('/') + 1),
+      key: keyOfFactoryDir(factoryDir),
       leadMs: ms(startedAt, mergedAt),
       mergedAt,
       outcome,

@@ -212,6 +212,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     cancel: (key, reason, options) => ready().cancel(key, reason, options),
     complete: (key, options) => ready().complete(key, options),
     reply: (key, answer, options) => ready().reply(key, answer, options),
+    rerun: (key, options) => ready().rerun(key, options),
     retry: (key, options) => ready().retry(key, options),
     start: (source, options) => ready().start(source, options),
     stopRun: (id, options) => ready().stopRun(id, options),

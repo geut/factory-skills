@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
@@ -36,10 +35,12 @@ import {
   type UsageTotals,
   type UsageWrite,
   type WorktreeStatus,
+  type TicketId,
 } from '../domain.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { card, encodeCard } from './card.ts';
+import { keyOfFactoryDir } from './keys.ts';
 import { describeExisting, reduce } from './reduce.ts';
 
 type ApplySource = 'command' | 'runtime' | 'action' | 'validator' | 'controller';
@@ -376,9 +377,17 @@ function worktreeStatus(value: string | null): WorktreeStatus | null {
   throw new FactoryDatabaseError(`unknown worktree status ${value}`);
 }
 
-function loadExecutionRow(db: DatabaseSync, execution: ExecutionId): FactorySnapshot | null {
+function loadExecutionRow(
+  db: DatabaseSync,
+  execution: ExecutionId,
+  currentOnly = true,
+): FactorySnapshot | null {
   const executionRow = db
-    .prepare('SELECT * FROM ticket_executions WHERE id = ? AND is_current = 1')
+    .prepare(
+      currentOnly
+        ? 'SELECT * FROM ticket_executions WHERE id = ? AND is_current = 1'
+        : 'SELECT * FROM ticket_executions WHERE id = ?',
+    )
     .get(execution);
   if (executionRow === undefined) {
     return null;
@@ -452,6 +461,20 @@ export function cardsSince(
     });
 }
 
+// One generation of a ticket, current or retired, for reading.
+export function loadGeneration(
+  db: DatabaseSync,
+  ticket: TicketId,
+  generation: number,
+): FactorySnapshot | null {
+  const found = db
+    .prepare('SELECT id FROM ticket_executions WHERE ticket_id = ? AND generation = ?')
+    .get(ticket, generation);
+  return found === undefined
+    ? null
+    : loadExecutionRow(db, executionId(text(row(found), 'id')), false);
+}
+
 // The change cursor: the newest events.revision, or 0 before any event.
 export function latestRevision(db: DatabaseSync): number {
   return integer(
@@ -467,7 +490,7 @@ export function ticketTab(snapshot: FactorySnapshot): { key: string; label: stri
 
 // The API names a ticket by its factory directory's name, `<slug>-<hash8>`.
 export function ticketKeyOf(snapshot: FactorySnapshot): string {
-  return path.basename(snapshot.execution.factoryDir);
+  return keyOfFactoryDir(snapshot.execution.factoryDir);
 }
 
 export function loadCurrentByFactoryKey(db: DatabaseSync, key: string): FactorySnapshot | null {
@@ -475,7 +498,7 @@ export function loadCurrentByFactoryKey(db: DatabaseSync, key: string): FactoryS
     .prepare('SELECT id, factory_dir FROM ticket_executions WHERE is_current = 1')
     .all()
     .map(row)
-    .find((record) => path.basename(text(record, 'factory_dir')) === key);
+    .find((record) => keyOfFactoryDir(text(record, 'factory_dir')) === key);
   return found === undefined ? null : loadExecutionRow(db, executionId(text(found, 'id')));
 }
 
@@ -923,7 +946,11 @@ function insertTicket(db: DatabaseSync, snapshot: FactorySnapshot, now: string):
   db.prepare(
     `INSERT INTO tickets
       (id, title, source_kind, source_ref, source_payload, source_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       title = excluded.title, source_kind = excluded.source_kind, source_ref = excluded.source_ref,
+       source_payload = excluded.source_payload, source_hash = excluded.source_hash,
+       updated_at = excluded.updated_at`,
   ).run(
     snapshot.ticket.id,
     snapshot.ticket.title,
@@ -1474,6 +1501,9 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'pull_request_closed':
     case 'cancel':
       return loadCurrentByTicketKey(db, event.ticketId);
+    case 'rerun':
+      // Only a repeated rerun gets here; it answers with the new generation.
+      return loadCurrentByTicketKey(db, event.start.ticket.id);
     case 'runtime_terminal':
     case 'validation_finished':
     case 'run_started':
@@ -1528,6 +1558,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'complete':
     case 'pull_request_closed':
     case 'cancel':
+    case 'rerun':
       return null;
     default: {
       const _exhaustive: never = event;
@@ -1589,6 +1620,9 @@ export function applyControllerEvent(
     const duplicate = db
       .prepare('SELECT revision FROM events WHERE dedupe_key = ?')
       .get(input.dedupeKey);
+    if (input.event.kind === 'rerun' && duplicate === undefined) {
+      return applyRerun(db, { ...input, event: input.event });
+    }
     const current = snapshotForEvent(db, input.event);
     if (duplicate !== undefined) {
       if (current === null) {
@@ -1630,6 +1664,103 @@ export function applyControllerEvent(
     }
     return { armRunId: reduction.armRunId, response: reduction.response, revision };
   });
+}
+
+// Statuses a ticket can be rerun from: it finished, or it failed for good.
+const RERUNNABLE = new Set(['complete', 'cancelled', 'failed']);
+
+// Quiesces what is left of a generation, then retires it. The schema's
+// retire_execution_requires_quiescence trigger checks the result.
+function retireExecution(db: DatabaseSync, execution: string, now: string): void {
+  db.prepare(
+    `UPDATE actions SET status = 'cancelled', lease_owner = NULL, lease_token = NULL,
+       lease_expires_at = NULL, completed_at = ?, updated_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'leased')`,
+  ).run(now, now, execution);
+  db.prepare(
+    `UPDATE agent_runs SET status = 'terminal', terminal_kind = 'cancelled', ended_at = ?
+     WHERE execution_id = ? AND status IN ('prepared', 'starting', 'running')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE tasks SET status = 'cancelled', stage = NULL, updated_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'active', 'blocked')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE agent_sessions SET status = 'abandoned', updated_at = ?
+     WHERE execution_id = ? AND status IN ('prepared', 'open')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE attention_requests SET status = 'cancelled', cancelled_at = ?
+     WHERE execution_id = ? AND status IN ('open', 'answered', 'resuming')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE validation_runs SET status = 'error', completed_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'running')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE events SET processing_status = 'ignored', processed_at = ?
+     WHERE execution_id = ? AND processing_status = 'pending'`,
+  ).run(now, execution);
+  db.prepare('UPDATE ticket_executions SET is_current = 0, updated_at = ? WHERE id = ?').run(
+    now,
+    execution,
+  );
+}
+
+// A rerun retires the current generation and starts generation N+1, all in
+// the caller's transaction (ADR-001's rerun guardrail).
+function applyRerun(
+  db: DatabaseSync,
+  input: {
+    actor?: Actor | null;
+    dedupeKey: string;
+    event: Extract<ControllerEvent, { kind: 'rerun' }>;
+    ids: IdSource;
+    now: string;
+    source: ApplySource;
+  },
+): ApplyResult {
+  const current = loadExecutionRow(db, input.event.previous);
+  if (current === null) {
+    return {
+      armRunId: null,
+      response: { kind: 'rejected', message: 'That generation is no longer current.' },
+      revision: null,
+    };
+  }
+  if (!RERUNNABLE.has(current.execution.status)) {
+    return {
+      armRunId: null,
+      response: {
+        kind: 'rejected',
+        message: `${current.ticket.displayRef} is ${current.execution.stage}/${current.execution.status}; only a complete, cancelled, or failed ticket can be rerun.`,
+      },
+      revision: null,
+    };
+  }
+  retireExecution(db, current.execution.id, input.now);
+  const reduction = reduce({
+    event: input.event.start,
+    ids: input.ids,
+    now: input.now,
+    snapshot: null,
+  });
+  if (!reduction.changed || reduction.snapshot === null) {
+    throw new FactoryDatabaseError('a rerun did not create a generation');
+  }
+  persist(db, null, reduction.snapshot, reduction.usage, input.now);
+  const revision = insertInputEvent(db, {
+    actor: input.actor ?? null,
+    dedupeKey: input.dedupeKey,
+    executionId: reduction.snapshot.execution.id,
+    failed: false,
+    id: input.ids.event(),
+    kind: 'rerun',
+    now: input.now,
+    runId: null,
+    source: input.source,
+  });
+  return { armRunId: reduction.armRunId, response: reduction.response, revision };
 }
 
 export type ActiveRun = {

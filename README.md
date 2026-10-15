@@ -14,6 +14,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory complete <ticket>
 /factory stop <ticket>
 /factory cancel <ticket> ["reason"]
+/factory rerun <ticket>
 /factory status <ticket>
 ```
 
@@ -51,7 +52,7 @@ The wrap-up agent returns the `factory.wrapup.v1` handoff. The controller keeps 
 - nothing was committed or merged, and the branch still exists;
 - `codeHost.pullRequests` decides whether a push and a pull request are allowed: never when it is off or the worktree has uncommitted changes; with a clean worktree, the pull request must exist for the branch.
 
-A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `codeHost.pullRequests` allows the push and pull request. `/factory rerun` is not implemented.
+A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the worktree diff in Fresh), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Commit, push, merge, and worktree cleanup stay with you unless `codeHost.pullRequests` allows the push and pull request.
 
 ## Factory server
 
@@ -122,10 +123,12 @@ Commands need an `act` token. Each one returns `202 {ticket, revision, message}`
 | `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
 | `POST /v1/tickets/{key}/complete`         | `/factory complete` |
 | `POST /v1/tickets/{key}/cancel {reason?}` | `/factory cancel`   |
+| `POST /v1/tickets/{key}/reruns`           | `/factory rerun`    |
 | `POST /v1/runs/{id}/stop`                 | `/factory stop`     |
 
 - Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
 - Cancel ends a ticket for good: its agents stop, its tab closes, open questions and tasks are cancelled, and the ticket is `done / cancelled`. Its worktree, branch, and pull request stay for you to keep or clean up. A ticket from the tracker gets a comment, and its factory status label is removed.
+- Rerun runs a complete, cancelled, or failed ticket again as generation N+1: it fetches the issue again and works in `<ticket dir>/r<N>` on its own worktree and branch (`factory/<key>-r<N>`), with the models in `FACTORY.json`. Earlier generations stay readable through `GET /v1/tickets/{key}/executions` and `?execution=<n>` on the ticket and run routes.
 - Stop closes a running agent's pane and pauses the ticket. A reply resumes that agent's session with your instructions; a retry relaunches it.
 - Send `Idempotency-Key: <key>` to make a command safe to repeat: the same key returns the first result instead of applying the command again.
 
