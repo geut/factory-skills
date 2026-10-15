@@ -1821,6 +1821,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
   const server = createServer(
     createRouter({
       context: {
+        backlog: null,
         commands: unusedCommands,
         db,
         events: null,

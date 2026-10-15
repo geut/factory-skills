@@ -122,6 +122,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
     createRouter({
       authorize: createAuthorizer(db, () => now),
       context: {
+        backlog: null,
         commands: unusedCommands,
         db: null,
         events: null,

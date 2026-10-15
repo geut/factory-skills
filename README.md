@@ -94,6 +94,7 @@ Reads need a `read` token.
 - `/v1/tickets` filters by `status=open|finished|all` (default `open`), `stage`, `state` (the execution status), `needsUser=true|false`, and `ref`. Filters combine with AND; repeat one for OR, as in `?stage=review&stage=qa&needsUser=true`.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
 - A run's activity is the agent's latest assistant message in that run, read from its Pi session file.
+- `GET /v1/backlog` lists open tracker issues that match `tracker.backlog` (labels and milestone on GitHub) and are not tickets yet. Each one says whether another issue blocks it and whether it is an umbrella with sub-issues. The list is cached for about a minute; `?refresh=true` asks the tracker again. A started issue drops out at once.
 
 ### Events
 

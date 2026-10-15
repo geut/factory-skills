@@ -549,6 +549,77 @@
         }
       }
     },
+    "/v1/backlog": {
+      "get": {
+        "operationId": "listBacklog",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List the backlog: open tracker issues that are not tickets yet",
+        "tags": [
+          "backlog"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "refresh",
+            "schema": {
+              "description": "Ask the tracker now instead of using the cached backlog.",
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Ask the tracker now instead of using the cached backlog."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backlog issues, as the tracker lists them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacklogPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/events": {
       "get": {
         "operationId": "streamEvents",
@@ -2487,6 +2558,113 @@
           "startedAt",
           "task",
           "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "BacklogPage": {
+        "type": "object",
+        "properties": {
+          "fetchedAt": {
+            "type": "string",
+            "description": "When the tracker was last asked."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BacklogIssue"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "fetchedAt",
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "BacklogIssue": {
+        "type": "object",
+        "properties": {
+          "blocked": {
+            "type": "boolean",
+            "description": "Another issue blocks it."
+          },
+          "blockedBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLink"
+            }
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLink"
+            },
+            "description": "Its sub-issues; start those instead."
+          },
+          "displayRef": {
+            "type": "string",
+            "description": "The ref to start it with, such as owner/repo#42."
+          },
+          "id": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "umbrella": {
+            "type": "boolean",
+            "description": "It has sub-issues, so it cannot be started."
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "blocked",
+          "blockedBy",
+          "children",
+          "displayRef",
+          "id",
+          "labels",
+          "title",
+          "umbrella",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "IssueLink": {
+        "type": "object",
+        "properties": {
+          "displayRef": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "displayRef",
+          "title",
+          "url"
         ],
         "additionalProperties": false
       },

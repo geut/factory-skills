@@ -1,13 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
-import type { FactoryCommands } from '../controller/service.ts';
+import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { EventHub } from '../server/events.ts';
 
 // What a route may ask for while it handles a request.
 export type ApiContext = {
+  // The tracker's backlog, cached; null where the server has none.
+  backlog: ((refresh: boolean) => BacklogResult) | null;
   commands: FactoryCommands;
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;

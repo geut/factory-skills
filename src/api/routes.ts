@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { backlogRoutes } from './backlog.ts';
 import { commandRoutes } from './commands.ts';
 import { eventRoutes } from './events.ts';
 import { readRoutes } from './reads.ts';
@@ -75,6 +76,7 @@ export const apiRoutes: Array<Route> = [
   openapi,
   me,
   ...readRoutes,
+  ...backlogRoutes,
   ...eventRoutes,
   ...statsRoutes,
   ...commandRoutes,

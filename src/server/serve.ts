@@ -204,6 +204,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     createRouter({
       authorize: createAuthorizer(db, () => new Date().toISOString()),
       context: {
+        backlog: (refresh) => ready().backlog(refresh),
         commands,
         db,
         events,

@@ -72,6 +72,7 @@ async function start(options: Partial<RouterOptions> = {}): Promise<string> {
   const server = createServer(
     createRouter({
       context: {
+        backlog: null,
         commands: unusedCommands,
         db: null,
         events: null,

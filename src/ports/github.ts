@@ -36,6 +36,13 @@ type IssueLocator = { host: string; number: number; owner: string; repo: string 
 export type GithubClient = {
   fetchIssue: (input: IssueLocator) => GithubIssue;
   listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
+  listIssues?: (input: {
+    host: string;
+    labels: Array<string>;
+    milestone: string | null;
+    owner: string;
+    repo: string;
+  }) => Array<GithubIssue>;
   listSubIssues: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
 };
 
@@ -118,6 +125,52 @@ export function githubCliClient(): GithubClient {
       relatedIssues(
         `repos/${input.owner}/${input.repo}/issues/${input.number}/dependencies/blocked_by`,
       ),
+    listIssues: (input) => {
+      const payload = ghJson([
+        'issue',
+        'list',
+        '--repo',
+        `${input.owner}/${input.repo}`,
+        '--state',
+        'open',
+        '--limit',
+        '100',
+        ...input.labels.flatMap((label) => ['--label', label]),
+        ...(input.milestone === null ? [] : ['--milestone', input.milestone]),
+        '--json',
+        'id,number,title,body,url,labels',
+      ]);
+      if (!Array.isArray(payload)) {
+        return [];
+      }
+      return payload.flatMap((item) => {
+        if (
+          !isRecord(item) ||
+          typeof item['id'] !== 'string' ||
+          typeof item['number'] !== 'number'
+        ) {
+          return [];
+        }
+        const labels = Array.isArray(item['labels'])
+          ? item['labels'].flatMap((label) =>
+              isRecord(label) && typeof label['name'] === 'string' ? [label['name']] : [],
+            )
+          : [];
+        return [
+          {
+            body: typeof item['body'] === 'string' ? item['body'] : '',
+            host: input.host,
+            labels,
+            nodeId: item['id'],
+            number: item['number'],
+            owner: input.owner,
+            repo: input.repo,
+            title: typeof item['title'] === 'string' ? item['title'] : '',
+            url: typeof item['url'] === 'string' ? item['url'] : '',
+          },
+        ];
+      });
+    },
     listSubIssues: (input) =>
       relatedIssues(`repos/${input.owner}/${input.repo}/issues/${input.number}/sub_issues`),
   };
@@ -182,8 +235,28 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'GitHub request failed';
 }
 
+function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
+  return {
+    body: issue.body,
+    displayRef: `${issue.owner}/${issue.repo}#${issue.number}`,
+    id: `github:${issue.host}:${issue.nodeId}`,
+    labels: issue.labels,
+    ref,
+    title: issue.title,
+    url: issue.url,
+  };
+}
+
 export function createGithubTracker(config: TrackerConfig | null, client: GithubClient): Tracker {
   const listBlockedBy = client.listBlockedBy;
+  const listIssues = client.listIssues;
+  const capabilities: Array<'backlog' | 'blockedBy' | 'children'> = ['children'];
+  if (listBlockedBy !== undefined) {
+    capabilities.push('blockedBy');
+  }
+  if (listIssues !== undefined && config !== null) {
+    capabilities.push('backlog');
+  }
   return {
     blockedBy: (issue) => {
       if (listBlockedBy === undefined) {
@@ -192,12 +265,26 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       const at = locate(issue);
       return listBlockedBy(at).map((related) => linkOf(at.owner, at.repo, related));
     },
-    capabilities: new Set(listBlockedBy === undefined ? ['children'] : ['children', 'blockedBy']),
+    capabilities: new Set(capabilities),
     children: (issue) => {
       const at = locate(issue);
       return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
     },
     kind: 'github',
+    listBacklog: (query) => {
+      if (listIssues === undefined || config === null) {
+        throw new UnsupportedOperation(
+          'github',
+          'a backlog without tracker.owner and tracker.repo',
+        );
+      }
+      return listIssues({
+        ...query,
+        host: config.host,
+        owner: config.owner,
+        repo: config.repo,
+      }).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
+    },
     resolve: (ref): Resolved | null => {
       const target = githubTarget(ref, config);
       if (target === null) {
@@ -212,18 +299,7 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       } catch (error: unknown) {
         return { kind: 'error', message: messageOf(error), reason: 'tracker_unavailable' };
       }
-      return {
-        issue: {
-          body: issue.body,
-          displayRef: `${issue.owner}/${issue.repo}#${issue.number}`,
-          id: `github:${issue.host}:${issue.nodeId}`,
-          labels: issue.labels,
-          ref,
-          title: issue.title,
-          url: issue.url,
-        },
-        kind: 'issue',
-      };
+      return { issue: trackerIssue(issue, ref), kind: 'issue' };
     },
   };
 }

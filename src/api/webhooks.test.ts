@@ -20,6 +20,7 @@ async function serveWith(secret: string | null, changed: Array<PullRequestInfo>)
   const server = createServer(
     createRouter({
       context: {
+        backlog: null,
         commands: unusedCommands,
         db: null,
         events: null,

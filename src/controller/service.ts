@@ -23,6 +23,7 @@ import {
   type PullRequestOutcome,
 } from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
+import type { IssueLink } from '../ports/tracker.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { stages } from '../stages/index.ts';
@@ -111,7 +112,27 @@ function committed(applied: ApplyResult, displayRef: string, refusal: CommandRef
   return { applied, displayRef, kind: 'committed' };
 }
 
+// An open tracker issue that is not a ticket yet, with what stands in its way.
+export type BacklogItem = {
+  blockedBy: Array<IssueLink>;
+  children: Array<IssueLink>;
+  displayRef: string;
+  id: string;
+  labels: Array<string>;
+  title: string;
+  url: string;
+};
+
+export type BacklogResult =
+  | { fetchedAt: string; items: Array<BacklogItem>; kind: 'ok' }
+  | { kind: 'error'; message: string };
+
+// How long a fetched backlog is served before the tracker is asked again.
+export const BACKLOG_CACHE_MS = 60_000;
+
 export type FactoryService = {
+  // The backlog, from a short cache unless `refresh`.
+  backlog: (refresh: boolean) => BacklogResult;
   command: (args: string) => Promise<string>;
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
@@ -258,6 +279,47 @@ export function createFactoryService(input: {
     recordPullRequestOutcome(String(found['id']), codeHost().pullRequestOutcome(pullRequest));
     void drain();
     return path.basename(String(found['factory_dir']));
+  }
+
+  let backlogCache: { at: number; fetchedAt: string; items: Array<BacklogItem> } | null = null;
+
+  function backlog(refresh: boolean): BacklogResult {
+    const config = readFactoryConfig(input.factoryRoot);
+    if (config.kind === 'error') {
+      return { kind: 'error', message: config.message };
+    }
+    if (config.config.tracker === null) {
+      return { kind: 'error', message: 'FACTORY.json has no tracker, so there is no backlog.' };
+    }
+    if (refresh || backlogCache === null || Date.now() - backlogCache.at > BACKLOG_CACHE_MS) {
+      const tracker = createGithubTracker(config.config.tracker, github);
+      try {
+        const items = tracker.listBacklog(config.config.tracker.backlog).map((issue) => ({
+          blockedBy: tracker.capabilities.has('blockedBy') ? tracker.blockedBy(issue) : [],
+          children: tracker.children(issue),
+          displayRef: issue.displayRef,
+          id: issue.id,
+          labels: issue.labels,
+          title: issue.title,
+          url: issue.url,
+        }));
+        backlogCache = { at: Date.now(), fetchedAt: now(), items };
+      } catch (error: unknown) {
+        return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+      }
+    }
+    // Issues started since the fetch drop out at once.
+    const started = new Set(
+      db
+        .prepare('SELECT id FROM tickets')
+        .all()
+        .map((item) => String(item['id'])),
+    );
+    return {
+      fetchedAt: backlogCache.fetchedAt,
+      items: backlogCache.items.filter((item) => !started.has(item.id)),
+      kind: 'ok',
+    };
   }
 
   // Tickets waiting at handoff, with the pull request recorded for them, if any.
@@ -638,6 +700,7 @@ export function createFactoryService(input: {
   }
 
   return {
+    backlog,
     command: async (args) => {
       const parsed = parseFactoryCommand(args);
       switch (parsed.kind) {

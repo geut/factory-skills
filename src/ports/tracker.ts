@@ -4,7 +4,10 @@
 // adapter cannot do throws UnsupportedOperation; asking for one in FACTORY.json
 // stops the server at startup instead.
 
-export type TrackerCapability = 'blockedBy' | 'children';
+export type TrackerCapability = 'backlog' | 'blockedBy' | 'children';
+
+// Which open issues the backlog shows; each tracker reads its own fields.
+export type BacklogQuery = { labels: Array<string>; milestone: string | null };
 
 // An issue as the factory sees it, whatever the tracker.
 export type TrackerIssue = {
@@ -36,6 +39,8 @@ export type Tracker = {
   children: (issue: TrackerIssue) => Array<IssueLink>;
   // Also the ticket's source kind, such as `github`.
   kind: string;
+  // Open issues matching the query, newest first.
+  listBacklog: (query: BacklogQuery) => Array<TrackerIssue>;
   // Null when `ref` is not a ref this tracker understands.
   resolve: (ref: string) => Resolved | null;
 };
