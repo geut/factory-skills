@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -1936,4 +1944,45 @@ test('a reply whose input fails pauses with one open question, and a retry carri
   await service.command('retry proj-123');
   await waitFor(() => runtime.launches.length === before + 1);
   assert.match(runtime.launches.at(-1)?.prompt ?? '', /Keep the filter in the URL instead/);
+});
+
+test('cancelling a running ticket closes its panes and tab and leaves its worktree and branch', async () => {
+  const { factoryRoot, runtime, service, workCwd, workRunId } = await reachWork();
+  const answer = await service.command('cancel proj-123 "Not needed anymore"');
+  assert.match(answer, /cancelled/);
+  await waitFor(() => runtime.interrupted.includes(workRunId));
+  assert.equal(runtime.closedTabs.length, 1);
+  assert.ok(existsSync(workCwd));
+  const branch = spawnSync('git', ['-C', workCwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+    encoding: 'utf8',
+  }).stdout.trim();
+  assert.match(branch, /proj-123/);
+
+  // The closed pane's exit arrives later and is ignored.
+  runtime.emit(workRunId, { kind: 'pane_killed', message: 'pane closed' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const db = openStateDatabase(factoryRoot);
+  assert.deepEqual(
+    {
+      ...db
+        .prepare('SELECT stage, status, status_reason_code, status_reason FROM ticket_executions')
+        .get(),
+    },
+    {
+      stage: 'done',
+      status: 'cancelled',
+      status_reason: 'Not needed anymore',
+      status_reason_code: 'cancelled_by_actor',
+    },
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM actions WHERE status IN ('pending', 'leased')").get()?.[
+      'n'
+    ],
+    0,
+  );
+  assert.equal(ticketFacts(db, { now: new Date().toISOString() })[0]?.outcome, 'cancelled');
+  db.close();
+  assert.match(await service.command('reply proj-123 "too late"'), /not waiting for a reply/);
+  assert.match(await service.command('cancel proj-123'), /is cancelled/);
 });

@@ -6,6 +6,7 @@ const unused = (): never => {
 };
 
 export const unusedCommands: FactoryCommands = {
+  cancel: unused,
   complete: unused,
   reply: unused,
   retry: unused,

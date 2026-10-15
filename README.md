@@ -13,6 +13,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory retry <ticket>
 /factory complete <ticket>
 /factory stop <ticket>
+/factory cancel <ticket> ["reason"]
 /factory status <ticket>
 ```
 
@@ -120,9 +121,11 @@ Commands need an `act` token. Each one returns `202 {ticket, revision, message}`
 | `POST /v1/tickets/{key}/replies {answer}` | `/factory reply`    |
 | `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
 | `POST /v1/tickets/{key}/complete`         | `/factory complete` |
+| `POST /v1/tickets/{key}/cancel {reason?}` | `/factory cancel`   |
 | `POST /v1/runs/{id}/stop`                 | `/factory stop`     |
 
 - Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
+- Cancel ends a ticket for good: its agents stop, its tab closes, open questions and tasks are cancelled, and the ticket is `done / cancelled`. Its worktree, branch, and pull request stay for you to keep or clean up. A ticket from the tracker gets a comment, and its factory status label is removed.
 - Stop closes a running agent's pane and pauses the ticket. A reply resumes that agent's session with your instructions; a retry relaunches it.
 - Send `Idempotency-Key: <key>` to make a command safe to repeat: the same key returns the first result instead of applying the command again.
 

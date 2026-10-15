@@ -38,7 +38,8 @@ export function buildOpenApiDocument(routes: Array<Route>): Record<string, unkno
         : {
             requestBody: {
               content: { 'application/json': { schema: route.request.body } },
-              required: true,
+              // A body schema that accepts nothing makes the body optional.
+              required: !route.request.body.safeParse(undefined).success,
             },
           }),
       responses: {

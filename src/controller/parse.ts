@@ -6,6 +6,7 @@ export type ParsedCommand =
   | { kind: 'retry'; ref: string }
   | { kind: 'complete'; ref: string }
   | { kind: 'stop'; ref: string }
+  | { kind: 'cancel'; reason: string | null; ref: string }
   | { kind: 'status'; ref: string }
   | { kind: 'agents' }
   | { kind: 'ticket'; ref: string | null }
@@ -17,7 +18,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|stop|status <ticket> | /factory agents | /factory ticket',
+        'Usage: /factory start|reply|retry|complete|stop|cancel|status <ticket> | /factory agents | /factory ticket',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -65,6 +66,21 @@ export function parseFactoryCommand(args: string): ParsedCommand {
         return { kind: 'invalid', message: 'Usage: /factory complete <ticket>' };
       }
       return { kind: 'complete', ref: rest };
+    case 'cancel': {
+      if (rest.length === 0) {
+        return { kind: 'invalid', message: 'Usage: /factory cancel <ticket> ["reason"]' };
+      }
+      const cut = rest.indexOf(' ');
+      let reason = cut === -1 ? '' : rest.slice(cut + 1).trim();
+      if (reason.startsWith('"') && reason.endsWith('"') && reason.length >= 2) {
+        reason = reason.slice(1, -1);
+      }
+      return {
+        kind: 'cancel',
+        reason: reason.length === 0 ? null : reason,
+        ref: cut === -1 ? rest : rest.slice(0, cut),
+      };
+    }
     case 'stop':
       if (rest.length === 0) {
         return { kind: 'invalid', message: 'Usage: /factory stop <ticket>' };
@@ -83,7 +99,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|stop|status <ticket> | /factory agents | /factory ticket',
+          'Usage: /factory start|reply|retry|complete|stop|cancel|status <ticket> | /factory agents | /factory ticket',
       };
   }
 }

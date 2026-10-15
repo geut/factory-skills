@@ -304,6 +304,14 @@ export type ControllerEvent =
   | InputReady
   | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
+  // A person cancelled the ticket for good. `by` names them for the tracker.
+  | {
+      by: string | null;
+      idempotencyKey: string;
+      kind: 'cancel';
+      reason: string | null;
+      ticketId: TicketId;
+    }
   // A person stopped a running agent; the ticket pauses.
   | { idempotencyKey: string; kind: 'stop'; runId: RunId }
   // The code host closed the ticket's pull request without merging it.

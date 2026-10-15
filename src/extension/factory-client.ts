@@ -147,6 +147,16 @@ export function createFactoryClient(input: {
           ? { ref: parsed.source.value }
           : { id: parsed.source.id, text: parsed.source.body },
       );
+    } else if (parsed.kind === 'cancel') {
+      const key = keyFor(open, parsed.ref);
+      if (key === null) {
+        return `No factory execution matches ${parsed.ref}.`;
+      }
+      sent = await post(
+        url,
+        `/v1/tickets/${key}/cancel`,
+        parsed.reason === null ? undefined : { reason: parsed.reason },
+      );
     } else if (parsed.kind === 'stop') {
       const snapshot = findTicket(open, parsed.ref);
       const running = snapshot?.runs.filter(

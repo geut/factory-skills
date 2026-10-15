@@ -254,3 +254,22 @@ test('commands need an act token', async () => {
   assert.equal(refused.status, 403);
   assert.equal(f.runtime.launches.length, 0);
 });
+
+test('cancel ends a ticket once, with or without a reason', async () => {
+  const f = await factory();
+  const { ticket } = await started(f);
+  const first = await post(f, `/v1/tickets/${ticket}/cancel`, { reason: 'Duplicate of #6' });
+  assert.equal(first.status, 202);
+  const again = await post(f, `/v1/tickets/${ticket}/cancel`);
+  assert.equal(again.status, 202);
+  assert.equal(
+    ((await again.json()) as { revision: number }).revision,
+    ((await first.json()) as { revision: number }).revision,
+  );
+  assert.deepEqual(query(f, 'SELECT status, status_reason FROM ticket_executions'), {
+    status: 'cancelled',
+    status_reason: 'Duplicate of #6',
+  });
+  const late = await post(f, `/v1/tickets/${ticket}/replies`, { answer: 'x' });
+  assert.equal(late.status, 409);
+});

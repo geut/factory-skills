@@ -1472,6 +1472,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'retry':
     case 'complete':
     case 'pull_request_closed':
+    case 'cancel':
       return loadCurrentByTicketKey(db, event.ticketId);
     case 'runtime_terminal':
     case 'validation_finished':
@@ -1526,6 +1527,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'input_failed':
     case 'complete':
     case 'pull_request_closed':
+    case 'cancel':
       return null;
     default: {
       const _exhaustive: never = event;

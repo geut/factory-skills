@@ -147,6 +147,29 @@ const completeTicket = defineRoute({
   tags: ['commands'],
 });
 
+const cancelTicket = defineRoute({
+  handler: ({ actor, body, context, headers, params }) =>
+    answer(context.commands.cancel(params.key, body?.reason ?? null, options(actor, headers))),
+  method: 'POST',
+  operationId: 'cancelTicket',
+  path: '/v1/tickets/{key}/cancel',
+  request: {
+    body: z
+      .object({
+        reason: z.string().trim().min(1).optional().meta({ description: 'Why, for the issue.' }),
+      })
+      .optional()
+      .meta({ id: 'CancelTicket' }),
+    headers: CommandHeaders,
+    params: TicketParams,
+  },
+  responses: accepted,
+  scope: 'act',
+  summary:
+    'End a ticket for good. Its agents stop and its tab closes; its worktree, branch, and pull request stay.',
+  tags: ['commands'],
+});
+
 const stopRun = defineRoute({
   handler: ({ actor, context, headers, params }) =>
     answer(context.commands.stopRun(params.id, options(actor, headers))),
@@ -161,4 +184,11 @@ const stopRun = defineRoute({
   tags: ['commands'],
 });
 
-export const commandRoutes = [startTicket, replyToTicket, retryTicket, completeTicket, stopRun];
+export const commandRoutes = [
+  startTicket,
+  replyToTicket,
+  retryTicket,
+  completeTicket,
+  cancelTicket,
+  stopRun,
+];

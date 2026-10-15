@@ -1237,6 +1237,85 @@
         }
       }
     },
+    "/v1/tickets/{key}/cancel": {
+      "post": {
+        "operationId": "cancelTicket",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "End a ticket for good. Its agents stop and its tab closes; its worktree, branch, and pull request stay.",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelTicket"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/runs/{id}/stop": {
       "post": {
         "operationId": "stopRun",
@@ -1422,6 +1501,16 @@
         "required": [
           "answer"
         ]
+      },
+      "CancelTicket": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "description": "Why, for the issue.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
       },
       "Health": {
         "type": "object",

@@ -209,6 +209,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   };
   const ready = (): FactoryService & FactoryCommands => ({ ...started(), ...started().commands });
   const commands: FactoryCommands = {
+    cancel: (key, reason, options) => ready().cancel(key, reason, options),
     complete: (key, options) => ready().complete(key, options),
     reply: (key, answer, options) => ready().reply(key, answer, options),
     retry: (key, options) => ready().retry(key, options),

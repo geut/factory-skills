@@ -1471,6 +1471,61 @@ export function reduce(input: {
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
     }
+    case 'cancel': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'Cancel does not match the current ticket.');
+      }
+      if (snapshot.execution.stage === 'done') {
+        return unchanged(existing, `${snapshot.ticket.displayRef} is already finished.`);
+      }
+      for (const run of snapshot.runs) {
+        if (run.status !== 'terminal') {
+          run.status = 'terminal';
+          run.terminalKind = 'cancelled';
+          run.endedAt = now;
+        }
+      }
+      for (const action of snapshot.actions) {
+        if (action.status === 'pending') {
+          action.status = 'cancelled';
+        }
+      }
+      for (const task of snapshot.tasks) {
+        if (task.status !== 'done' && task.status !== 'cancelled') {
+          task.status = 'cancelled';
+          task.stage = null;
+        }
+      }
+      for (const attention of snapshot.attention) {
+        if (
+          attention.status === 'open' ||
+          attention.status === 'answered' ||
+          attention.status === 'resuming'
+        ) {
+          attention.status = 'cancelled';
+        }
+      }
+      for (const session of snapshot.sessions) {
+        if (session.status === 'open' || session.status === 'prepared') {
+          session.status = 'abandoned';
+        }
+      }
+      snapshot.execution.stage = 'done';
+      snapshot.execution.status = 'cancelled';
+      snapshot.execution.retry = null;
+      snapshot.execution.statusReasonCode = 'cancelled_by_actor';
+      snapshot.execution.statusReason = event.reason ?? 'Cancelled by a person.';
+      trackerUpdate(snapshot, ids, {
+        comment: [
+          `The factory stopped working on this issue: cancelled${event.by === null ? '' : ` by ${event.by}`}.`,
+          ...(event.reason === null ? [] : ['', `> ${event.reason}`]),
+        ].join('\n'),
+        issueStatus: 'clear',
+        key: 'cancelled',
+        update: 'cancelled',
+      });
+      return finish(snapshot, `${snapshot.ticket.displayRef} was cancelled.`);
+    }
     case 'stop': {
       const run = runFor(snapshot, event.runId);
       if (run === null) {
@@ -1548,6 +1603,10 @@ export function reduce(input: {
       }
       if (run.status === 'running' && run.paneId === event.paneId) {
         return unchanged(existing, 'Run is already started.', run.id);
+      }
+      // A launch that was in flight when the run was stopped or cancelled.
+      if (run.status === 'terminal') {
+        return unchanged(existing, 'The run ended before its pane started.');
       }
       action.status = 'succeeded';
       run.status = 'running';

@@ -89,6 +89,8 @@ type Committed =
 // The commands the API calls. Each returns once the command is committed; agent
 // launches and validations follow in the background.
 export type FactoryCommands = {
+  // Ends a ticket for good; its worktree, branch, and pull request stay.
+  cancel: (key: string, reason: string | null, options: CommandOptions) => CommandOutcome;
   complete: (key: string, options: CommandOptions) => CommandOutcome;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
@@ -216,7 +218,11 @@ export function createFactoryService(input: {
 
   // A finished ticket's tab closes; the session and diff panes go with it.
   function closeFinishedTab(event: ControllerEvent): void {
-    if (event.kind !== 'complete' && event.kind !== 'pull_request_closed') {
+    if (
+      event.kind !== 'complete' &&
+      event.kind !== 'pull_request_closed' &&
+      event.kind !== 'cancel'
+    ) {
       return;
     }
     const snapshot = loadCurrentByTicketKey(db, event.ticketId);
@@ -720,6 +726,51 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
+  // Cancel commits first, then closes every agent pane the ticket still had.
+  function cancelCommitted(
+    snapshot: FactorySnapshot,
+    reason: string | null,
+    options: CommandOptions,
+  ): Committed {
+    const panes = snapshot.runs.flatMap((run) =>
+      run.status !== 'terminal' && run.paneId !== null
+        ? [{ paneId: run.paneId, runId: run.id }]
+        : [],
+    );
+    const by = options.actor === null ? null : (options.actor.onBehalfOf ?? options.actor.client);
+    const applied = apply(
+      {
+        by,
+        idempotencyKey: `cancel:${snapshot.execution.id}`,
+        kind: 'cancel',
+        reason,
+        ticketId: snapshot.ticket.id,
+      },
+      dedupe(options, `cancel:${snapshot.execution.id}`),
+      'command',
+      options.actor,
+    );
+    if (applied.response.kind !== 'rejected') {
+      for (const pane of panes) {
+        void runtime.interrupt(pane).catch(() => undefined);
+      }
+    }
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  async function cancelTicket(ref: string, reason: string | null): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    const result = cancelCommitted(snapshot, reason, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
+    await drain();
+    return formatStatus(result.applied.response);
+  }
+
   async function stopAgent(ref: string): Promise<string> {
     const snapshot = requireSnapshot(ref);
     if (typeof snapshot === 'string') {
@@ -738,6 +789,8 @@ export function createFactoryService(input: {
   }
 
   const commands: FactoryCommands = {
+    cancel: (key, reason, options) =>
+      byKey(key, (snapshot) => cancelCommitted(snapshot, reason, options)),
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
@@ -798,6 +851,8 @@ export function createFactoryService(input: {
           return complete(parsed.ref);
         case 'stop':
           return stopAgent(parsed.ref);
+        case 'cancel':
+          return cancelTicket(parsed.ref, parsed.reason);
         case 'status':
           return status(parsed.ref);
         case 'agents':
