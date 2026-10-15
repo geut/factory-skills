@@ -317,12 +317,24 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   const baseline = value.baseline();
   git(value.worktree, ['push', '-u', 'origin', branch]);
   const url = 'https://github.com/geut/demo/pull/7';
-  const found: PullRequestLookup = () => ({ headRefName: branch, state: 'OPEN' });
+  const pullRequest = {
+    author: 'dpaez',
+    closedAt: null,
+    headBranch: branch,
+    mergedAt: null,
+    number: 7,
+    openedAt: '2026-10-15T10:00:00Z',
+    state: 'open' as const,
+    url,
+  };
+  const found: PullRequestLookup = () => pullRequest;
   const passed = await validate(value, baseline, handoff(value, { merge: url }), {
     findPullRequest: found,
     pullRequests: true,
   });
   assert.equal(passed.status, 'passed', failures(passed));
+  // A passing wrap-up hands the controller the pull request it checked.
+  assert.deepEqual(passed.status === 'passed' ? passed.detail.pullRequest : null, pullRequest);
   assert.match(
     failures(
       await validate(value, baseline, handoff(value, { merge: url }), { pullRequests: true }),

@@ -1058,6 +1058,55 @@
           "progress": {
             "$ref": "#/components/schemas/Progress"
           },
+          "pullRequest": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mergedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "number": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "merged",
+                      "closed"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mergedAt",
+                  "number",
+                  "state",
+                  "url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The ticket's pull request, once wrap-up or sync has found it."
+          },
           "sourceRef": {
             "type": "string"
           },
@@ -1120,6 +1169,7 @@
           "key",
           "needsUser",
           "progress",
+          "pullRequest",
           "sourceRef",
           "stage",
           "startedBy",
@@ -1261,6 +1311,55 @@
           "progress": {
             "$ref": "#/components/schemas/Progress"
           },
+          "pullRequest": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mergedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "number": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "merged",
+                      "closed"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mergedAt",
+                  "number",
+                  "state",
+                  "url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The ticket's pull request, once wrap-up or sync has found it."
+          },
           "sourceRef": {
             "type": "string"
           },
@@ -1338,6 +1437,7 @@
           "key",
           "needsUser",
           "progress",
+          "pullRequest",
           "sourceRef",
           "stage",
           "startedBy",

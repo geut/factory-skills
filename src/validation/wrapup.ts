@@ -4,6 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import type { PullRequestInfo } from '../ports/code-host.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
@@ -246,9 +247,8 @@ function check(
   };
 }
 
-export type PullRequestLookup = (
-  url: string,
-) => { headRefName: string; state: string } | { missing: true };
+// The code host's view of the pull request at a URL.
+export type PullRequestLookup = (url: string) => PullRequestInfo | { missing: true };
 
 export function validateWrapup(input: {
   baseBranch: string | null;
@@ -337,6 +337,7 @@ export function validateWrapup(input: {
   );
 
   const merge = section('Merge commands');
+  let checked: PullRequestInfo | null = null;
   const url = pullRequestUrl.exec(merge)?.[0] ?? null;
   const commands = merge.includes(input.worktree) && merge.includes(input.branch);
   checks.push(
@@ -433,6 +434,7 @@ export function validateWrapup(input: {
     let found: ReturnType<PullRequestLookup>;
     try {
       found = input.findPullRequest(url);
+      checked = 'missing' in found ? null : found;
     } catch (error: unknown) {
       return errorReport(
         WRAPUP_VALIDATOR_VERSION,
@@ -441,8 +443,8 @@ export function validateWrapup(input: {
     }
     if ('missing' in found) {
       policy.push(`No pull request exists at ${url}.`);
-    } else if (found.headRefName !== input.branch) {
-      policy.push(`${url} is for ${found.headRefName}, not ${input.branch}.`);
+    } else if (found.headBranch !== input.branch) {
+      policy.push(`${url} is for ${found.headBranch}, not ${input.branch}.`);
     }
   }
   checks.push(
@@ -461,7 +463,7 @@ export function validateWrapup(input: {
   const failures = checks
     .filter((item) => item.status === 'failed')
     .flatMap((item) => item.details.split('\n'));
-  const detail = { usage: input.usage() };
+  const detail = { pullRequest: policy.length === 0 ? checked : null, usage: input.usage() };
   return failures.length === 0
     ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
     : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);

@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { recordPullRequest } from '../src/controller/facts.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
 import { openStateDatabase } from '../src/state/database.ts';
@@ -210,4 +211,33 @@ test('reads need a token', async () => {
   const f = await factory();
   const response = await fetch(`${f.base}/v1/tickets`);
   assert.equal(response.status, 401);
+});
+
+test('a ticket shows the pull request recorded for it', async () => {
+  const f = await factory();
+  const { alpha } = await twoTickets(f);
+  const db = openStateDatabase(path.join(f.codeRoot, '.factory'));
+  const execution = String(
+    db.prepare('SELECT id FROM ticket_executions WHERE factory_dir LIKE ?').get(`%${alpha}`)?.[
+      'id'
+    ],
+  );
+  recordPullRequest(
+    db,
+    {
+      author: 'dpaez',
+      closedAt: null,
+      executionId: execution,
+      headBranch: 'factory/alpha',
+      mergedAt: null,
+      number: 7,
+      openedAt: null,
+      state: 'open',
+      url: 'https://github.com/geut/factory-skills/pull/7',
+    },
+    new Date().toISOString(),
+  );
+  db.close();
+  const ticket = await get<{ pullRequest: { url: string } | null }>(f, `/v1/tickets/${alpha}`);
+  assert.equal(ticket.pullRequest?.url, 'https://github.com/geut/factory-skills/pull/7');
 });

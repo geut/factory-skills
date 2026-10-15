@@ -88,6 +88,15 @@ const TicketSummary = z
       description: 'Waiting for a reply, paused, failed, or ready for handoff.',
     }),
     progress: Progress,
+    pullRequest: z
+      .object({
+        mergedAt: z.string().nullable(),
+        number: z.int().nullable(),
+        state: z.enum(['open', 'merged', 'closed']),
+        url: z.string(),
+      })
+      .nullable()
+      .meta({ description: "The ticket's pull request, once wrap-up or sync has found it." }),
     sourceRef: z.string(),
     stage: z.enum(ticketStages),
     startedBy: Actor.nullable().meta({ description: 'The API client that started the ticket.' }),
@@ -310,6 +319,23 @@ function startedBy(db: DatabaseSync, executionId: string): z.infer<typeof Actor>
       };
 }
 
+function pullRequestOf(
+  db: DatabaseSync,
+  executionId: string,
+): z.infer<typeof TicketSummary>['pullRequest'] {
+  const found = db
+    .prepare('SELECT url, number, state, merged_at FROM pull_requests WHERE execution_id = ?')
+    .get(executionId);
+  return found === undefined
+    ? null
+    : {
+        mergedAt: found['merged_at'] == null ? null : String(found['merged_at']),
+        number: found['number'] == null ? null : Number(found['number']),
+        state: String(found['state']) as 'closed' | 'merged' | 'open',
+        url: String(found['url']),
+      };
+}
+
 function summaryOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof TicketSummary> {
   const progress = ticketProgress(snapshot);
   const { execution, ticket } = snapshot;
@@ -326,6 +352,7 @@ function summaryOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof 
       next: progress.next,
       total: progress.total,
     },
+    pullRequest: pullRequestOf(db, execution.id),
     sourceRef: ticket.sourceRef,
     stage: execution.stage,
     startedBy: startedBy(db, execution.id),

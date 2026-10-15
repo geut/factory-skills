@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
-import { ghPullRequest } from '../actions/wrapup.ts';
+import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
   randomIds,
@@ -15,6 +15,7 @@ import {
   type TerminalOutcome,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
+import { createGithubCodeHost } from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
@@ -164,6 +165,13 @@ export function createFactoryService(input: {
     });
   };
 
+  // The code host is read from FACTORY.json each time, like the policy.
+  const findPullRequest: PullRequestLookup = (url) => {
+    const config = readFactoryConfig(input.factoryRoot);
+    const codeHost = createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
+    return pullRequestLookup(codeHost)(url);
+  };
+
   async function drain(): Promise<void> {
     if (stopped) {
       return;
@@ -183,7 +191,7 @@ export function createFactoryService(input: {
           arm,
           db,
           factoryRoot: input.factoryRoot,
-          findPullRequest: input.findPullRequest ?? ghPullRequest,
+          findPullRequest: input.findPullRequest ?? findPullRequest,
           ids,
           leaseOwner: input.leaseOwner ?? 'factory-controller',
           liveValidations,

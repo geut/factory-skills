@@ -107,7 +107,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
     report: passedReport(
       WRAPUP_VALIDATOR_VERSION,
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
-      { usage: 'Stage  Sess  Input' },
+      { pullRequest: null, usage: 'Stage  Sess  Input' },
     ),
     runId,
     stage: 'wrapup' as const,

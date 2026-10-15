@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { recordPullRequest } from '../controller/facts.ts';
 import { attentionCard } from '../controller/run-card.ts';
 import {
   claimNextAction,
@@ -21,6 +22,7 @@ import type {
   RunRecord,
   SessionRecord,
   TerminalOutcome,
+  WrapupValidationDetail,
 } from '../domain.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
@@ -301,6 +303,13 @@ async function runValidation(
     session,
     snapshot,
   });
+  // The pull request a passing wrap-up checked becomes the ticket's.
+  if (stage === 'wrapup' && report.status === 'passed') {
+    const pullRequest = (report.detail as WrapupValidationDetail).pullRequest;
+    if (pullRequest !== null) {
+      recordPullRequest(input.db, { ...pullRequest, executionId }, input.now());
+    }
+  }
   recordValidation(input, {
     actionId: action.id,
     executionId,

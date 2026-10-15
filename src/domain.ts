@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ValidationReport } from './validation/report.ts';
@@ -263,7 +264,17 @@ export type ReviewValidationReport = ValidationReport<
 >;
 
 // The all-stage usage table, including the finished wrap-up run.
-export type WrapupValidationReport = ValidationReport<{ usage: string }, { usage: string }>;
+// A passing wrap-up carries the pull request it checked, which the controller
+// records as the ticket's pull request.
+export type WrapupValidationDetail = {
+  pullRequest: PullRequestInfo | null;
+  usage: string;
+};
+
+export type WrapupValidationReport = ValidationReport<
+  WrapupValidationDetail,
+  WrapupValidationDetail
+>;
 
 // What wrap-up validation compares against: taken when the first wrap-up
 // input is prepared, before the agent runs.
