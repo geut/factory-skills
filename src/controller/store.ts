@@ -416,6 +416,42 @@ export function listCurrentTicketRefs(db: DatabaseSync): Array<string> {
   return refs;
 }
 
+// A status card the controller posted, kept as a domain event so clients that
+// did not see it live (Pi, the event stream) can render it after their cursor.
+export function recordCard(db: DatabaseSync, card: string, now: string): number {
+  const id = randomUUID();
+  const inserted = db
+    .prepare(
+      `INSERT INTO events
+        (id, direction, source, kind, dedupe_key, payload_json, processing_status, received_at,
+         processed_at)
+       VALUES (?, 'domain', 'controller', 'card', ?, ?, 'processed', ?, ?)`,
+    )
+    .run(id, `card:${id}`, JSON.stringify({ card }), now, now);
+  return Number(inserted.lastInsertRowid);
+}
+
+export function cardsSince(
+  db: DatabaseSync,
+  revision: number,
+): Array<{ card: string; revision: number }> {
+  return db
+    .prepare(
+      `SELECT revision, payload_json FROM events
+       WHERE direction = 'domain' AND kind = 'card' AND revision > ?
+       ORDER BY revision`,
+    )
+    .all(revision)
+    .map((item) => {
+      const record = row(item);
+      const payload: unknown = JSON.parse(text(record, 'payload_json'));
+      return {
+        card: isRecord(payload) && typeof payload['card'] === 'string' ? payload['card'] : '',
+        revision: integer(record, 'revision'),
+      };
+    });
+}
+
 // The change cursor: the newest events.revision, or 0 before any event.
 export function latestRevision(db: DatabaseSync): number {
   return integer(

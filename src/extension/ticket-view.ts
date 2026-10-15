@@ -7,7 +7,7 @@ import {
   type Component,
   type TUI,
 } from '@earendil-works/pi-tui';
-import type { TicketDetail, TicketRunRow } from '../controller/service.ts';
+import type { TicketDetail, TicketRunRow } from '../controller/view.ts';
 import { runAssistantText } from '../runtime/session-activity.ts';
 import type { AgentsViewTheme } from './agents-view.ts';
 import { ticketLines } from './widget.ts';

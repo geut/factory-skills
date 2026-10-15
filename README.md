@@ -4,7 +4,7 @@ A [Pi](https://pi.dev) package that runs one ticket from planning through work, 
 
 ## Commands
 
-Pi loads `src/extension/index.ts` and the `skills/` directory from this package. The first `/factory start` creates `.factory/db/state.sqlite`. `.factory/FACTORY.json` must already exist and name distinct `models.work` and `models.review`. `models.plan` defaults to the work model.
+Pi loads `src/extension/index.ts` and the `skills/` directory from this package. The controller runs in the [factory server](#factory-server), and Pi is one of its clients: `/factory start`, `reply`, `retry`, and `complete` go to the server's API with the token in `.factory/local.token`, while `status`, the ticket and agents views, the widget, and the status cards read `.factory/db/state.sqlite` directly. Pi looks for new events about once a second and shows the cards the server posted since. With no server running, a command says how to start one and changes nothing. Any number of Pi sessions can watch the same factory. `.factory/FACTORY.json` must already exist and name distinct `models.work` and `models.review`. `models.plan` defaults to the work model.
 
 ```text
 /factory start <github-url | owner/repo#n | KEY-123 | local-file>
@@ -53,7 +53,7 @@ A failed validation resumes the same wrap-up session with the exact failures; wr
 
 ## Factory server
 
-The factory server hosts the controller outside Pi, so tickets keep moving with no Pi session open ([ADR-003](docs/adr/0003-a-factory-server-owns-the-controller.md)). It is moving in step by step: today it dispatches, recovers runs, and answers `/health`. The API, tokens, and Pi as a client follow in the [build tickets](https://github.com/geut/factory-skills/issues/25). Do not run `/factory` in Pi for a factory root a server owns.
+The factory server hosts the controller outside Pi, so tickets keep moving with no Pi session open ([ADR-003](docs/adr/0003-a-factory-server-owns-the-controller.md)). It dispatches, recovers runs, serves the API below, and creates `.factory/db/state.sqlite` on its first start. The remaining routes follow in the [build tickets](https://github.com/geut/factory-skills/issues/25).
 
 Build the single executable, then run it from the repository root inside a Herdr pane:
 
@@ -196,7 +196,7 @@ Child sessions follow the named skill, return only the versioned template in tha
 }
 ```
 
-SQLite is the read contract. Views such as `current_ticket_executions`, `ready_task_frontier`, and `open_attention` are documented in [`src/state/README.md`](src/state/README.md). The controller does not emit a JSON state file.
+The API is the contract for clients outside this package. Only the server and Pi read SQLite; its views, such as `current_ticket_executions`, `ready_task_frontier`, and `open_attention`, are documented in [`src/state/README.md`](src/state/README.md) as internal. The controller does not emit a JSON state file.
 
 ## Checks
 

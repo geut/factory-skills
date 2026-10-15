@@ -147,11 +147,40 @@ function canInitialize(db: DatabaseSync): boolean {
   return applicationId === 0 && userVersion === 0 && userObjectCount === 0;
 }
 
+function isLocked(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'errcode' in error &&
+    (error.errcode === 5 || error.errcode === 6)
+  );
+}
+
+// Switching to WAL needs an exclusive lock and ignores busy_timeout, so
+// processes opening a new database together retry briefly instead of failing.
+function enableWal(db: DatabaseSync): void {
+  const mode = db.prepare('PRAGMA journal_mode').get();
+  if (isRow(mode) && String(Object.values(mode)[0]).toLowerCase() === 'wal') {
+    return;
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      db.exec('PRAGMA journal_mode = WAL');
+      return;
+    } catch (error: unknown) {
+      if (!isLocked(error) || attempt >= 100) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}
+
 function configureConnection(db: DatabaseSync, readOnly: boolean): void {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
   if (!readOnly) {
-    db.exec('PRAGMA journal_mode = WAL');
+    enableWal(db);
   }
 }
 

@@ -1,4 +1,4 @@
-import { ticketDetailOf, type TicketDetail } from '../controller/service.ts';
+import { ticketDetailOf, type TicketDetail } from '../controller/view.ts';
 import {
   askingUser,
   handoffReady,

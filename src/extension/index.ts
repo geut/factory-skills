@@ -2,19 +2,22 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
-import {
-  createFactoryService,
-  factoryPaths,
-  type FactoryService,
-  type TicketDetail,
-} from '../controller/service.ts';
+import { factoryPaths } from '../controller/service.ts';
+import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { FactoryAgentsView } from './agents-view.ts';
+import { createFactoryClient, type FactoryClient } from './factory-client.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
 import { readChildActivity, renderFactoryWidget, type WidgetChild } from './widget.ts';
 
-const services = new Map<string, FactoryService>();
+// Pi never hosts the controller (ADR-003): it reads the database and sends
+// commands to the factory server.
+const clients = new Map<string, FactoryClient>();
+// How often Pi looks for new events to show.
+const POLL_MS = 1000;
+let poll: ReturnType<typeof setInterval> | null = null;
+let seenRevision = 0;
 let latest: ExtensionContext | null = null;
 let frame = 0;
 let tick: ReturnType<typeof setInterval> | null = null;
@@ -25,7 +28,7 @@ let publishStatus: (text: string) => void = (text) => {
   latest?.ui.notify(text, 'info');
 };
 
-function widgetChildren(service: FactoryService): Array<WidgetChild> {
+function widgetChildren(service: FactoryClient): Array<WidgetChild> {
   const registry = latest?.modelRegistry;
   return service.runningChildren().map((row) => {
     const observed = readChildActivity(row.sessionFile);
@@ -53,7 +56,7 @@ function stopTick(): void {
   tick = null;
 }
 
-function refreshWidget(service: FactoryService): void {
+function refreshWidget(service: FactoryClient): void {
   const ctx = latest;
   if (ctx === null || !ctx.hasUI) {
     return;
@@ -102,23 +105,37 @@ function refreshWidget(service: FactoryService): void {
   }, 80);
 }
 
-function serviceFor(cwd: string): FactoryService {
-  const paths = factoryPaths(cwd);
-  const existing = services.get(paths.factoryRoot);
+function serviceFor(cwd: string): FactoryClient {
+  const { factoryRoot } = factoryPaths(cwd);
+  const existing = clients.get(factoryRoot);
   if (existing !== undefined) {
     return existing;
   }
-  const created = createFactoryService({
-    ...paths,
-    notify: (message) => {
-      publishStatus(message);
-    },
-    onActivity: () => {
-      refreshWidget(created);
-    },
-  });
-  services.set(paths.factoryRoot, created);
+  const created = createFactoryClient({ factoryRoot });
+  clients.set(factoryRoot, created);
   return created;
+}
+
+// Shows the cards the server posted since the last look, and refreshes the
+// widget when anything changed.
+function watch(service: FactoryClient): void {
+  if (poll !== null) {
+    clearInterval(poll);
+  }
+  seenRevision = service.revision();
+  refreshWidget(service);
+  poll = setInterval(() => {
+    const revision = service.revision();
+    if (revision === seenRevision) {
+      return;
+    }
+    for (const { card } of service.cardsSince(seenRevision)) {
+      publishStatus(card);
+    }
+    seenRevision = revision;
+    refreshWidget(service);
+  }, POLL_MS);
+  poll.unref();
 }
 
 async function toggleAgents(ctx: ExtensionContext): Promise<void> {
@@ -220,7 +237,9 @@ export default function factoryExtension(pi: ExtensionAPI): void {
         });
         return;
       }
-      publishStatus(await serviceFor(ctx.cwd).command(args));
+      const service = serviceFor(ctx.cwd);
+      publishStatus(await service.command(parsed));
+      refreshWidget(service);
     },
   });
 
@@ -238,6 +257,6 @@ export default function factoryExtension(pi: ExtensionAPI): void {
 
   pi.on('session_start', (_event, ctx) => {
     latest = ctx;
-    void serviceFor(ctx.cwd).recover();
+    watch(serviceFor(ctx.cwd));
   });
 }

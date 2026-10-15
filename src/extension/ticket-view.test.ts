@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { TicketDetail } from '../controller/service.ts';
+import type { TicketDetail } from '../controller/view.ts';
 import { runId } from '../domain.ts';
 import type { AgentsViewTheme } from './agents-view.ts';
 import { renderTicketDetail } from './ticket-view.ts';

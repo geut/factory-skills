@@ -28,63 +28,33 @@ import {
 } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
-import { ticketProgress, type TicketProgress } from './progress.ts';
-import { detail } from './reduce.ts';
+import type { TicketProgress } from './progress.ts';
 import {
   finishedRunCard,
   firstSummaryLine,
-  runListLabel,
   runOutcome,
   correctsRun,
-  runsInStartOrder,
   runStage,
-  type RunOutcome,
 } from './run-card.ts';
 import {
   applyControllerEvent,
   formatStatus,
   listActiveRuns,
-  listCurrentTicketRefs,
   latestRevision,
   listRunningChildren,
   loadCurrentByFactoryKey,
   loadCurrentByTicketKey,
   loadSnapshotByRun,
+  recordCard,
   requeueOrphanedPanes,
   requeueOrphanedValidations,
   ticketKeyOf,
   type ApplyResult,
   type RunningChildRow,
 } from './store.ts';
+import { progressOf, statusOf, ticketDetailFor, type TicketDetail } from './view.ts';
 
-export type TicketRunRow = {
-  label: string;
-  outcome: RunOutcome;
-  runId: RunId;
-  sessionFile: string | null;
-};
-
-export type TicketDetail = {
-  displayRef: string;
-  progress: TicketProgress | null;
-  runs: Array<TicketRunRow>;
-};
-
-export function ticketDetailOf(snapshot: FactorySnapshot): TicketDetail {
-  return {
-    displayRef: snapshot.ticket.displayRef,
-    progress: ticketProgress(snapshot),
-    runs: runsInStartOrder(snapshot.runs).map((run) => {
-      const session = snapshot.sessions.find((item) => item.id === run.sessionId) ?? null;
-      return {
-        label: runListLabel(snapshot, run),
-        outcome: runOutcome(snapshot, run),
-        runId: run.id,
-        sessionFile: session?.sessionFile ?? null,
-      };
-    }),
-  };
-}
+export type { TicketDetail, TicketRunRow } from './view.ts';
 
 // Why the API refused a command, before anything changed.
 export type CommandRefusal =
@@ -165,7 +135,12 @@ export function createFactoryService(input: {
   const db = input.db ?? openStateDatabase(input.factoryRoot, { create: true });
   const runtime = input.runtime ?? createPiHerdrRuntime();
   const github = input.github ?? githubCliClient();
-  const notify = input.notify ?? (() => undefined);
+  const post = input.notify ?? (() => undefined);
+  // Every card is also kept as an event, for clients that read the history.
+  const notify = (message: string): void => {
+    recordCard(db, message, now());
+    post(message);
+  };
   const onActivity = input.onActivity ?? (() => undefined);
   const now = input.now ?? (() => new Date().toISOString());
   const ids = input.ids ?? randomIds();
@@ -526,35 +501,11 @@ export function createFactoryService(input: {
   }
 
   function ticketDetail(ref: string | null): TicketDetail | string {
-    let key = ref ?? '';
-    if (key.length === 0) {
-      const refs = listCurrentTicketRefs(db);
-      if (refs.length === 0) {
-        return 'No factory ticket is in progress.';
-      }
-      if (refs.length > 1) {
-        return `Name a ticket: ${refs.join(', ')}`;
-      }
-      key = refs[0] ?? '';
-    }
-    const snapshot = loadCurrentByTicketKey(db, key);
-    if (snapshot === null) {
-      return `No factory execution matches ${key}.`;
-    }
-    return ticketDetailOf(snapshot);
+    return ticketDetailFor(db, ref);
   }
 
   function status(ref: string): string {
-    const snapshot = requireSnapshot(ref);
-    if (typeof snapshot === 'string') {
-      return snapshot;
-    }
-    return formatStatus(
-      detail(
-        snapshot,
-        snapshot.execution.message ?? `${snapshot.execution.stage}/${snapshot.execution.status}`,
-      ),
-    );
+    return statusOf(db, ref);
   }
 
   return {
@@ -584,13 +535,7 @@ export function createFactoryService(input: {
       }
     },
     commands,
-    progress: () =>
-      listCurrentTicketRefs(db).flatMap((ref) => {
-        const snapshot = loadCurrentByTicketKey(db, ref);
-        return snapshot === null || snapshot.execution.stage === 'done'
-          ? []
-          : [ticketProgress(snapshot)];
-      }),
+    progress: () => progressOf(db),
     recover,
     runningChildren: () => listRunningChildren(db),
     status,
