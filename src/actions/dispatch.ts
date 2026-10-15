@@ -11,6 +11,7 @@ import {
   loadSnapshotByExecution,
   loadSnapshotByRun,
   passedChecks,
+  ticketTab,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
 import type {
@@ -210,6 +211,7 @@ async function launch(
     sessionFile,
     sessionId: session.id,
     stage: session.stage,
+    tab: ticketTab(snapshot),
     taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
     tools: stageTools(session.stage),

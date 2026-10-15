@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { finishLeasedAction } from '../controller/store.ts';
+import { finishLeasedAction, ticketTab } from '../controller/store.ts';
 import type { ActionRecord, FactorySnapshot, IdSource, RunId } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
@@ -50,6 +50,7 @@ export async function openHandoffPane(
           cwd: action.cwd,
           name: action.name,
           scriptFile: `${sessionFile}.diff.sh`,
+          tab: ticketTab(snapshot),
           target: { file, kind: 'diff' },
         });
       } else {
@@ -57,6 +58,7 @@ export async function openHandoffPane(
           cwd: worktree,
           name: action.name,
           scriptFile: `${sessionFile}.inspect.sh`,
+          tab: ticketTab(snapshot),
           target: { kind: 'session', sessionFile },
         });
       }

@@ -460,6 +460,11 @@ export function latestRevision(db: DatabaseSync): number {
   );
 }
 
+// The Herdr tab a ticket's panes open in.
+export function ticketTab(snapshot: FactorySnapshot): { key: string; label: string } {
+  return { key: ticketKeyOf(snapshot), label: snapshot.ticket.displayRef };
+}
+
 // The API names a ticket by its factory directory's name, `<slug>-<hash8>`.
 export function ticketKeyOf(snapshot: FactorySnapshot): string {
   return path.basename(snapshot.execution.factoryDir);

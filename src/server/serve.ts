@@ -271,7 +271,13 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const handshake = handshakePath(factoryRoot);
   const runtime =
     input.runtime?.({ handshakePath: handshake, piBin }) ??
-    createPiHerdrRuntime({ handshakePath: handshake, piBin, socketPath, targetPaneId });
+    createPiHerdrRuntime({
+      handshakePath: handshake,
+      piBin,
+      socketPath,
+      tabsFile: path.join(factoryRoot, 'runtime', 'tabs.json'),
+      targetPaneId,
+    });
   const running = createFactoryService({
     codeRoot,
     db,

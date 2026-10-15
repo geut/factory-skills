@@ -1863,3 +1863,15 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
   server.close();
   await closeWhenIdle(db);
 });
+
+test('each ticket runs in its own tab, which closes when the ticket finishes', async () => {
+  const { db, runtime, service } = await handedOff('merged');
+  const tabs = new Set(runtime.launches.map((launch) => launch.tab?.key));
+  assert.equal(tabs.size, 1);
+  assert.match([...tabs][0] ?? '', /^proj-123-[0-9a-f]{8}$/);
+  assert.ok(runtime.panes.every((pane) => pane.tab?.key === [...tabs][0]));
+  assert.deepEqual(runtime.closedTabs, []);
+  await service.syncPullRequests();
+  assert.deepEqual(runtime.closedTabs, [...tabs]);
+  await closeWhenIdle(db);
+});

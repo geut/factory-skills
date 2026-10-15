@@ -194,7 +194,24 @@ export function createFactoryService(input: {
     dedupeKey: string,
     source: 'command' | 'runtime' | 'controller',
     actor: Actor | null = null,
-  ): ApplyResult => applyControllerEvent(db, { actor, dedupeKey, event, ids, now: now(), source });
+  ): ApplyResult => {
+    const applied = applyControllerEvent(db, { actor, dedupeKey, event, ids, now: now(), source });
+    if (applied.response.kind === 'status' && applied.response.stage === 'done') {
+      closeFinishedTab(event);
+    }
+    return applied;
+  };
+
+  // A finished ticket's tab closes; the session and diff panes go with it.
+  function closeFinishedTab(event: ControllerEvent): void {
+    if (event.kind !== 'complete' && event.kind !== 'pull_request_closed') {
+      return;
+    }
+    const snapshot = loadCurrentByTicketKey(db, event.ticketId);
+    if (snapshot !== null && runtime.closeTab !== undefined) {
+      void runtime.closeTab(ticketKeyOf(snapshot)).catch(() => undefined);
+    }
+  }
 
   const arm = (runId: RunId): void => {
     watchRun({

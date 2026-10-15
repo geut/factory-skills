@@ -67,6 +67,7 @@ dist/factory serve
 - The server refuses to start outside Herdr. It needs `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`, plus `herdr` and `pi` on `PATH`; `FACTORY_PI_BIN` overrides the path to `pi`.
 - It listens on `server.host` and `server.port` from `FACTORY.json`, `127.0.0.1:7731` by default. Bind `0.0.0.0` to publish the port from a sandbox. The server warns when it listens off loopback, because it speaks plain HTTP.
 - One server owns a factory root. It holds a lease row in SQLite with its URL and a heartbeat, and a second server refuses to start while that lease is live. A lease whose process is gone, or whose heartbeat is older than 15 s, is taken over.
+- Each ticket gets its own Herdr tab, named after it, in the server pane's workspace. The ticket's agent panes and its handoff panes open there, and the tab closes when the ticket finishes. Tabs are remembered in `.factory/runtime/tabs.json`, so a restarted server keeps using them. A tab that cannot be made falls back to splitting the server's pane.
 - On SIGINT or SIGTERM it stops dispatching, releases the lease, and exits. Agent panes keep running, and the next start adopts them with `recover()`.
 - It upgrades a schema 3 database in place the first time it opens it.
 

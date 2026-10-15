@@ -536,3 +536,126 @@ test('a pane exit waits one poll for the exit code written after pi', () => {
     mock.timers.reset();
   }
 });
+
+test('each ticket opens in its own tab, kept across restarts, and closes when it finishes', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
+  const tabsFile = path.join(directory, 'runtime', 'tabs.json');
+  const calls: Array<Array<string>> = [];
+  let tabs = 0;
+  const gone = new Set<string>();
+  const run = async (args: Array<string>) => {
+    calls.push(args);
+    if (args[0] === 'pane' && args[1] === 'get') {
+      const pane = args[2] ?? '';
+      return gone.has(pane)
+        ? { code: 1, stderr: 'no such pane', stdout: '' }
+        : {
+            code: 0,
+            stderr: '',
+            stdout: JSON.stringify({ result: { pane: { pane_id: pane, workspace_id: 'ws-1' } } }),
+          };
+    }
+    if (args[0] === 'tab' && args[1] === 'create') {
+      tabs += 1;
+      return {
+        code: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          result: { root_pane: { pane_id: `root-${tabs}` }, tab: { tab_id: `tab-${tabs}` } },
+        }),
+      };
+    }
+    if (args[0] === 'plugin') {
+      return {
+        code: 0,
+        stderr: '',
+        stdout: JSON.stringify({ result: { plugin_pane: { pane_id: `pane-${calls.length}` } } }),
+      };
+    }
+    return { code: 0, stderr: '', stdout: '' };
+  };
+  const spec = (ticket: string, run: string) => ({
+    cwd: directory,
+    mode: 'launch' as const,
+    model: 'work-model',
+    paneName: `🛠 ${ticket}`,
+    previousPaneId: null,
+    prompt: 'Work.',
+    purpose: 'initial' as const,
+    runId: runId(run),
+    sessionFile: path.join(directory, `${run}.jsonl`),
+    sessionId: sessionId(run),
+    stage: 'work' as const,
+    tab: { key: `${ticket}-key`, label: ticket },
+    taskLabel: null,
+    thinking: 'medium',
+    tools: 'read',
+  });
+  const targets = () =>
+    calls
+      .filter((args) => args[0] === 'plugin')
+      .map((args) => args[args.indexOf('--target-pane') + 1]);
+
+  const runtime = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
+  await runtime.launch(spec('repo#1', 'r1'));
+  await runtime.launch(spec('repo#1', 'r2'));
+  await runtime.launch(spec('repo#2', 'r3'));
+  assert.deepEqual(targets(), ['root-1', 'root-1', 'root-2']);
+  const created = calls.filter((args) => args[0] === 'tab' && args[1] === 'create');
+  assert.equal(created.length, 2);
+  assert.deepEqual(created[0]?.slice(2, 4), ['--workspace', 'ws-1']);
+  assert.ok(created[0]?.includes('repo#1'));
+
+  // A restarted runtime finds the tab again; a tab whose pane is gone is made anew.
+  const restarted = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
+  calls.length = 0;
+  await restarted.launch(spec('repo#1', 'r4'));
+  gone.add('root-2');
+  await restarted.launch(spec('repo#2', 'r5'));
+  assert.deepEqual(targets(), ['root-1', 'root-3']);
+
+  await restarted.closeTab?.('repo#1-key');
+  assert.deepEqual(calls.at(-1), ['tab', 'close', 'tab-1']);
+  assert.equal(JSON.parse(readFileSync(tabsFile, 'utf8'))['repo#1-key'], undefined);
+});
+
+test('a tab that cannot be made falls back to the server pane', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
+  const calls: Array<Array<string>> = [];
+  const runtime = createPiHerdrRuntime({
+    run: async (args) => {
+      calls.push(args);
+      if (args[0] === 'tab') {
+        return { code: 1, stderr: 'no workspace', stdout: '' };
+      }
+      if (args[0] === 'plugin') {
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify({ result: { plugin_pane: { pane_id: 'p' } } }),
+        };
+      }
+      return { code: 0, stderr: '', stdout: '' };
+    },
+    targetPaneId: 'server',
+  });
+  await runtime.launch({
+    cwd: directory,
+    mode: 'launch',
+    model: 'm',
+    paneName: 'x',
+    previousPaneId: null,
+    prompt: 'p',
+    purpose: 'initial',
+    runId: runId('r'),
+    sessionFile: path.join(directory, 'r.jsonl'),
+    sessionId: sessionId('s'),
+    stage: 'plan',
+    tab: { key: 'k', label: 'repo#1' },
+    taskLabel: null,
+    thinking: 'medium',
+    tools: 'read',
+  });
+  const plugin = calls.find((args) => args[0] === 'plugin') ?? [];
+  assert.equal(plugin[plugin.indexOf('--target-pane') + 1], 'server');
+});

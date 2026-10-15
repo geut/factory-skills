@@ -11,7 +11,13 @@ import {
 } from '../domain.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { runStatusLabel } from './policy.ts';
-import type { FactorySubagentRuntime, LaunchSpec, PaneSpec, RunStarted } from './runtime.ts';
+import type {
+  FactorySubagentRuntime,
+  LaunchSpec,
+  PaneSpec,
+  RunStarted,
+  TicketTab,
+} from './runtime.ts';
 import { lastAssistantText } from './session-activity.ts';
 
 export type ClassifiedChild =
@@ -519,6 +525,31 @@ function takeExitJson(sessionFile: string, runId: string, sessionText: string): 
 
 const childPollMs = 5000;
 
+function nested(value: unknown, keys: Array<string>): unknown {
+  let current = value;
+  for (const key of keys) {
+    if (typeof current !== 'object' || current === null || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function readTabs(file: string | null): Record<string, { rootPaneId: string; tabId: string }> {
+  if (file === null) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, { rootPaneId: string; tabId: string }>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function noop(): void {
   return undefined;
 }
@@ -532,6 +563,8 @@ export function createPiHerdrRuntime(options?: {
   pollMs?: number;
   run?: CommandRunner;
   socketPath?: string;
+  // Where each ticket's tab is remembered across restarts.
+  tabsFile?: string;
   targetPaneId?: string;
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
@@ -539,6 +572,83 @@ export function createPiHerdrRuntime(options?: {
   const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
+  const tabsFile = options?.tabsFile ?? null;
+  const tabs = new Map<string, { rootPaneId: string; tabId: string }>(
+    Object.entries(readTabs(tabsFile)),
+  );
+
+  function saveTabs(): void {
+    if (tabsFile === null) {
+      return;
+    }
+    mkdirSync(path.dirname(tabsFile), { recursive: true });
+    writeFileSync(tabsFile, `${JSON.stringify(Object.fromEntries(tabs), null, 2)}\n`);
+  }
+
+  // The workspace the host's pane is in, so tickets' tabs open beside it.
+  async function hostWorkspace(): Promise<string | null> {
+    const got = await run(['pane', 'get', targetPaneId]);
+    if (got.code !== 0) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(got.stdout);
+      const pane = nested(parsed, ['result', 'pane']) ?? nested(parsed, ['result']);
+      const workspace = nested(pane, ['workspace_id']);
+      return typeof workspace === 'string' ? workspace : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The pane a ticket's panes split from: its tab's root pane, created the
+  // first time. A tab that cannot be made falls back to the host's pane.
+  async function splitTarget(tab: TicketTab | null | undefined, cwd: string): Promise<string> {
+    if (tab === null || tab === undefined) {
+      return targetPaneId;
+    }
+    const known = tabs.get(tab.key);
+    if (known !== undefined && (await run(['pane', 'get', known.rootPaneId])).code === 0) {
+      return known.rootPaneId;
+    }
+    const workspace = await hostWorkspace();
+    const created = await run([
+      'tab',
+      'create',
+      ...(workspace === null ? [] : ['--workspace', workspace]),
+      '--cwd',
+      cwd,
+      '--label',
+      tab.label,
+      '--no-focus',
+    ]);
+    if (created.code !== 0) {
+      return targetPaneId;
+    }
+    try {
+      const parsed: unknown = JSON.parse(created.stdout);
+      const tabId = nested(parsed, ['result', 'tab', 'tab_id']);
+      const rootPaneId = nested(parsed, ['result', 'root_pane', 'pane_id']);
+      if (typeof tabId !== 'string' || typeof rootPaneId !== 'string') {
+        return targetPaneId;
+      }
+      tabs.set(tab.key, { rootPaneId, tabId });
+      saveTabs();
+      return rootPaneId;
+    } catch {
+      return targetPaneId;
+    }
+  }
+
+  async function closeTab(key: string): Promise<void> {
+    const known = tabs.get(key);
+    if (known === undefined) {
+      return;
+    }
+    await run(['tab', 'close', known.tabId]);
+    tabs.delete(key);
+    saveTabs();
+  }
   const pollMs = options?.pollMs ?? childPollMs;
   const watchers = new Map<string, () => void>();
   const startedAt = new Map<string, number>();
@@ -614,7 +724,11 @@ export function createPiHerdrRuntime(options?: {
       { mode: 0o755 },
     );
     const opened = await run(
-      herdrPaneArgs({ cwd: spec.cwd, launchScript: scriptFile, targetPaneId }),
+      herdrPaneArgs({
+        cwd: spec.cwd,
+        launchScript: scriptFile,
+        targetPaneId: await splitTarget(spec.tab, spec.cwd),
+      }),
     );
     if (opened.code !== 0) {
       throw new Error(opened.stderr.trim() || 'herdr pane open failed');
@@ -676,7 +790,11 @@ export function createPiHerdrRuntime(options?: {
       { mode: 0o755 },
     );
     const opened = await run(
-      herdrPaneArgs({ cwd: spec.cwd, launchScript: spec.scriptFile, targetPaneId }),
+      herdrPaneArgs({
+        cwd: spec.cwd,
+        launchScript: spec.scriptFile,
+        targetPaneId: await splitTarget(spec.tab, spec.cwd),
+      }),
     );
     if (opened.code !== 0) {
       throw new Error(opened.stderr.trim() || 'herdr pane open failed');
@@ -693,6 +811,7 @@ export function createPiHerdrRuntime(options?: {
   }
 
   return {
+    closeTab,
     interrupt: async () => undefined,
     launch: openPane,
     observe(active, handler) {
