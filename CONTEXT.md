@@ -94,6 +94,10 @@ _Avoid_: provider
 The system that holds the repository and its pull requests, such as GitHub.
 _Avoid_: repo provider, provider
 
+**Tracker update**:
+A comment or status change the factory writes to a ticket's issue when the ticket starts, pauses for a person, or reaches handoff. It never blocks the ticket.
+_Avoid_: write-back, sync
+
 **Pull request outcome**:
 What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.
 
