@@ -8,13 +8,14 @@ import { buildOpenApiDocument } from '../api/openapi.ts';
 import { ProblemError } from '../api/problem.ts';
 import { createRouter } from '../api/router.ts';
 import { apiRoutes } from '../api/routes.ts';
-import { readFactoryConfig } from '../config.ts';
+import { DEFAULT_SYNC_MINUTES, readFactoryConfig } from '../config.ts';
 import {
   createFactoryService,
   factoryPaths,
   type FactoryCommands,
   type FactoryService,
 } from '../controller/service.ts';
+import type { CodeHost } from '../ports/code-host.ts';
 import type { GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
@@ -42,9 +43,10 @@ export type ServeResult =
   | { kind: 'ok'; server: RunningServer };
 
 type ServeInput = {
+  // Tests pass stand-ins; the server uses the gh CLI otherwise.
+  codeHost?: () => CodeHost;
   cwd: string;
   env: NodeJS.ProcessEnv;
-  // Tests pass a stand-in; the server uses the gh CLI otherwise.
   github?: GithubClient;
   // Called when the server loses its lease and has shut itself down.
   onLost?: (message: string) => void;
@@ -248,6 +250,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     codeRoot,
     db,
     factoryRoot,
+    ...(input.codeHost === undefined ? {} : { codeHost: input.codeHost }),
     ...(input.github === undefined ? {} : { github: input.github }),
     leaseOwner: instanceId,
     notify: input.out,
@@ -261,6 +264,9 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     }
     closed = true;
     clearInterval(heartbeat);
+    if (timers.sync !== null) {
+      clearInterval(timers.sync);
+    }
     events.close();
     await running.stop();
     await closeHttp(http);
@@ -268,6 +274,8 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     db.close();
   }
 
+  // Set once recovery is done; close() may run before that.
+  const timers: { sync: ReturnType<typeof setInterval> | null } = { sync: null };
   const heartbeat = setInterval(() => {
     if (!renewServerLease(db, instanceId, new Date().toISOString())) {
       void close().then(() => {
@@ -287,6 +295,25 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
   // Commands start after recovery has adopted the runs already in flight.
   service = running;
+
+  // Pull requests of tickets in handoff: once now, then on an interval.
+  // Webhooks are faster; this is the backstop, since GitHub does not retry a
+  // failed delivery.
+  const syncPullRequests = (): void => {
+    void running.syncPullRequests().then(
+      ({ errors }) => {
+        for (const error of errors) {
+          input.out(`Pull request sync: ${error}`);
+        }
+      },
+      (error: unknown) => {
+        input.out(`Pull request sync failed: ${messageOf(error)}`);
+      },
+    );
+  };
+  const minutes = config.config.codeHost?.syncMinutes ?? DEFAULT_SYNC_MINUTES;
+  timers.sync = setInterval(syncPullRequests, minutes * 60_000);
+  syncPullRequests();
   input.out(`Factory server for ${codeRoot} listening on ${url}`);
   return { kind: 'ok', server: { close, instanceId, url } };
 }

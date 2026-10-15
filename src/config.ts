@@ -48,9 +48,13 @@ export type CodeHostConfig = {
   // Whether wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
   repo: string;
+  // How often the server checks the pull requests of tickets in handoff.
+  syncMinutes: number;
   // The environment variable that holds the webhook secret, if any.
   webhookSecretEnv: string | null;
 };
+
+export const DEFAULT_SYNC_MINUTES = 10;
 
 export type FactoryConfig = {
   codeHost: CodeHostConfig | null;
@@ -381,11 +385,15 @@ function readCodeHost(value: unknown): CodeHostConfig | null | string {
   if (typeof pullRequests !== 'boolean') {
     return 'FACTORY.json codeHost.pullRequests must be true or false.';
   }
+  const syncMinutes = value['syncMinutes'] ?? DEFAULT_SYNC_MINUTES;
+  if (typeof syncMinutes !== 'number' || !(syncMinutes > 0)) {
+    return 'FACTORY.json codeHost.syncMinutes must be a positive number.';
+  }
   const secret = value['webhookSecretEnv'];
   if (secret !== undefined && (typeof secret !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(secret))) {
     return 'FACTORY.json codeHost.webhookSecretEnv must name an environment variable.';
   }
-  return { ...place, kind: 'github', pullRequests, webhookSecretEnv: secret ?? null };
+  return { ...place, kind: 'github', pullRequests, syncMinutes, webhookSecretEnv: secret ?? null };
 }
 
 // Pull requests are on unless the code host turns them off.

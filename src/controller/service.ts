@@ -6,6 +6,7 @@ import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
   randomIds,
+  ticketId as ticketIdOf,
   type Actor,
   type ControllerEvent,
   type FactorySnapshot,
@@ -15,7 +16,11 @@ import {
   type TerminalOutcome,
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
-import { createGithubCodeHost } from '../ports/code-host.ts';
+import {
+  createGithubCodeHost,
+  type CodeHost,
+  type PullRequestOutcome,
+} from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
@@ -25,6 +30,7 @@ import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
+import { markPullRequestSynced, recordCommit, recordPullRequest, recordReview } from './facts.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
 import {
@@ -86,6 +92,9 @@ export type FactoryCommands = {
 
 const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
 
+// Who finishes a ticket when the code host reports its pull request merged or closed.
+const CODE_HOST_ACTOR: Actor = { client: 'code-host', onBehalfOf: null };
+
 // A client's Idempotency-Key replaces the command's own dedupe key, scoped to
 // the client so two clients cannot collide.
 function dedupe(options: CommandOptions, own: string): string {
@@ -112,14 +121,21 @@ export type FactoryService = {
   // Stops dispatching and waits for the action in progress. Agent panes keep
   // running; the next host adopts them with recover().
   stop: () => Promise<void>;
+  // Records what the code host says about a ticket's pull request, then
+  // finishes the ticket on a merge or a close.
+  recordPullRequestOutcome: (executionId: string, outcome: PullRequestOutcome) => void;
+  // Checks the pull request of every ticket in handoff.
+  syncPullRequests: () => Promise<{ errors: Array<string>; synced: number }>;
   ticketDetail: (ref: string | null) => TicketDetail | string;
 };
 
 export function createFactoryService(input: {
+  // The code host, from FACTORY.json by default. Tests pass a stand-in.
+  codeHost?: () => CodeHost;
   codeRoot: string;
   db?: DatabaseSync;
   factoryRoot: string;
-  // Looks up a pull request by URL during wrap-up validation; gh by default.
+  // Looks up a pull request by URL during wrap-up validation; the code host by default.
   findPullRequest?: PullRequestLookup;
   github?: GithubClient;
   ids?: IdSource;
@@ -166,11 +182,98 @@ export function createFactoryService(input: {
   };
 
   // The code host is read from FACTORY.json each time, like the policy.
-  const findPullRequest: PullRequestLookup = (url) => {
-    const config = readFactoryConfig(input.factoryRoot);
-    const codeHost = createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
-    return pullRequestLookup(codeHost)(url);
-  };
+  const codeHost =
+    input.codeHost ??
+    (() => {
+      const config = readFactoryConfig(input.factoryRoot);
+      return createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
+    });
+  const findPullRequest: PullRequestLookup = (url) => pullRequestLookup(codeHost())(url);
+
+  function recordPullRequestOutcome(executionId: string, outcome: PullRequestOutcome): void {
+    const at = now();
+    recordPullRequest(db, { ...outcome.pullRequest, executionId }, at);
+    for (const review of outcome.reviews) {
+      recordReview(db, {
+        author: review.author,
+        authorType: review.authorType,
+        commitSha: review.commitSha,
+        executionId,
+        hasBody: review.hasBody,
+        reviewId: review.id,
+        state: review.state,
+        submittedAt: review.submittedAt,
+      });
+    }
+    for (const commit of outcome.commits) {
+      recordCommit(db, { committedAt: commit.committedAt, executionId, sha: commit.sha });
+    }
+    markPullRequestSynced(db, executionId, at);
+    const ticket = db
+      .prepare('SELECT ticket_id FROM ticket_executions WHERE id = ?')
+      .get(executionId)?.['ticket_id'];
+    if (ticket === undefined) {
+      return;
+    }
+    const ticketId = ticketIdOf(String(ticket));
+    if (outcome.pullRequest.state === 'merged') {
+      apply(
+        { idempotencyKey: `complete:${ticketId}`, kind: 'complete', ticketId },
+        `code-host:merged:${executionId}`,
+        'controller',
+        CODE_HOST_ACTOR,
+      );
+    } else if (outcome.pullRequest.state === 'closed') {
+      apply(
+        {
+          idempotencyKey: `pull-request-closed:${executionId}`,
+          kind: 'pull_request_closed',
+          ticketId,
+          url: outcome.pullRequest.url,
+        },
+        `code-host:closed:${executionId}`,
+        'controller',
+        CODE_HOST_ACTOR,
+      );
+    }
+  }
+
+  // Tickets waiting at handoff, with the pull request recorded for them, if any.
+  async function syncPullRequests(): Promise<{ errors: Array<string>; synced: number }> {
+    const waiting = db
+      .prepare(
+        `SELECT e.id, e.worktree_branch, pr.url
+         FROM ticket_executions AS e
+         LEFT JOIN pull_requests AS pr ON pr.execution_id = e.id
+         WHERE e.is_current = 1 AND e.status = 'ready_for_handoff'`,
+      )
+      .all();
+    const errors: Array<string> = [];
+    let synced = 0;
+    for (const item of waiting) {
+      const executionId = String(item['id']);
+      try {
+        const host = codeHost();
+        const recorded = item['url'] == null ? null : String(item['url']);
+        const branch = item['worktree_branch'] == null ? null : String(item['worktree_branch']);
+        const pullRequest =
+          recorded !== null
+            ? host.pullRequest(recorded)
+            : branch !== null
+              ? host.findPullRequest(branch)
+              : null;
+        if (pullRequest === null) {
+          continue;
+        }
+        recordPullRequestOutcome(executionId, host.pullRequestOutcome(pullRequest));
+        synced += 1;
+      } catch (error: unknown) {
+        errors.push(`${executionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    await drain();
+    return { errors, synced };
+  }
 
   async function drain(): Promise<void> {
     if (stopped) {
@@ -540,10 +643,12 @@ export function createFactoryService(input: {
     },
     commands,
     progress: () => progressOf(db),
+    recordPullRequestOutcome,
     recover,
     runningChildren: () => listRunningChildren(db),
     status,
     stop,
+    syncPullRequests,
     ticketDetail,
   };
 }

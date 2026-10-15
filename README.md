@@ -192,6 +192,8 @@ The factory reads issues through a **tracker** and pull requests through a **cod
 - `tracker` resolves issue refs: an issue URL, `owner/repo#n`, or `#n` for the configured repository. Local markdown or JSON files and `--text` tickets bypass it.
 - **Parent and blocking links must be native.** The factory reads GitHub's sub-issues and "blocked by" links, not `## Parent` or `## Blocked by` headings in an issue body. An issue with sub-issues is an umbrella: start each sub-issue instead.
 - `codeHost.pullRequests` is on unless it is `false`. When it is on and the worktree is clean, wrap-up pushes the branch and opens the pull request.
+- When wrap-up validation passes, the pull request it checked becomes the ticket's. A ticket with none recorded, such as one you opened by hand, is found later by its branch.
+- The server checks the pull request of every ticket in handoff at startup and then every `codeHost.syncMinutes` (10 by default), and stores its reviews and commits. A merged pull request completes the ticket, recorded as done by `code-host`; one closed without merging cancels it with reason `pull_request_closed`. `/factory complete` still works by hand.
 
 ## Factory root
 

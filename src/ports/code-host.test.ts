@@ -9,6 +9,7 @@ const config = {
   owner: 'geut',
   pullRequests: true,
   repo: 'factory-skills',
+  syncMinutes: 10,
   webhookSecretEnv: null,
 };
 

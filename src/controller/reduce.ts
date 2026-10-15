@@ -1380,6 +1380,34 @@ export function reduce(input: {
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
     }
+    case 'pull_request_closed': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'The pull request does not match the current ticket.');
+      }
+      if (snapshot.execution.stage === 'done') {
+        return unchanged(existing, `${snapshot.ticket.displayRef} is already finished.`);
+      }
+      if (snapshot.execution.status !== 'ready_for_handoff') {
+        return reject(
+          existing,
+          `${snapshot.ticket.displayRef} is ${snapshot.execution.stage}/${snapshot.execution.status}, not ready for handoff.`,
+        );
+      }
+      resolveOpen(snapshot);
+      for (const session of snapshot.sessions) {
+        if (session.status === 'open' || session.status === 'prepared') {
+          session.status = 'completed';
+        }
+      }
+      snapshot.execution.stage = 'done';
+      snapshot.execution.status = 'cancelled';
+      snapshot.execution.statusReasonCode = 'pull_request_closed';
+      snapshot.execution.statusReason = `${event.url} was closed without merging.`;
+      return finish(
+        snapshot,
+        `${snapshot.ticket.displayRef} was cancelled: its pull request was closed.`,
+      );
+    }
     case 'run_started': {
       const run = runFor(snapshot, event.runId);
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;

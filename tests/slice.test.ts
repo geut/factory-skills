@@ -16,6 +16,7 @@ import {
   type RunId,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
+import type { CodeHost, PullRequestInfo } from '../src/ports/code-host.ts';
 import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { openStateDatabase } from '../src/state/database.ts';
@@ -662,6 +663,7 @@ type ReviewHarness = {
 async function reachReview(
   config: Record<string, unknown> = {},
   taskCount = 1,
+  codeHost?: () => CodeHost,
 ): Promise<ReviewHarness> {
   const { codeRoot, factoryRoot } = repo(true);
   writeFileSync(
@@ -673,6 +675,7 @@ async function reachReview(
   const runtime = new FakeRuntime();
   const notified: Array<string> = [];
   const service = createFactoryService({
+    ...(codeHost === undefined ? {} : { codeHost }),
     codeRoot,
     db,
     factoryRoot,
@@ -1125,8 +1128,11 @@ test('restart after a finished review records one verdict and launches one wrap-
 
 type WrapupHarness = ReviewHarness & { branch: string; wrapup: FakeRuntime['launches'][number] };
 
-async function reachWrapup(config: Record<string, unknown> = {}): Promise<WrapupHarness> {
-  const harness = await reachReview(config);
+async function reachWrapup(
+  config: Record<string, unknown> = {},
+  codeHost?: () => CodeHost,
+): Promise<WrapupHarness> {
+  const harness = await reachReview(config, 1, codeHost);
   harness.runtime.emit(harness.review.runId, {
     kind: 'subagent_done',
     output: reviewOutput('approve', minorFinding),
@@ -1611,6 +1617,96 @@ test('QA corrects its own output, returns a failing product to work, then hands 
   assert.match(
     launchesOf(runtime, 'wrapup')[0]?.prompt ?? '',
     /QA screenshots[\s\S]*Task 01 screenshot AC1: .*qa\/01\/screenshots\/ac1\.png/,
+  );
+  await closeWhenIdle(db);
+});
+
+// A code host whose pull request for the ticket's branch is in `state`.
+function codeHostWith(state: PullRequestInfo['state'], found: Array<string>): CodeHost {
+  const pullRequest = (branch: string): PullRequestInfo => ({
+    author: 'dpaez',
+    closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
+    headBranch: branch,
+    mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
+    number: 7,
+    openedAt: '2026-10-15T10:00:00Z',
+    state,
+    url: 'https://github.com/geut/factory-skills/pull/7',
+  });
+  return {
+    findPullRequest: (branch) => {
+      found.push(branch);
+      return pullRequest(branch);
+    },
+    kind: 'github',
+    pullRequest: () => null,
+    pullRequestOutcome: (current) => ({
+      commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
+      pullRequest: current,
+      reviews: [
+        {
+          author: 'reviewer',
+          authorType: 'human',
+          commitSha: 'abc',
+          hasBody: true,
+          id: 'R1',
+          state: 'changes_requested',
+          submittedAt: '2026-10-15T13:00:00Z',
+        },
+      ],
+    }),
+    verifyWebhook: () => false,
+  };
+}
+
+async function handedOff(state: PullRequestInfo['state']) {
+  const found: Array<string> = [];
+  const harness = await reachWrapup({}, () => codeHostWith(state, found));
+  harness.runtime.emit(harness.wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(harness.wrapup.cwd, harness.branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => harness.service.status('proj-123').includes('ready_for_handoff'));
+  return { ...harness, found };
+}
+
+test('sync finds a merged pull request by branch, records it, and completes the ticket', async () => {
+  const { branch, db, found, service } = await handedOff('merged');
+  const result = await service.syncPullRequests();
+  assert.deepEqual(result, { errors: [], synced: 1 });
+  assert.deepEqual(found, [branch]);
+  assert.match(service.status('proj-123'), /done\/complete|status: complete/);
+  assert.deepEqual(
+    { ...db.prepare('SELECT state, merged_at FROM pull_requests').get() },
+    { merged_at: '2026-10-16T09:00:00Z', state: 'merged' },
+  );
+  assert.equal(db.prepare('SELECT count(*) AS n FROM pull_request_reviews').get()?.['n'], 1);
+  assert.equal(
+    db.prepare("SELECT actor FROM events WHERE kind = 'complete'").get()?.['actor'],
+    'code-host',
+  );
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 0 });
+  await closeWhenIdle(db);
+});
+
+test('sync cancels a ticket whose pull request was closed without merging', async () => {
+  const { db, service } = await handedOff('closed');
+  await service.syncPullRequests();
+  assert.deepEqual(
+    { ...db.prepare('SELECT stage, status, status_reason_code FROM ticket_executions').get() },
+    { stage: 'done', status: 'cancelled', status_reason_code: 'pull_request_closed' },
+  );
+  await closeWhenIdle(db);
+});
+
+test('sync leaves an open pull request waiting at handoff', async () => {
+  const { db, service } = await handedOff('open');
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 1 });
+  assert.match(service.status('proj-123'), /ready_for_handoff/);
+  assert.notEqual(
+    db.prepare('SELECT last_synced_at FROM pull_requests').get()?.['last_synced_at'],
+    null,
   );
   await closeWhenIdle(db);
 });
