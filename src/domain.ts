@@ -304,6 +304,8 @@ export type ControllerEvent =
   | InputReady
   | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
+  // A person stopped a running agent; the ticket pauses.
+  | { idempotencyKey: string; kind: 'stop'; runId: RunId }
   // The code host closed the ticket's pull request without merging it.
   | { idempotencyKey: string; kind: 'pull_request_closed'; ticketId: TicketId; url: string }
   | {

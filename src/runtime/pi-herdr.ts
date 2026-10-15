@@ -812,7 +812,13 @@ export function createPiHerdrRuntime(options?: {
 
   return {
     closeTab,
-    interrupt: async () => undefined,
+    // Closes the agent's pane; its pi process ends with it.
+    interrupt: async ({ paneId }) => {
+      const closed = await run(['pane', 'close', paneId]);
+      if (closed.code !== 0) {
+        throw new Error(closed.stderr.trim() || `herdr pane close failed for ${paneId}`);
+      }
+    },
     launch: openPane,
     observe(active, handler) {
       const sessionFile = active.sessionFile;

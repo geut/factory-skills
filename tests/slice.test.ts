@@ -1875,3 +1875,65 @@ test('each ticket runs in its own tab, which closes when the ticket finishes', a
   assert.deepEqual(runtime.closedTabs, [...tabs]);
   await closeWhenIdle(db);
 });
+
+test('stopping a work agent pauses the ticket, and a reply resumes the same session with the answer', async () => {
+  const { runtime, service, workRunId } = await reachWork();
+  const work = runtime.launches.find((launch) => launch.runId === workRunId);
+  const stopped = service.commands.stopRun(workRunId, {
+    actor: { client: 'dashboard', onBehalfOf: 'diego' },
+    idempotencyKey: null,
+  });
+  assert.equal(stopped.kind, 'accepted');
+  assert.match(service.status('proj-123'), /paused/);
+  assert.match(service.status('proj-123'), /stopped by a person/);
+  await waitFor(() => runtime.interrupted.includes(workRunId));
+  // The closed pane's exit arrives later and is ignored.
+  runtime.emit(workRunId, { kind: 'pane_killed', message: 'pane closed' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.match(service.status('proj-123'), /paused/);
+  // Repeating the stop returns its first result; stopping a finished run is refused.
+  const again = service.commands.stopRun(workRunId, { actor: null, idempotencyKey: null });
+  assert.equal(
+    again.kind === 'accepted' ? again.revision : null,
+    stopped.kind === 'accepted' ? stopped.revision : undefined,
+  );
+  const planRun = runtime.launches.find((launch) => launch.stage === 'plan')?.runId ?? workRunId;
+  const finished = service.commands.stopRun(planRun, { actor: null, idempotencyKey: null });
+  assert.equal(finished.kind === 'refused' ? finished.reason : 'accepted', 'invalid_state');
+
+  const before = runtime.launches.length;
+  await service.command('reply proj-123 "Keep the filter in the URL instead"');
+  await waitFor(() => runtime.launches.length === before + 1);
+  const resumed = runtime.launches.at(-1);
+  assert.equal(resumed?.sessionId, work?.sessionId);
+  assert.equal(resumed?.mode, 'resume');
+  assert.match(resumed?.prompt ?? '', /Keep the filter in the URL instead/);
+  assert.match(await service.command('stop nope'), /No factory execution matches nope/);
+});
+
+test('a reply whose input fails pauses with one open question, and a retry carries the answer', async () => {
+  const { factoryRoot, runtime, service, workRunId } = await reachWork();
+  service.commands.stopRun(workRunId, { actor: null, idempotencyKey: null });
+  // Make the reply's input check fail: the task is no longer the paused one.
+  const db = openStateDatabase(factoryRoot);
+  db.prepare("UPDATE tasks SET status = 'active'").run();
+  await service.command('reply proj-123 "Keep the filter in the URL instead"');
+  await waitFor(() =>
+    service.status('proj-123').includes('not the selected dependency-ready task'),
+  );
+  assert.match(service.status('proj-123'), /status: paused/);
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) AS n FROM attention_requests WHERE status IN ('open', 'answered', 'resuming')",
+      )
+      .get()?.['n'],
+    1,
+  );
+  db.prepare("UPDATE tasks SET status = 'blocked'").run();
+  db.close();
+  const before = runtime.launches.length;
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.length === before + 1);
+  assert.match(runtime.launches.at(-1)?.prompt ?? '', /Keep the filter in the URL instead/);
+});

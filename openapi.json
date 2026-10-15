@@ -1237,6 +1237,75 @@
         }
       }
     },
+    "/v1/runs/{id}/stop": {
+      "post": {
+        "operationId": "stopRun",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Stop a running agent. The ticket pauses: a reply resumes the agent with instructions, a retry relaunches it.",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/webhooks/github": {
       "post": {
         "operationId": "receiveGithubWebhook",

@@ -1478,6 +1478,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'run_started':
     case 'launch_failed':
     case 'reconciled':
+    case 'stop':
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
@@ -1514,6 +1515,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'run_started':
     case 'launch_failed':
     case 'reconciled':
+    case 'stop':
       return event.runId;
     case 'start':
     case 'reply':

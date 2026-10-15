@@ -12,6 +12,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory reply <ticket> "answer"
 /factory retry <ticket>
 /factory complete <ticket>
+/factory stop <ticket>
 /factory status <ticket>
 ```
 
@@ -119,8 +120,10 @@ Commands need an `act` token. Each one returns `202 {ticket, revision, message}`
 | `POST /v1/tickets/{key}/replies {answer}` | `/factory reply`    |
 | `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
 | `POST /v1/tickets/{key}/complete`         | `/factory complete` |
+| `POST /v1/runs/{id}/stop`                 | `/factory stop`     |
 
 - Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
+- Stop closes a running agent's pane and pauses the ticket. A reply resumes that agent's session with your instructions; a retry relaunches it.
 - Send `Idempotency-Key: <key>` to make a command safe to repeat: the same key returns the first result instead of applying the command again.
 
 ### Tokens

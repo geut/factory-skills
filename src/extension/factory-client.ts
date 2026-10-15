@@ -147,6 +147,16 @@ export function createFactoryClient(input: {
           ? { ref: parsed.source.value }
           : { id: parsed.source.id, text: parsed.source.body },
       );
+    } else if (parsed.kind === 'stop') {
+      const snapshot = findTicket(open, parsed.ref);
+      const running = snapshot?.runs.filter(
+        (run) => run.status === 'running' || run.status === 'starting',
+      );
+      const runId = running?.at(-1)?.id;
+      if (runId === undefined) {
+        return `No agent is running for ${parsed.ref}.`;
+      }
+      sent = await post(url, `/v1/runs/${runId}/stop`, undefined);
     } else {
       const key = keyFor(open, parsed.ref);
       if (key === null) {

@@ -60,6 +60,7 @@ const refusals: Record<Exclude<CommandOutcome, { kind: 'accepted' }>['reason'], 
   invalid_ref: 'validation_error',
   invalid_state: 'invalid_state',
   not_waiting_for_reply: 'not_waiting_for_reply',
+  run_not_found: 'not_found',
   ticket_not_found: 'ticket_not_found',
   tracker_unavailable: 'tracker_unavailable',
   umbrella_issue: 'umbrella_issue',
@@ -146,4 +147,18 @@ const completeTicket = defineRoute({
   tags: ['commands'],
 });
 
-export const commandRoutes = [startTicket, replyToTicket, retryTicket, completeTicket];
+const stopRun = defineRoute({
+  handler: ({ actor, context, headers, params }) =>
+    answer(context.commands.stopRun(params.id, options(actor, headers))),
+  method: 'POST',
+  operationId: 'stopRun',
+  path: '/v1/runs/{id}/stop',
+  request: { headers: CommandHeaders, params: z.object({ id: z.string().min(1) }) },
+  responses: accepted,
+  scope: 'act',
+  summary:
+    'Stop a running agent. The ticket pauses: a reply resumes the agent with instructions, a retry relaunches it.',
+  tags: ['commands'],
+});
+
+export const commandRoutes = [startTicket, replyToTicket, retryTicket, completeTicket, stopRun];

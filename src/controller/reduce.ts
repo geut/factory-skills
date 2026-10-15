@@ -223,29 +223,38 @@ function pauseWithNotice(
   snapshot.execution.retry = input.retry;
   snapshot.execution.statusReasonCode = input.code;
   snapshot.execution.statusReason = input.failures.join('\n');
-  snapshot.attention.push({
-    id: input.ids.attention(),
-    kind: 'policy_limit',
-    question: input.question,
-    runId: input.runId ?? null,
-    status: 'open',
-  });
-  trackerUpdate(snapshot, input.ids, {
-    comment: pausedComment(snapshot, input.question),
-    issueStatus: null,
-    key: `paused:${snapshot.attention.at(-1)?.id ?? ''}`,
-    update: 'paused',
-  });
-  const attention = snapshot.attention.at(-1);
+  // A reply being prepared keeps its question, which stays the one unresolved
+  // question of the execution; a retry then carries the stored answer.
+  const kept =
+    input.keepReply === true
+      ? (snapshot.attention.find((item) => item.status === 'resuming') ?? null)
+      : null;
+  if (kept === null) {
+    snapshot.attention.push({
+      id: input.ids.attention(),
+      kind: 'policy_limit',
+      question: input.question,
+      runId: input.runId ?? null,
+      status: 'open',
+    });
+  }
+  const attention = kept ?? snapshot.attention.at(-1);
   if (attention === undefined) {
     return;
   }
+  const once = kept === null ? attention.id : `${attention.id}:${input.ids.action()}`;
+  trackerUpdate(snapshot, input.ids, {
+    comment: pausedComment(snapshot, input.question),
+    issueStatus: null,
+    key: `paused:${once}`,
+    update: 'paused',
+  });
   snapshot.actions.push({
     attempts: 0,
     attentionReplyId: null,
     attentionRequestId: attention.id,
     id: input.ids.action(),
-    idempotencyKey: `notify:${attention.id}`,
+    idempotencyKey: `notify:${once}`,
     kind: 'notify_attention',
     lastError: null,
     maxAttempts: 1,
@@ -1462,6 +1471,44 @@ export function reduce(input: {
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
     }
+    case 'stop': {
+      const run = runFor(snapshot, event.runId);
+      if (run === null) {
+        return reject(existing, 'No such run.');
+      }
+      if (run.status === 'terminal') {
+        return reject(existing, 'That agent already finished.');
+      }
+      const session = sessionFor(snapshot, run.sessionId);
+      const label = session === null ? 'The' : `The ${stages[session.stage].label.toLowerCase()}`;
+      run.status = 'terminal';
+      // `cancelled` is the terminal kind the schema has for a run ended on purpose.
+      run.terminalKind = 'cancelled';
+      run.endedAt = now;
+      // Like a question, a stop blocks the task until a reply or a retry.
+      const task = session?.taskId == null ? null : taskById(snapshot, session.taskId);
+      if (task !== null && task.status === 'active') {
+        task.status = 'blocked';
+      }
+      for (const action of snapshot.actions) {
+        if (
+          action.runId === run.id &&
+          (action.kind === 'launch_run' || action.kind === 'resume_run') &&
+          action.status === 'pending'
+        ) {
+          action.status = 'cancelled';
+        }
+      }
+      pauseWithNotice(snapshot, {
+        code: 'stopped_by_actor',
+        failures: [`${label} agent was stopped.`],
+        ids,
+        question: `${label} agent was stopped by a person. Reply with what it should do instead to resume it, retry to relaunch it, or cancel the ticket.`,
+        retry: { kind: 'relaunch' },
+        runId: run.id,
+      });
+      return finish(snapshot, `${label} agent was stopped. The ticket is paused.`);
+    }
     case 'pull_request_closed': {
       if (event.ticketId !== snapshot.ticket.id) {
         return reject(existing, 'The pull request does not match the current ticket.');
@@ -1555,9 +1602,14 @@ export function reduce(input: {
         return reject(existing, 'This ticket is not waiting for a reply.');
       }
       // A retryable pause takes only a retry; otherwise a reply resumes the run
-      // that paused the ticket, and a pause no run asked for takes neither.
-      if (snapshot.execution.retry !== null) {
+      // that paused the ticket, and a pause no run asked for takes neither. A
+      // stopped agent takes either: a reply resumes it with instructions.
+      const stopped = snapshot.execution.statusReasonCode === 'stopped_by_actor';
+      if (snapshot.execution.retry !== null && !stopped) {
         return reject(existing, `Retry with /factory retry ${snapshot.ticket.commandRef}.`);
+      }
+      if (stopped) {
+        snapshot.execution.retry = null;
       }
       const attention =
         snapshot.attention.find((item) => item.status === 'open' || item.status === 'answered') ??

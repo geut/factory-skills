@@ -6,6 +6,7 @@ import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
   randomIds,
+  runId as runIdOf,
   ticketId as ticketIdOf,
   type Actor,
   type ControllerEvent,
@@ -69,6 +70,7 @@ export type CommandRefusal =
   | 'invalid_ref'
   | 'invalid_state'
   | 'not_waiting_for_reply'
+  | 'run_not_found'
   | 'ticket_not_found'
   | 'tracker_unavailable'
   | 'umbrella_issue';
@@ -91,6 +93,8 @@ export type FactoryCommands = {
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
   start: (source: TicketSource, options: CommandOptions) => CommandOutcome;
+  // Stops one running agent by its run id; the ticket pauses.
+  stopRun: (runId: string, options: CommandOptions) => CommandOutcome;
 };
 
 const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
@@ -130,6 +134,14 @@ export type BacklogResult =
 
 // How long a fetched backlog is served before the tracker is asked again.
 export const BACKLOG_CACHE_MS = 60_000;
+
+// The agent a ticket is running now, if any.
+function runningRun(snapshot: FactorySnapshot): RunId | null {
+  const running = snapshot.runs.filter(
+    (run) => run.status === 'running' || run.status === 'starting',
+  );
+  return running.at(-1)?.id ?? null;
+}
 
 export type FactoryService = {
   // The backlog, from a short cache unless `refresh`.
@@ -688,12 +700,56 @@ export function createFactoryService(input: {
     return accepted(run(snapshot));
   }
 
+  // A stop commits first, then closes the agent's pane. A pane that will not
+  // close leaves a run the controller already ended; its exit is ignored.
+  function stopCommitted(
+    snapshot: FactorySnapshot,
+    runId: RunId,
+    options: CommandOptions,
+  ): Committed {
+    const run = snapshot.runs.find((item) => item.id === runId) ?? null;
+    const applied = apply(
+      { idempotencyKey: `stop:${runId}`, kind: 'stop', runId },
+      dedupe(options, `stop:${runId}`),
+      'command',
+      options.actor,
+    );
+    if (applied.response.kind !== 'rejected' && run?.paneId != null) {
+      void runtime.interrupt({ paneId: run.paneId, runId }).catch(() => undefined);
+    }
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  async function stopAgent(ref: string): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    const runId = runningRun(snapshot);
+    if (runId === null) {
+      return `No agent is running for ${ref}.`;
+    }
+    const result = stopCommitted(snapshot, runId, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
+    await drain();
+    return report(result.applied, ref);
+  }
+
   const commands: FactoryCommands = {
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
     retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
     start: (source, options) => accepted(startCommitted(source, options)),
+    stopRun: (id, options) => {
+      const snapshot = loadSnapshotByRun(db, runIdOf(id));
+      if (snapshot === null) {
+        return { kind: 'refused', message: `No run ${id}.`, reason: 'run_not_found' };
+      }
+      return accepted(stopCommitted(snapshot, runIdOf(id), options));
+    },
   };
 
   function startReply(applied: ApplyResult, ref: string): string {
@@ -740,6 +796,8 @@ export function createFactoryService(input: {
           return retry(parsed.ref);
         case 'complete':
           return complete(parsed.ref);
+        case 'stop':
+          return stopAgent(parsed.ref);
         case 'status':
           return status(parsed.ref);
         case 'agents':

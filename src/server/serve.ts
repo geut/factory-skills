@@ -213,6 +213,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     reply: (key, answer, options) => ready().reply(key, answer, options),
     retry: (key, options) => ready().retry(key, options),
     start: (source, options) => ready().start(source, options),
+    stopRun: (id, options) => ready().stopRun(id, options),
   };
   const http = createServer(
     createRouter({
