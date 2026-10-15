@@ -164,9 +164,11 @@ export type TicketSource =
   | { kind: 'ref'; value: string }
   | { body: string; id: string; kind: 'text' };
 
+// `reason` marks failures that are not a bad reference: an issue with
+// sub-issues, or a tracker that could not be reached.
 export type ResolveResult =
   | { kind: 'ticket'; ticket: ResolvedTicket }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; reason?: 'tracker_unavailable' | 'umbrella_issue' };
 
 type GithubTarget = {
   commandRef: string;
@@ -398,7 +400,7 @@ export function resolveTicket(input: {
       typeof error.message === 'string'
         ? error.message
         : 'GitHub request failed';
-    return { kind: 'error', message };
+    return { kind: 'error', message, reason: 'tracker_unavailable' };
   }
   const children = input.github.listSubIssues(target);
   if (children.length > 0) {
@@ -406,6 +408,7 @@ export function resolveTicket(input: {
     return {
       kind: 'error',
       message: `${issue.owner}/${issue.repo}#${issue.number} is an umbrella issue. Start each concrete issue separately: ${names}.`,
+      reason: 'umbrella_issue',
     };
   }
   return {

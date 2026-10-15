@@ -79,6 +79,20 @@ The server's routes are declared once, in [`src/api/routes.ts`](src/api/routes.t
 - Source runs and tests also check every response against its schema; the single executable does not.
 - A test fails when `openapi.json` no longer matches the routes. After changing a route, run `npm run openapi:update` and commit the document.
 
+### Commands
+
+Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.
+
+| Route                                     | Pi equivalent       |
+| ----------------------------------------- | ------------------- |
+| `POST /v1/tickets {ref}` or `{id, text}`  | `/factory start`    |
+| `POST /v1/tickets/{key}/replies {answer}` | `/factory reply`    |
+| `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
+| `POST /v1/tickets/{key}/complete`         | `/factory complete` |
+
+- Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
+- Send `Idempotency-Key: <key>` to make a command safe to repeat: the same key returns the first result instead of applying the command again.
+
 ### Tokens
 
 Every `/v1` route needs `Authorization: Bearer <token>`. A token belongs to a named API client and has a scope: `read` routes only look, `act` routes change tickets, and `act` includes `read`. Tokens are managed only from the command line, so whoever can reach the factory root decides who gets one:

@@ -5,13 +5,20 @@ import path from 'node:path';
 import { getAsset, isSea } from 'node:sea';
 import type { DatabaseSync } from 'node:sqlite';
 import { buildOpenApiDocument } from '../api/openapi.ts';
+import { ProblemError } from '../api/problem.ts';
 import { createRouter } from '../api/router.ts';
 import { apiRoutes } from '../api/routes.ts';
 import { readFactoryConfig } from '../config.ts';
-import { createFactoryService, factoryPaths } from '../controller/service.ts';
+import {
+  createFactoryService,
+  factoryPaths,
+  type FactoryCommands,
+  type FactoryService,
+} from '../controller/service.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
+import type { GithubClient } from '../tickets.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import {
   acquireServerLease,
@@ -36,6 +43,8 @@ export type ServeResult =
 type ServeInput = {
   cwd: string;
   env: NodeJS.ProcessEnv;
+  // Tests pass a stand-in; the server uses the gh CLI otherwise.
+  github?: GithubClient;
   // Called when the server loses its lease and has shut itself down.
   onLost?: (message: string) => void;
   out: (line: string) => void;
@@ -172,10 +181,25 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
 
   const instanceId = randomUUID();
   let document: Record<string, unknown> | null = null;
+  // The router listens before the service exists; commands wait for it.
+  let service: FactoryService | null = null;
+  const ready = (): FactoryCommands => {
+    if (service === null) {
+      throw new ProblemError('internal_error', 'The server is still starting.');
+    }
+    return service.commands;
+  };
+  const commands: FactoryCommands = {
+    complete: (key, options) => ready().complete(key, options),
+    reply: (key, answer, options) => ready().reply(key, answer, options),
+    retry: (key, options) => ready().retry(key, options),
+    start: (source, options) => ready().start(source, options),
+  };
   const http = createServer(
     createRouter({
       authorize: createAuthorizer(db, () => new Date().toISOString()),
       context: {
+        commands,
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
       },
@@ -216,10 +240,11 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const runtime =
     input.runtime?.({ handshakePath: handshake, piBin }) ??
     createPiHerdrRuntime({ handshakePath: handshake, piBin, socketPath, targetPaneId });
-  const service = createFactoryService({
+  const running = createFactoryService({
     codeRoot,
     db,
     factoryRoot,
+    ...(input.github === undefined ? {} : { github: input.github }),
     leaseOwner: instanceId,
     notify: input.out,
     runtime,
@@ -232,7 +257,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     }
     closed = true;
     clearInterval(heartbeat);
-    await service.stop();
+    await running.stop();
     await closeHttp(http);
     releaseServerLease(db, instanceId);
     db.close();
@@ -250,11 +275,13 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     input.out(`Warning: listening on ${host} over plain HTTP; tokens travel unencrypted.`);
   }
   try {
-    await service.recover();
+    await running.recover();
   } catch (error: unknown) {
     await close();
     return { kind: 'error', message: `Recovery failed: ${messageOf(error)}` };
   }
+  // Commands start after recovery has adopted the runs already in flight.
+  service = running;
   input.out(`Factory server for ${codeRoot} listening on ${url}`);
   return { kind: 'ok', server: { close, instanceId, url } };
 }

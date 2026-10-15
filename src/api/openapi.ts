@@ -21,10 +21,13 @@ export function buildOpenApiDocument(routes: Array<Route>): Record<string, unkno
     );
     const operation = {
       operationId: route.operationId,
-      ...(route.request?.params === undefined && route.request?.query === undefined
+      ...(route.request?.params === undefined &&
+      route.request?.query === undefined &&
+      route.request?.headers === undefined
         ? {}
         : {
             requestParams: {
+              ...(route.request.headers === undefined ? {} : { header: route.request.headers }),
               ...(route.request.params === undefined ? {} : { path: route.request.params }),
               ...(route.request.query === undefined ? {} : { query: route.request.query }),
             },

@@ -1,10 +1,11 @@
 import type { IncomingMessage } from 'node:http';
 import type { z } from 'zod';
+import type { FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 
-// What a route may ask for while it handles a request. Later routes add the
-// controller service and the database here.
+// What a route may ask for while it handles a request.
 export type ApiContext = {
+  commands: FactoryCommands;
   instanceId: string;
   openapi: () => Record<string, unknown>;
 };
@@ -28,11 +29,13 @@ export type RouteInput<
   P extends z.ZodObject | undefined,
   Q extends z.ZodObject | undefined,
   B extends z.ZodType | undefined,
+  H extends z.ZodObject | undefined = undefined,
 > = {
   // The API client behind the request; null on routes that need no token.
   actor: Actor | null;
   body: Output<B>;
   context: ApiContext;
+  headers: Output<H>;
   params: Output<P>;
   query: Output<Q>;
   request: IncomingMessage;
@@ -48,13 +51,15 @@ export type RouteDefinition<
   P extends z.ZodObject | undefined,
   Q extends z.ZodObject | undefined,
   B extends z.ZodType | undefined,
+  H extends z.ZodObject | undefined = undefined,
 > = {
-  handler: (input: RouteInput<P, Q, B>) => Promise<RouteResult> | RouteResult;
+  handler: (input: RouteInput<P, Q, B, H>) => Promise<RouteResult> | RouteResult;
   method: Method;
   operationId: string;
   // An OpenAPI path template such as /v1/tickets/{key}.
   path: string;
-  request?: { body?: B; params?: P; query?: Q };
+  // Header names are lowercase.
+  request?: { body?: B; headers?: H; params?: P; query?: Q };
   // Every status the handler returns. Problems are documented for every route.
   responses: Record<number, RouteResponse>;
   scope: Scope | null;
@@ -68,15 +73,21 @@ export type Route = Omit<
   'handler' | 'request'
 > & {
   handler: (
-    input: RouteInput<z.ZodObject, z.ZodObject, z.ZodType>,
+    input: RouteInput<z.ZodObject, z.ZodObject, z.ZodType, z.ZodObject>,
   ) => Promise<RouteResult> | RouteResult;
-  request?: { body?: z.ZodType; params?: z.ZodObject; query?: z.ZodObject };
+  request?: {
+    body?: z.ZodType;
+    headers?: z.ZodObject;
+    params?: z.ZodObject;
+    query?: z.ZodObject;
+  };
 };
 
 export function defineRoute<
   P extends z.ZodObject | undefined = undefined,
   Q extends z.ZodObject | undefined = undefined,
   B extends z.ZodType | undefined = undefined,
->(route: RouteDefinition<P, Q, B>): Route {
+  H extends z.ZodObject | undefined = undefined,
+>(route: RouteDefinition<P, Q, B, H>): Route {
   return route as unknown as Route;
 }

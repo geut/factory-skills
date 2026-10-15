@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
@@ -46,6 +47,9 @@ type ApplySource = 'command' | 'runtime' | 'action' | 'validator' | 'controller'
 export type ApplyResult = {
   armRunId: RunId | null;
   response: ControllerResponse;
+  // The events.revision that recorded this input, or that recorded it the
+  // first time for a duplicate. Null when nothing was recorded.
+  revision: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -410,6 +414,28 @@ export function listCurrentTicketRefs(db: DatabaseSync): Array<string> {
     }
   }
   return refs;
+}
+
+// The change cursor: the newest events.revision, or 0 before any event.
+export function latestRevision(db: DatabaseSync): number {
+  return integer(
+    row(db.prepare('SELECT coalesce(max(revision), 0) AS revision FROM events').get()),
+    'revision',
+  );
+}
+
+// The API names a ticket by its factory directory's name, `<slug>-<hash8>`.
+export function ticketKeyOf(snapshot: FactorySnapshot): string {
+  return path.basename(snapshot.execution.factoryDir);
+}
+
+export function loadCurrentByFactoryKey(db: DatabaseSync, key: string): FactorySnapshot | null {
+  const found = db
+    .prepare('SELECT id, factory_dir FROM ticket_executions WHERE is_current = 1')
+    .all()
+    .map(row)
+    .find((record) => path.basename(text(record, 'factory_dir')) === key);
+  return found === undefined ? null : loadExecutionRow(db, executionId(text(found, 'id')));
 }
 
 export function loadCurrentByTicketKey(db: DatabaseSync, key: string): FactorySnapshot | null {
@@ -1402,24 +1428,27 @@ function insertInputEvent(
     runId: string | null;
     source: ApplySource;
   },
-): void {
-  db.prepare(
-    `INSERT INTO events
+): number {
+  const inserted = db
+    .prepare(
+      `INSERT INTO events
       (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json, processing_status,
        processed_at, actor, actor_on_behalf_of)
      VALUES (?, ?, ?, 'input', ?, ?, ?, '{}', ?, ?, ?, ?)`,
-  ).run(
-    input.id,
-    input.executionId,
-    input.runId,
-    input.source,
-    input.kind,
-    input.dedupeKey,
-    input.failed ? 'failed' : 'processed',
-    input.now,
-    input.actor?.client ?? null,
-    input.actor?.onBehalfOf ?? null,
-  );
+    )
+    .run(
+      input.id,
+      input.executionId,
+      input.runId,
+      input.source,
+      input.kind,
+      input.dedupeKey,
+      input.failed ? 'failed' : 'processed',
+      input.now,
+      input.actor?.client ?? null,
+      input.actor?.onBehalfOf ?? null,
+    );
+  return Number(inserted.lastInsertRowid);
 }
 
 export function applyControllerEvent(
@@ -1436,16 +1465,23 @@ export function applyControllerEvent(
   },
 ): ApplyResult {
   return immediateTransaction(db, () => {
-    const duplicate = db.prepare('SELECT 1 FROM events WHERE dedupe_key = ?').get(input.dedupeKey);
+    const duplicate = db
+      .prepare('SELECT revision FROM events WHERE dedupe_key = ?')
+      .get(input.dedupeKey);
     const current = snapshotForEvent(db, input.event);
     if (duplicate !== undefined) {
       if (current === null) {
         return {
           armRunId: null,
           response: { kind: 'rejected', message: 'Duplicate event has no execution.' },
+          revision: null,
         };
       }
-      return { armRunId: null, response: describeExisting(current) };
+      return {
+        armRunId: null,
+        response: describeExisting(current),
+        revision: integer(row(duplicate), 'revision'),
+      };
     }
     input.prepare?.(db);
     const reduction = reduce({
@@ -1457,8 +1493,9 @@ export function applyControllerEvent(
     if (reduction.changed && reduction.snapshot !== null) {
       persist(db, current, reduction.snapshot, reduction.usage, input.now);
     }
+    let revision: number | null = null;
     if (reduction.response.kind === 'status') {
-      insertInputEvent(db, {
+      revision = insertInputEvent(db, {
         actor: input.actor ?? null,
         dedupeKey: input.dedupeKey,
         executionId: reduction.snapshot?.execution.id ?? current?.execution.id ?? null,
@@ -1470,7 +1507,7 @@ export function applyControllerEvent(
         source: input.source,
       });
     }
-    return { armRunId: reduction.armRunId, response: reduction.response };
+    return { armRunId: reduction.armRunId, response: reduction.response, revision };
   });
 }
 

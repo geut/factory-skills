@@ -6,6 +6,7 @@ import { ghPullRequest } from '../actions/wrapup.ts';
 import { readFactoryConfig } from '../config.ts';
 import {
   randomIds,
+  type Actor,
   type ControllerEvent,
   type FactorySnapshot,
   type IdSource,
@@ -44,11 +45,14 @@ import {
   formatStatus,
   listActiveRuns,
   listCurrentTicketRefs,
+  latestRevision,
   listRunningChildren,
+  loadCurrentByFactoryKey,
   loadCurrentByTicketKey,
   loadSnapshotByRun,
   requeueOrphanedPanes,
   requeueOrphanedValidations,
+  ticketKeyOf,
   type ApplyResult,
   type RunningChildRow,
 } from './store.ts';
@@ -82,8 +86,56 @@ export function ticketDetailOf(snapshot: FactorySnapshot): TicketDetail {
   };
 }
 
+// Why the API refused a command, before anything changed.
+export type CommandRefusal =
+  | 'factory_config'
+  | 'invalid_ref'
+  | 'invalid_state'
+  | 'not_waiting_for_reply'
+  | 'ticket_not_found'
+  | 'tracker_unavailable'
+  | 'umbrella_issue';
+
+// An API command's actor, and the client's Idempotency-Key, if it sent one.
+export type CommandOptions = { actor: Actor | null; idempotencyKey: string | null };
+
+export type CommandOutcome =
+  | { kind: 'accepted'; message: string; revision: number; ticket: string }
+  | { kind: 'refused'; message: string; reason: CommandRefusal };
+
+type Committed =
+  | { applied: ApplyResult; displayRef: string; kind: 'committed' }
+  | { kind: 'refused'; message: string; reason: CommandRefusal };
+
+// The commands the API calls. Each returns once the command is committed; agent
+// launches and validations follow in the background.
+export type FactoryCommands = {
+  complete: (key: string, options: CommandOptions) => CommandOutcome;
+  reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
+  retry: (key: string, options: CommandOptions) => CommandOutcome;
+  start: (source: TicketSource, options: CommandOptions) => CommandOutcome;
+};
+
+const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
+
+// A client's Idempotency-Key replaces the command's own dedupe key, scoped to
+// the client so two clients cannot collide.
+function dedupe(options: CommandOptions, own: string): string {
+  return options.idempotencyKey === null
+    ? own
+    : `api:${options.actor?.client ?? ''}:${options.idempotencyKey}`;
+}
+
+function committed(applied: ApplyResult, displayRef: string, refusal: CommandRefusal): Committed {
+  if (applied.response.kind === 'rejected') {
+    return { kind: 'refused', message: applied.response.message, reason: refusal };
+  }
+  return { applied, displayRef, kind: 'committed' };
+}
+
 export type FactoryService = {
   command: (args: string) => Promise<string>;
+  commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
   progress: () => Array<TicketProgress>;
   recover: () => Promise<void>;
@@ -126,7 +178,8 @@ export function createFactoryService(input: {
     event: ControllerEvent,
     dedupeKey: string,
     source: 'command' | 'runtime' | 'controller',
-  ): ApplyResult => applyControllerEvent(db, { dedupeKey, event, ids, now: now(), source });
+    actor: Actor | null = null,
+  ): ApplyResult => applyControllerEvent(db, { actor, dedupeKey, event, ids, now: now(), source });
 
   const arm = (runId: RunId): void => {
     watchRun({
@@ -278,14 +331,17 @@ export function createFactoryService(input: {
     };
   }
 
-  async function start(source: TicketSource): Promise<string> {
+  // Each command's synchronous part: it resolves, applies, and commits, and
+  // leaves dispatch to the caller. Pi waits for the dispatch; the API answers
+  // as soon as the command is committed.
+  function startCommitted(source: TicketSource, options: CommandOptions): Committed {
     const policy = policyFromConfig();
     if (typeof policy === 'string') {
-      return policy;
+      return { kind: 'refused', message: policy, reason: 'factory_config' };
     }
     const config = readFactoryConfig(input.factoryRoot);
     if (config.kind === 'error') {
-      return config.message;
+      return { kind: 'refused', message: config.message, reason: 'factory_config' };
     }
     const resolved = resolveTicket({
       codeRoot: input.codeRoot,
@@ -296,16 +352,86 @@ export function createFactoryService(input: {
       source,
     });
     if (resolved.kind === 'error') {
-      return resolved.message;
+      return {
+        kind: 'refused',
+        message: resolved.message,
+        reason: resolved.reason ?? 'invalid_ref',
+      };
     }
     mkdirSync(resolved.ticket.factoryDir, { recursive: true });
     const applied = apply(
       { kind: 'start', policy, ticket: resolved.ticket },
-      `command:start:${resolved.ticket.id}`,
+      dedupe(options, `command:start:${resolved.ticket.id}`),
       'command',
+      options.actor,
     );
+    return committed(applied, resolved.ticket.displayRef, 'invalid_state');
+  }
+
+  function replyCommitted(
+    snapshot: FactorySnapshot,
+    answer: string,
+    options: CommandOptions,
+  ): Committed {
+    const key = dedupe(options, `reply:${snapshot.ticket.id}:${sha256(answer)}`);
+    const applied = apply(
+      {
+        ...(options.actor === null ? {} : { actor: options.actor }),
+        answer,
+        idempotencyKey: key,
+        kind: 'reply',
+        ticketId: snapshot.ticket.id,
+      },
+      key,
+      'command',
+      options.actor,
+    );
+    const waiting = snapshot.attention.some(
+      (item) => item.status === 'open' && item.runId !== null,
+    );
+    return committed(
+      applied,
+      snapshot.ticket.displayRef,
+      waiting ? 'invalid_state' : 'not_waiting_for_reply',
+    );
+  }
+
+  function retryCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+    const applied = apply(
+      {
+        idempotencyKey: `retry:${snapshot.execution.version}`,
+        kind: 'retry',
+        ticketId: snapshot.ticket.id,
+      },
+      dedupe(options, `retry:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      'command',
+      options.actor,
+    );
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  // The human marks a ready-for-handoff ticket done. Repeating it is a no-op.
+  function completeCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+    const applied = apply(
+      {
+        idempotencyKey: `complete:${snapshot.ticket.id}`,
+        kind: 'complete',
+        ticketId: snapshot.ticket.id,
+      },
+      dedupe(options, `complete:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      'command',
+      options.actor,
+    );
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  async function start(source: TicketSource): Promise<string> {
+    const result = startCommitted(source, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
     await drain();
-    return startReply(applied, resolved.ticket.displayRef);
+    return startReply(result.applied, result.displayRef);
   }
 
   async function reply(ref: string, answer: string): Promise<string> {
@@ -313,18 +439,12 @@ export function createFactoryService(input: {
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    const applied = apply(
-      {
-        answer,
-        idempotencyKey: `reply:${snapshot.ticket.id}:${sha256(answer)}`,
-        kind: 'reply',
-        ticketId: snapshot.ticket.id,
-      },
-      `reply:${snapshot.ticket.id}:${sha256(answer)}`,
-      'command',
-    );
+    const result = replyCommitted(snapshot, answer, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
     await drain();
-    return report(applied, ref);
+    return report(result.applied, ref);
   }
 
   async function retry(ref: string): Promise<string> {
@@ -332,37 +452,57 @@ export function createFactoryService(input: {
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    const applied = apply(
-      {
-        idempotencyKey: `retry:${snapshot.execution.version}`,
-        kind: 'retry',
-        ticketId: snapshot.ticket.id,
-      },
-      `retry:${snapshot.ticket.id}:${snapshot.execution.version}`,
-      'command',
-    );
+    const result = retryCommitted(snapshot, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
     await drain();
-    return report(applied, ref);
+    return report(result.applied, ref);
   }
 
-  // The human marks a ready-for-handoff ticket done. Repeating it is a no-op.
   async function complete(ref: string): Promise<string> {
     const snapshot = requireSnapshot(ref);
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    const applied = apply(
-      {
-        idempotencyKey: `complete:${snapshot.ticket.id}`,
-        kind: 'complete',
-        ticketId: snapshot.ticket.id,
-      },
-      `complete:${snapshot.ticket.id}:${snapshot.execution.version}`,
-      'command',
-    );
+    const result = completeCommitted(snapshot, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
     await drain();
-    return formatStatus(applied.response);
+    return formatStatus(result.applied.response);
   }
+
+  // The API's commands name a ticket by its key and return once committed.
+  function accepted(result: Committed): CommandOutcome {
+    if (result.kind === 'refused') {
+      return result;
+    }
+    void drain();
+    const snapshot = loadCurrentByTicketKey(db, result.displayRef);
+    return {
+      kind: 'accepted',
+      message: result.applied.response.message,
+      revision: result.applied.revision ?? latestRevision(db),
+      ticket: snapshot === null ? '' : ticketKeyOf(snapshot),
+    };
+  }
+
+  function byKey(key: string, run: (snapshot: FactorySnapshot) => Committed): CommandOutcome {
+    const snapshot = loadCurrentByFactoryKey(db, key);
+    if (snapshot === null) {
+      return { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' };
+    }
+    return accepted(run(snapshot));
+  }
+
+  const commands: FactoryCommands = {
+    complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
+    reply: (key, answer, options) =>
+      byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
+    retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
+    start: (source, options) => accepted(startCommitted(source, options)),
+  };
 
   function startReply(applied: ApplyResult, ref: string): string {
     if (applied.response.kind === 'rejected') {
@@ -443,6 +583,7 @@ export function createFactoryService(input: {
         }
       }
     },
+    commands,
     progress: () =>
       listCurrentTicketRefs(db).flatMap((ref) => {
         const snapshot = loadCurrentByTicketKey(db, ref);

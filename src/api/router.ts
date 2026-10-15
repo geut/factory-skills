@@ -180,6 +180,7 @@ export function createRouter(
       }
       return parsed.data;
     };
+    const headers = parse('headers', route.request?.headers, request.headers);
     const params = parse('params', route.request?.params, rawParams);
     const query = parse('query', route.request?.query, queryObject(url.searchParams));
     const body = parse('body', route.request?.body, rawBody);
@@ -194,6 +195,7 @@ export function createRouter(
         actor,
         body,
         context: options.context,
+        headers: headers as Record<string, unknown>,
         params: params as Record<string, unknown>,
         query: query as Record<string, unknown>,
         request,

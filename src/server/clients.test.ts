@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { defineRoute } from '../api/route.ts';
 import { createRouter } from '../api/router.ts';
 import { apiRoutes } from '../api/routes.ts';
+import { unusedCommands } from '../api/testing.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 import {
   authenticate,
@@ -120,7 +121,11 @@ async function serveWith(db: DatabaseSync): Promise<string> {
   const server = createServer(
     createRouter({
       authorize: createAuthorizer(db, () => now),
-      context: { instanceId: 'test', openapi: () => ({ openapi: '3.1.0' }) },
+      context: {
+        commands: unusedCommands,
+        instanceId: 'test',
+        openapi: () => ({ openapi: '3.1.0' }),
+      },
       routes: [...apiRoutes, act],
       validateResponses: true,
     }),

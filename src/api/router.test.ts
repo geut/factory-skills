@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { problem, ProblemError } from './problem.ts';
 import { defineRoute, type Route } from './route.ts';
 import { createRouter, type RouterOptions } from './router.ts';
+import { unusedCommands } from './testing.ts';
 
 const echo = defineRoute({
   handler: ({ body, params, query }) => ({
@@ -70,7 +71,7 @@ const servers: Array<Server> = [];
 async function start(options: Partial<RouterOptions> = {}): Promise<string> {
   const server = createServer(
     createRouter({
-      context: { instanceId: 'test', openapi: () => ({}) },
+      context: { commands: unusedCommands, instanceId: 'test', openapi: () => ({}) },
       onError: (error) => errors.push(error),
       routes,
       validateResponses: true,

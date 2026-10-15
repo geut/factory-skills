@@ -63,9 +63,9 @@ export function problem(
 export class ProblemError extends Error {
   readonly problem: Problem;
 
-  constructor(type: ProblemType, detail?: string) {
+  constructor(type: ProblemType, detail?: string, errors?: Array<z.infer<typeof FieldError>>) {
     super(detail ?? problemTypes[type].title);
     this.name = 'ProblemError';
-    this.problem = problem(type, detail);
+    this.problem = problem(type, detail, errors);
   }
 }

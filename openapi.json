@@ -107,10 +107,352 @@
           }
         }
       }
+    },
+    "/v1/tickets": {
+      "post": {
+        "operationId": "startTicket",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Start a ticket from a tracker issue, a local file, or text",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTicket"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}/replies": {
+      "post": {
+        "operationId": "replyToTicket",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Answer the agent that paused the ticket",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reply"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}/retries": {
+      "post": {
+        "operationId": "retryTicket",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Retry the step that failed for infrastructure reasons",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}/complete": {
+      "post": {
+        "operationId": "completeTicket",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Mark a ticket that is ready for handoff as done",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "StartTicket": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A GitHub issue URL, owner/repo#n, #n, KEY-123, or a local file."
+              }
+            },
+            "required": [
+              "ref"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "An id for a ticket given as text."
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The ticket itself, as markdown."
+              }
+            },
+            "required": [
+              "id",
+              "text"
+            ]
+          }
+        ]
+      },
+      "TicketKey": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+$",
+        "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`.",
+        "example": "geut-factory-skills-42-ab12cd34"
+      },
+      "Reply": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The answer for the waiting agent."
+          }
+        },
+        "required": [
+          "answer"
+        ]
+      },
       "Health": {
         "type": "object",
         "properties": {
@@ -223,6 +565,30 @@
         "required": [
           "name",
           "onBehalfOf"
+        ],
+        "additionalProperties": false
+      },
+      "CommandAccepted": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "What the controller did, for people."
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "The events.revision that recorded the command. The event stream passes it."
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/TicketKey"
+          }
+        },
+        "required": [
+          "message",
+          "revision",
+          "ticket"
         ],
         "additionalProperties": false
       }
