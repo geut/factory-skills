@@ -15,7 +15,7 @@ import {
   type FactoryCommands,
   type FactoryService,
 } from '../controller/service.ts';
-import type { CodeHost } from '../ports/code-host.ts';
+import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
 import type { GithubClient } from '../ports/github.ts';
 import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
@@ -187,12 +187,13 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   let document: Record<string, unknown> | null = null;
   // The router listens before the service exists; commands wait for it.
   let service: FactoryService | null = null;
-  const ready = (): FactoryCommands => {
+  const started = (): FactoryService => {
     if (service === null) {
       throw new ProblemError('internal_error', 'The server is still starting.');
     }
-    return service.commands;
+    return service;
   };
+  const ready = (): FactoryService & FactoryCommands => ({ ...started(), ...started().commands });
   const commands: FactoryCommands = {
     complete: (key, options) => ready().complete(key, options),
     reply: (key, answer, options) => ready().reply(key, answer, options),
@@ -208,6 +209,16 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         events,
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+        webhooks: {
+          pullRequestChanged: (pullRequest) => ready().pullRequestChanged(pullRequest),
+          secret: () => {
+            const current = readFactoryConfig(factoryRoot);
+            const name = current.kind === 'ok' ? current.config.codeHost?.webhookSecretEnv : null;
+            const value = name === null || name === undefined ? '' : (input.env[name] ?? '');
+            return value.length > 0 ? value : null;
+          },
+          verify: verifyGithubSignature,
+        },
       },
       onError: (error) => {
         input.out(

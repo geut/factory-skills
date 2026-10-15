@@ -88,8 +88,7 @@ class BodyError extends Error {
   }
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  const mediaType = (request.headers['content-type'] ?? '').split(';')[0]?.trim();
+async function readBytes(request: IncomingMessage): Promise<Buffer> {
   const chunks: Array<Buffer> = [];
   let size = 0;
   for await (const chunk of request) {
@@ -100,14 +99,20 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     }
     chunks.push(buffer);
   }
-  if (size === 0) {
+  return Buffer.concat(chunks);
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const mediaType = (request.headers['content-type'] ?? '').split(';')[0]?.trim();
+  const bytes = await readBytes(request);
+  if (bytes.length === 0) {
     return undefined;
   }
   if (mediaType !== 'application/json') {
     throw new BodyError('unsupported_media_type', 'Send the body as application/json.');
   }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(bytes.toString('utf8'));
   } catch {
     throw new BodyError('validation_error', 'Body is not valid JSON.');
   }
@@ -156,7 +161,18 @@ export function createRouter(
       ]),
     );
     let rawBody: unknown;
-    if (route.request?.body !== undefined) {
+    let bytes: Buffer | null = null;
+    if (route.request?.raw === true) {
+      try {
+        bytes = await readBytes(request);
+      } catch (error: unknown) {
+        if (error instanceof BodyError) {
+          sendProblem(response, problem(error.type, error.message));
+          return;
+        }
+        throw error;
+      }
+    } else if (route.request?.body !== undefined) {
       try {
         rawBody = await readJson(request);
       } catch (error: unknown) {
@@ -198,6 +214,7 @@ export function createRouter(
         headers: headers as Record<string, unknown>,
         params: params as Record<string, unknown>,
         query: query as Record<string, unknown>,
+        rawBody: bytes,
         request,
       });
     } catch (error: unknown) {

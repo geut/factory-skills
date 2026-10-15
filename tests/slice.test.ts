@@ -1710,3 +1710,33 @@ test('sync leaves an open pull request waiting at handoff', async () => {
   );
   await closeWhenIdle(db);
 });
+
+test('a webhook about a ticket pull request completes it like a sync would', async () => {
+  const { branch, db, service } = await handedOff('merged');
+  const ticket = service.pullRequestChanged({
+    author: 'dpaez',
+    closedAt: '2026-10-16T09:00:00Z',
+    headBranch: branch,
+    mergedAt: '2026-10-16T09:00:00Z',
+    number: 7,
+    openedAt: null,
+    state: 'merged',
+    url: 'https://github.com/geut/factory-skills/pull/7',
+  });
+  assert.match(ticket ?? '', /^proj-123-[0-9a-f]{8}$/);
+  await waitFor(() => service.status('proj-123').includes('complete'));
+  assert.equal(
+    service.pullRequestChanged({
+      author: null,
+      closedAt: null,
+      headBranch: 'someone/else',
+      mergedAt: null,
+      number: 9,
+      openedAt: null,
+      state: 'open',
+      url: 'https://github.com/geut/factory-skills/pull/9',
+    }),
+    null,
+  );
+  await closeWhenIdle(db);
+});

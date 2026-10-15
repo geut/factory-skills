@@ -3,6 +3,7 @@ import { commandRoutes } from './commands.ts';
 import { eventRoutes } from './events.ts';
 import { readRoutes } from './reads.ts';
 import { defineRoute, type Route } from './route.ts';
+import { webhookRoutes } from './webhooks.ts';
 
 const Health = z
   .object({
@@ -75,4 +76,5 @@ export const apiRoutes: Array<Route> = [
   ...readRoutes,
   ...eventRoutes,
   ...commandRoutes,
+  ...webhookRoutes,
 ];

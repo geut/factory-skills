@@ -827,6 +827,65 @@
           }
         }
       }
+    },
+    "/v1/webhooks/github": {
+      "post": {
+        "operationId": "receiveGithubWebhook",
+        "security": [],
+        "summary": "Receive a GitHub webhook delivery",
+        "tags": [
+          "webhooks"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-github-delivery",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-github-event",
+            "schema": {
+              "description": "pull_request and pull_request_review are handled; others are accepted and ignored.",
+              "type": "string"
+            },
+            "description": "pull_request and pull_request_review are handled; others are accepted and ignored."
+          },
+          {
+            "in": "header",
+            "name": "x-hub-signature-256",
+            "schema": {
+              "description": "sha256=<HMAC of the raw body with the webhook secret>.",
+              "type": "string"
+            },
+            "description": "sha256=<HMAC of the raw body with the webhook secret>."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The delivery was checked and handled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookReceived"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2089,6 +2148,22 @@
           "stage",
           "startedAt",
           "task",
+          "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookReceived": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "description": "The ticket the delivery updated, or null when it was ignored.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
           "ticket"
         ],
         "additionalProperties": false

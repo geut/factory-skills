@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
 import type { FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
+import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { EventHub } from '../server/events.ts';
 
 // What a route may ask for while it handles a request.
@@ -13,6 +14,17 @@ export type ApiContext = {
   events: EventHub | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
+  // The code host side of webhooks; null where the server has none.
+  webhooks: Webhooks | null;
+};
+
+export type Webhooks = {
+  // Updates the ticket of a pull request the code host reported changed, and
+  // returns its key, or null when no ticket has that pull request.
+  pullRequestChanged: (pullRequest: PullRequestInfo) => string | null;
+  // The configured webhook secret, or null when webhooks are off.
+  secret: () => string | null;
+  verify: (headers: Record<string, string | undefined>, rawBody: Buffer, secret: string) => boolean;
 };
 
 // `read` routes only look; `act` routes change tickets and include `read`.
@@ -43,6 +55,8 @@ export type RouteInput<
   headers: Output<H>;
   params: Output<P>;
   query: Output<Q>;
+  // The body's bytes, for routes that ask for them with `raw`.
+  rawBody: Buffer | null;
   request: IncomingMessage;
 };
 
@@ -67,7 +81,7 @@ export type RouteDefinition<
   // An OpenAPI path template such as /v1/tickets/{key}.
   path: string;
   // Header names are lowercase.
-  request?: { body?: B; headers?: H; params?: P; query?: Q };
+  request?: { body?: B; headers?: H; params?: P; query?: Q; raw?: boolean };
   // Every status the handler returns. Problems are documented for every route.
   responses: Record<number, RouteResponse>;
   scope: Scope | null;
@@ -88,6 +102,8 @@ export type Route = Omit<
     headers?: z.ZodObject;
     params?: z.ZodObject;
     query?: z.ZodObject;
+    // The handler gets the body as bytes, unparsed, such as for a signature check.
+    raw?: boolean;
   };
 };
 

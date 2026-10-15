@@ -194,6 +194,7 @@ The factory reads issues through a **tracker** and pull requests through a **cod
 - `codeHost.pullRequests` is on unless it is `false`. When it is on and the worktree is clean, wrap-up pushes the branch and opens the pull request.
 - When wrap-up validation passes, the pull request it checked becomes the ticket's. A ticket with none recorded, such as one you opened by hand, is found later by its branch.
 - The server checks the pull request of every ticket in handoff at startup and then every `codeHost.syncMinutes` (10 by default), and stores its reviews and commits. A merged pull request completes the ticket, recorded as done by `code-host`; one closed without merging cancels it with reason `pull_request_closed`. `/factory complete` still works by hand.
+- Webhooks make that faster. Set `codeHost.webhookSecretEnv` to the name of an environment variable holding the secret, then point a GitHub webhook for **Pull requests** and **Pull request reviews** at `POST /v1/webhooks/github` with that secret. A delivery needs no token; its `X-Hub-Signature-256` must match, or it gets `401`. Deliveries about pull requests no ticket has are accepted and ignored. The periodic sync stays on as a backstop, because GitHub does not retry a failed delivery.
 
 ## Factory root
 

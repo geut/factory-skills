@@ -127,6 +127,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
         events: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        webhooks: null,
       },
       routes: [...apiRoutes, act],
       validateResponses: true,

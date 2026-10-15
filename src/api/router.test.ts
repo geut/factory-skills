@@ -77,6 +77,7 @@ async function start(options: Partial<RouterOptions> = {}): Promise<string> {
         events: null,
         instanceId: 'test',
         openapi: () => ({}),
+        webhooks: null,
       },
       onError: (error) => errors.push(error),
       routes,

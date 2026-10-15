@@ -19,6 +19,7 @@ import { sha256 } from '../hash.ts';
 import {
   createGithubCodeHost,
   type CodeHost,
+  type PullRequestInfo,
   type PullRequestOutcome,
 } from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
@@ -115,6 +116,9 @@ export type FactoryService = {
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
   progress: () => Array<TicketProgress>;
+  // The code host reported a pull request changed: refresh the ticket that
+  // has it and return the ticket's key, or null when none does.
+  pullRequestChanged: (pullRequest: PullRequestInfo) => string | null;
   // Records what the code host says about a ticket's pull request, then
   // finishes the ticket on a merge or a close.
   recordPullRequestOutcome: (executionId: string, outcome: PullRequestOutcome) => void;
@@ -236,6 +240,24 @@ export function createFactoryService(input: {
         CODE_HOST_ACTOR,
       );
     }
+  }
+
+  function pullRequestChanged(pullRequest: PullRequestInfo): string | null {
+    const found = db
+      .prepare(
+        `SELECT e.id, e.factory_dir
+         FROM ticket_executions AS e
+         LEFT JOIN pull_requests AS pr ON pr.execution_id = e.id
+         WHERE e.is_current = 1 AND (pr.url = ? OR e.worktree_branch = ?)
+         LIMIT 1`,
+      )
+      .get(pullRequest.url, pullRequest.headBranch);
+    if (found === undefined) {
+      return null;
+    }
+    recordPullRequestOutcome(String(found['id']), codeHost().pullRequestOutcome(pullRequest));
+    void drain();
+    return path.basename(String(found['factory_dir']));
   }
 
   // Tickets waiting at handoff, with the pull request recorded for them, if any.
@@ -643,6 +665,7 @@ export function createFactoryService(input: {
     },
     commands,
     progress: () => progressOf(db),
+    pullRequestChanged,
     recordPullRequestOutcome,
     recover,
     runningChildren: () => listRunningChildren(db),
