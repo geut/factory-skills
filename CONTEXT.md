@@ -62,6 +62,18 @@ _Avoid_: block, halt
 A person's answer to the agent that paused the ticket, either because it asked a question or because it reached a limit. The reply resumes that agent's session.
 _Avoid_: answer (as a command), resume
 
+**Cancel**:
+A person ending a ticket for good. Its worktree, branch, and pull request are kept.
+_Avoid_: abort, abandon
+
+**Stop**:
+A person ending one running agent's run without ending the ticket, which then pauses.
+_Avoid_: interrupt, kill
+
+**Rerun**:
+Starting a new execution of a finished ticket from a fresh copy of its issue.
+_Avoid_: restart, retry (which redoes one failed step)
+
 **Retry**:
 Redoing a step that failed for infrastructure reasons, such as input preparation, a validation, or a launch. A retry never asks an agent to change its output.
 
@@ -109,8 +121,7 @@ _Avoid_: review round, when the factory's own review stage is meant
 A commit pushed to a ticket's pull request after handoff.
 
 **Abandoned**:
-A ticket whose pull request was closed without merging.
-_Avoid_: cancelled (a person stopping the ticket)
+A cancelled ticket whose pull request was closed without merging, as distinct from one a person cancelled.
 
 ### Server and clients
 
