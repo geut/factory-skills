@@ -115,15 +115,15 @@ export type FactoryService = {
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
   progress: () => Array<TicketProgress>;
+  // Records what the code host says about a ticket's pull request, then
+  // finishes the ticket on a merge or a close.
+  recordPullRequestOutcome: (executionId: string, outcome: PullRequestOutcome) => void;
   recover: () => Promise<void>;
   runningChildren: () => Array<RunningChildRow>;
   status: (ref: string) => string;
   // Stops dispatching and waits for the action in progress. Agent panes keep
   // running; the next host adopts them with recover().
   stop: () => Promise<void>;
-  // Records what the code host says about a ticket's pull request, then
-  // finishes the ticket on a merge or a close.
-  recordPullRequestOutcome: (executionId: string, outcome: PullRequestOutcome) => void;
   // Checks the pull request of every ticket in handoff.
   syncPullRequests: () => Promise<{ errors: Array<string>; synced: number }>;
   ticketDetail: (ref: string | null) => TicketDetail | string;
