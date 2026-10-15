@@ -20,6 +20,7 @@ import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
 import type { GithubClient } from '../tickets.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
+import { createEventHub } from './events.ts';
 import {
   acquireServerLease,
   HEARTBEAT_MS,
@@ -180,6 +181,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
 
   const instanceId = randomUUID();
+  const events = createEventHub(db);
   let document: Record<string, unknown> | null = null;
   // The router listens before the service exists; commands wait for it.
   let service: FactoryService | null = null;
@@ -201,6 +203,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       context: {
         commands,
         db,
+        events,
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
       },
@@ -258,6 +261,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     }
     closed = true;
     clearInterval(heartbeat);
+    events.close();
     await running.stop();
     await closeHttp(http);
     releaseServerLease(db, instanceId);

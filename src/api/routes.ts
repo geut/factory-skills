@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { commandRoutes } from './commands.ts';
+import { eventRoutes } from './events.ts';
 import { readRoutes } from './reads.ts';
 import { defineRoute, type Route } from './route.ts';
 
@@ -67,4 +68,11 @@ const me = defineRoute({
 });
 
 // Every route the server serves, in the order the document lists them.
-export const apiRoutes: Array<Route> = [health, openapi, me, ...readRoutes, ...commandRoutes];
+export const apiRoutes: Array<Route> = [
+  health,
+  openapi,
+  me,
+  ...readRoutes,
+  ...eventRoutes,
+  ...commandRoutes,
+];

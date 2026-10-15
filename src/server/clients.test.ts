@@ -124,6 +124,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
       context: {
         commands: unusedCommands,
         db: null,
+        events: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
       },

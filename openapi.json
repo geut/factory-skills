@@ -549,6 +549,68 @@
         }
       }
     },
+    "/v1/events": {
+      "get": {
+        "operationId": "streamEvents",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Stream changes as Server-Sent Events",
+        "tags": [
+          "events"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "last-event-id",
+            "schema": {
+              "description": "The last revision seen. EventSource sends it when it reconnects.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "description": "The last revision seen. EventSource sends it when it reconnects."
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "description": "Start after this revision. Without it or Last-Event-ID, only new events.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "description": "Start after this revision. Without it or Last-Event-ID, only new events."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A text/event-stream. Each event has `id: <revision>`, `event: <kind>`, and `data:` holding an EventPayload. A comment line is sent every 15 s.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets/{key}/replies": {
       "post": {
         "operationId": "replyToTicket",
@@ -1930,6 +1992,73 @@
           "ticket"
         ],
         "additionalProperties": false
+      },
+      "EventPayload": {
+        "type": "object",
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "client": {
+                    "type": "string"
+                  },
+                  "onBehalfOf": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "client",
+                  "onBehalfOf"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The API client behind a command; null for everything else."
+          },
+          "card": {
+            "description": "For `card` events, the status card the controller posted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ticket": {
+            "description": "The ticket key, when the event has one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "actor",
+          "card",
+          "run",
+          "task",
+          "ticket"
+        ],
+        "additionalProperties": false,
+        "description": "The data of a /v1/events event. The SSE `id` is the revision and `event` is the kind, such as `start`, `reply`, `runtime_terminal`, `validation_finished`, or `card`."
       }
     },
     "securitySchemes": {

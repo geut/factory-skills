@@ -208,6 +208,10 @@ export function createRouter(
       throw error;
     }
 
+    if ('stream' in result) {
+      result.stream(response);
+      return;
+    }
     const declared = route.responses[result.status];
     if (options.validateResponses) {
       const checked = declared?.schema.safeParse(result.body);

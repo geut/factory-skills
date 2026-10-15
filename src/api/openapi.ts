@@ -1,4 +1,5 @@
 import { createDocument, type ZodOpenApiPathsObject } from 'zod-openapi';
+import { EventPayload } from './events.ts';
 import { Problem, PROBLEM_MEDIA_TYPE } from './problem.ts';
 import type { Route } from './route.ts';
 
@@ -56,6 +57,9 @@ export function buildOpenApiDocument(routes: Array<Route>): Record<string, unkno
   }
   return createDocument({
     components: {
+      // OpenAPI 3.1 cannot type an event stream's items, so the payload is a
+      // named schema clients import by name.
+      schemas: { EventPayload },
       securitySchemes: {
         bearer: {
           description:

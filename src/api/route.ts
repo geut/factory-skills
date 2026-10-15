@@ -1,14 +1,16 @@
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
 import type { FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
+import type { EventHub } from '../server/events.ts';
 
 // What a route may ask for while it handles a request.
 export type ApiContext = {
   commands: FactoryCommands;
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;
+  events: EventHub | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
 };
@@ -44,11 +46,14 @@ export type RouteInput<
   request: IncomingMessage;
 };
 
-export type RouteResult = {
-  body: unknown;
-  headers?: Record<string, string>;
-  status: number;
-};
+// A JSON answer, or a stream that writes the response itself, such as SSE.
+export type RouteResult =
+  | {
+      body: unknown;
+      headers?: Record<string, string>;
+      status: number;
+    }
+  | { stream: (response: ServerResponse) => void };
 
 export type RouteDefinition<
   P extends z.ZodObject | undefined,

@@ -71,7 +71,13 @@ const servers: Array<Server> = [];
 async function start(options: Partial<RouterOptions> = {}): Promise<string> {
   const server = createServer(
     createRouter({
-      context: { commands: unusedCommands, db: null, instanceId: 'test', openapi: () => ({}) },
+      context: {
+        commands: unusedCommands,
+        db: null,
+        events: null,
+        instanceId: 'test',
+        openapi: () => ({}),
+      },
       onError: (error) => errors.push(error),
       routes,
       validateResponses: true,

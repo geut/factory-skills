@@ -95,6 +95,14 @@ Reads need a `read` token.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
 - A run's activity is the agent's latest assistant message in that run, read from its Pi session file.
 
+### Events
+
+`GET /v1/events` (`read`) streams Server-Sent Events, one per row of the `events` table: commands, runtime results, validations, and the status cards the controller posts. Each event is `id: <revision>`, `event: <kind>`, and `data: {ticket, task, run, actor, card}`. Events only name what changed; a client refetches it through the read routes.
+
+- Resume with `Last-Event-ID: <revision>` (EventSource sends it on reconnect) or `?since=<revision>`. Without either, the stream starts with new events.
+- A comment line every 15 s keeps proxies from closing the connection.
+- `EventPayload` in `openapi.json` types `data`. OpenAPI 3.1 cannot type a stream's items, so clients parse events themselves.
+
 ### Commands
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.
