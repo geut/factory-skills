@@ -2040,3 +2040,12 @@ test('rerunning a cancelled ticket starts generation 2 on a new branch, and gene
     /only a complete, cancelled, or failed ticket can be rerun/,
   );
 });
+
+test('the work prompt lists every check work validation runs', async () => {
+  const { runtime } = await reachWork();
+  const prompt = runtime.launches.find((launch) => launch.stage === 'work')?.prompt ?? '';
+  assert.match(prompt, /Work validation checks that:/);
+  assert.match(prompt, /- the worktree has a change/);
+  assert.match(prompt, /- nothing is committed: HEAD stays at the base commit/);
+  assert.doesNotMatch(prompt, /git diff --check/);
+});

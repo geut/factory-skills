@@ -85,12 +85,9 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         ...failures.map((failure) => `- ${failure}`),
       ].join('\n'),
     initial: (input) => {
-      const commands =
-        input.commands.length === 0
-          ? 'none'
-          : input.commands
-              .map((command) => `${command.name}: ${command.argv.join(' ')}`)
-              .join('\n');
+      const commands = input.commands.map(
+        (command) => `- ${command.name} passes: ${command.argv.join(' ')}`,
+      );
       const dependencies =
         input.dependencies.length === 0
           ? 'none'
@@ -110,8 +107,11 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         `Tools: ${childToolList(tools)}`,
         `Work only in ${input.worktree}.`,
         'Leave the work uncommitted.',
-        'Configured checks:',
-        commands,
+        // Everything work validation checks, so nothing it rejects is a surprise.
+        'Work validation checks that:',
+        '- the worktree has a change (an investigation ticket may leave none)',
+        '- nothing is committed: HEAD stays at the base commit',
+        ...commands,
       ].join('\n');
     },
     returned: (origin, round, problems) =>

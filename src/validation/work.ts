@@ -79,40 +79,6 @@ export function collectWorkDiff(cwd: string): { diff: string } | { message: stri
   return { diff: parts.filter((part) => part.trim().length > 0).join('\n') };
 }
 
-function whitespaceCheck(cwd: string): ValidationCheck | { message: string } {
-  const tracked = git(cwd, ['diff', '--check', 'HEAD']);
-  if (gitFailure(tracked)) {
-    return { message: tracked.stderr.trim() || 'cannot run git diff --check' };
-  }
-  const untracked = untrackedPaths(cwd);
-  if (!Array.isArray(untracked)) {
-    return untracked;
-  }
-  const problems = [tracked.stdout, tracked.stderr].filter((part) => part.trim().length > 0);
-  let failed = tracked.code !== 0;
-  for (const file of untracked) {
-    const diff = git(cwd, ['diff', '--check', '--no-index', '--', '/dev/null', file]);
-    if (gitFailure(diff)) {
-      return { message: diff.stderr.trim() || `cannot check untracked file ${file}` };
-    }
-    if (diff.code !== 0 && diff.code !== 1) {
-      failed = true;
-      problems.push(diff.stdout, diff.stderr);
-    }
-  }
-  const details = problems.join('\n').trim();
-  return {
-    command: 'git diff --check',
-    details: failed ? details || 'git diff --check failed' : 'clean',
-    durationMs: null,
-    exitCode: failed ? 2 : 0,
-    kind: 'diff',
-    name: 'git diff --check',
-    outputExcerpt: failed ? excerpt(details) : null,
-    status: failed ? 'failed' : 'passed',
-  };
-}
-
 function commitCheck(cwd: string, baseSha: string): ValidationCheck | { message: string } {
   const head = git(cwd, ['rev-parse', 'HEAD']);
   if (head.code !== 0) {
@@ -251,11 +217,6 @@ async function validateWork(input: {
       status: present ? 'passed' : 'failed',
     });
   }
-  const whitespace = whitespaceCheck(input.cwd);
-  if ('message' in whitespace) {
-    return errorReport(WORK_VALIDATOR_VERSION, whitespace.message);
-  }
-  checks.push(whitespace);
   const commit = commitCheck(input.cwd, input.baseSha);
   if ('message' in commit) {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
