@@ -218,6 +218,8 @@ export function renderLaunchScript(input: {
   model: string;
   piBin: string;
   promptFile: string;
+  // The controller grades the reply, so subagent_done asks for a missing one.
+  replyRequired: boolean;
   runId: string;
   sessionFile: string;
   thinking: string;
@@ -230,7 +232,7 @@ trap '' TSTP
 export PI_SUBAGENT_SESSION=${session}
 export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
-${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
+${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -782,6 +784,8 @@ export function createPiHerdrRuntime(options?: {
         model: spec.model,
         piBin,
         promptFile,
+        // A plan is accepted from its files, whatever the reply says.
+        replyRequired: spec.stage !== 'plan',
         runId: spec.runId,
         sessionFile: spec.sessionFile,
         thinking: spec.thinking,

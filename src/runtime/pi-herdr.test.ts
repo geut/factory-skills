@@ -130,6 +130,7 @@ test('herdr launch uses the generic argv pane contract', () => {
     model: 'work-model',
     piBin: 'pi',
     promptFile: '/tmp/prompt.txt',
+    replyRequired: true,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
     thinking: 'medium',
@@ -139,6 +140,7 @@ test('herdr launch uses the generic argv pane contract', () => {
   assert.match(script, /-e '\/pkg\/child-handshake\.ts'/);
   assert.match(script, /PI_SUBAGENT_AUTO_EXIT=1/);
   assert.match(script, /FACTORY_CHILD=1/);
+  assert.match(script, /FACTORY_REPLY_REQUIRED=1/);
   assert.match(script, /--tools 'read,bash,grep,find,ls,caller_ping,subagent_done'/);
   assert.match(script, / '@\/tmp\/prompt\.txt'/);
   assert.match(script, /\.exitcode/);
