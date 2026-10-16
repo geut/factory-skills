@@ -43,7 +43,7 @@ Run focused checks while working, then the relevant broader suite once. Do not s
 
 ## Finish the work stage
 
-Prove the real artifact before claiming the task is ready. Follow [../prove-it-works/SKILL.md](../prove-it-works/SKILL.md). A compile, typecheck, file timestamp, or self-report is not proof. When the project has `.factory/skills/verify-<repo>/`, drive that skill.
+Prove the real artifact before claiming the task is ready. Follow [../prove-it-works/SKILL.md](../prove-it-works/SKILL.md). A compile, typecheck, file timestamp, or self-report is not proof. When the project has `.factory/skills/verify-<repo>/` and the task changes behavior a user can see in the running product, drive that skill. A change with no runtime behavior, such as a document or static file, is proven by reading it back.
 
 Leave the work uncommitted. The controller inspects the worktree diff and runs the commands in `FACTORY.json` `validation.work.commands`. Do not write an evidence manifest and do not set the task status. Review owns approval.
 
