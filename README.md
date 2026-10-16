@@ -58,7 +58,16 @@ A failed validation resumes the same wrap-up session with the exact failures; wr
 
 The factory server hosts the controller outside Pi, so tickets keep moving with no Pi session open ([ADR-003](docs/adr/0003-a-factory-server-owns-the-controller.md)). It dispatches, recovers runs, serves the API below, and creates `.factory/db/state.sqlite` on its first start. The remaining routes follow in the [build tickets](https://github.com/geut/factory-skills/issues/25).
 
-Build the single executable, then run it from the repository root inside a Herdr pane:
+Prebuilt binaries for Linux arm64 and x64 are published on the [Releases](https://github.com/geut/factory-skills/releases) page, each with a `.sha256` checksum. They need no Node and no checkout of this repository, and run on glibc 2.28 or newer. Download one and run it from the repository root inside a Herdr pane:
+
+```sh
+arch=$(uname -m | sed 's/aarch64/arm64/; s/x86_64/x64/')
+curl -fsSL -o factory "https://github.com/geut/factory-skills/releases/latest/download/factory-linux-$arch"
+chmod +x factory
+./factory serve
+```
+
+On another platform, or to run unreleased changes, build the single executable yourself:
 
 ```sh
 npm run build          # writes dist/factory for this OS and architecture
