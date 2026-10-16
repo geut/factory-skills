@@ -107,6 +107,8 @@ export type StageDefinition<
   contract: string;
   corrections: CorrectionPolicy;
   emoji: string;
+  // How the agent hands off, when it is not "return only the template".
+  handoff?: string;
   // The input for a stage's first run of a task (or ticket): what its input
   // preparation found, what the previous per-task stage handed on, and the
   // round the run starts. The stage that plans starts from the ticket instead.
@@ -193,7 +195,12 @@ export function defineStage<Input, const Name extends StageName, Prepared = null
   };
 }
 
-function defaultReply(spec: { contract: string; skill: string }) {
+function defaultReply(spec: { contract: string; handoff?: string; skill: string }) {
   return (answer: string) =>
-    [childInstructions(spec.skill, spec.contract), '', 'The user answered:', answer].join('\n');
+    [
+      childInstructions(spec.skill, spec.contract, spec.handoff),
+      '',
+      'The user answered:',
+      answer,
+    ].join('\n');
 }

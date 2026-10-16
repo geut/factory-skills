@@ -18,7 +18,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory status <ticket>
 ```
 
-`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The planner still hands off with the `factory.plan.v3` template.
+`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement.
 
 `caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
 
