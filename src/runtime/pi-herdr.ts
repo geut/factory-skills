@@ -617,6 +617,24 @@ export function createPiHerdrRuntime(options?: {
     }
   }
 
+  // The tab a pane is in, or null when it is gone. Herdr may give a closed
+  // pane's id to a new pane, so a remembered root counts only while it is
+  // still in the ticket's tab.
+  async function paneTab(paneId: string): Promise<string | null> {
+    const got = await run(['pane', 'get', paneId]);
+    if (got.code !== 0) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(got.stdout);
+      const pane = nested(parsed, ['result', 'pane']) ?? nested(parsed, ['result']);
+      const tabId = nested(pane, ['tab_id']);
+      return typeof tabId === 'string' ? tabId : null;
+    } catch {
+      return null;
+    }
+  }
+
   // A ticket's tab root pane, created the first time. Null when there is no
   // tab, or one cannot be made: the pane then splits from the host's pane.
   async function tabRoot(tab: TicketTab | null | undefined, cwd: string): Promise<string | null> {
@@ -624,7 +642,7 @@ export function createPiHerdrRuntime(options?: {
       return null;
     }
     const known = tabs.get(tab.key);
-    if (known !== undefined && (await run(['pane', 'get', known.rootPaneId])).code === 0) {
+    if (known !== undefined && (await paneTab(known.rootPaneId)) === known.tabId) {
       return known.rootPaneId;
     }
     const workspace = await hostWorkspace();

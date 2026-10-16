@@ -587,6 +587,8 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
   const calls: Array<Array<string>> = [];
   let tabs = 0;
   const gone = new Set<string>();
+  // A root pane's tab; herdr may give a closed pane's id to a pane elsewhere.
+  const moved = new Map<string, string>();
   const run = async (args: Array<string>) => {
     calls.push(args);
     if (args[0] === 'pane' && args[1] === 'get') {
@@ -596,7 +598,15 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
         : {
             code: 0,
             stderr: '',
-            stdout: JSON.stringify({ result: { pane: { pane_id: pane, workspace_id: 'ws-1' } } }),
+            stdout: JSON.stringify({
+              result: {
+                pane: {
+                  pane_id: pane,
+                  tab_id: moved.get(pane) ?? pane.replace(/^root-/, 'tab-'),
+                  workspace_id: 'ws-1',
+                },
+              },
+            }),
           };
     }
     if (args[0] === 'tab' && args[1] === 'create') {
@@ -682,6 +692,13 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
   calls.length = 0;
   await restarted.launch(spec('repo#2', 'r7'));
   assert.deepEqual(placements(), ['run root-3']);
+
+  // So is one whose root id now names a pane in another tab.
+  moved.set('root-3', 'tab-elsewhere');
+  calls.length = 0;
+  finish('r7');
+  await restarted.launch(spec('repo#2', 'r8'));
+  assert.deepEqual(placements(), ['run root-4']);
 
   // Handoff: the first pane takes the free root, the second splits beside it.
   finish('r6');
