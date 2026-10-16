@@ -1,5 +1,5 @@
 import { inspectWrapupInput } from '../../actions/wrapup-input.ts';
-import { factoryRootOf } from '../../controller/keys.ts';
+import { factoryRootOf, ticketDirOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { captureWrapupState } from '../../validation/wrapup.ts';
 import type { InputContext, InputResult } from '../effects.ts';
@@ -38,6 +38,7 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
           branch: worktreeBranch,
           codeRoot: snapshot.execution.policy.codeRoot,
           factoryRoot,
+          ticketDir: ticketDirOf(snapshot.execution.factoryDir),
           worktree: worktreePath,
         }),
       );

@@ -65,7 +65,15 @@ function fixture(): Fixture {
   writeFileSync(path.join(worktree, 'src/store.ts'), 'export const store = {};\n');
   return {
     baseline: () =>
-      captureWrapupState({ baseBranch: 'main', baseSha, branch, codeRoot, factoryRoot, worktree }),
+      captureWrapupState({
+        baseBranch: 'main',
+        baseSha,
+        branch,
+        codeRoot,
+        factoryRoot,
+        ticketDir: path.join(factoryRoot, 'tickets/proj-1'),
+        worktree,
+      }),
     baseSha,
     codeRoot,
     factoryRoot,
@@ -254,6 +262,12 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', a
   mkdirSync(path.join(value.factoryRoot, 'learnings'));
   writeFileSync(path.join(value.factoryRoot, 'CONTEXT.md'), '# Context\n');
   writeFileSync(path.join(value.factoryRoot, 'learnings/filters.md'), 'Persist early.\n');
+  // The server and other tickets write beside wrap-up; that is not wrap-up's change.
+  mkdirSync(path.join(value.factoryRoot, 'runtime'));
+  writeFileSync(path.join(value.factoryRoot, 'runtime/tabs.json'), '{}\n');
+  writeFileSync(path.join(value.factoryRoot, 'local.token'), 'token\n');
+  mkdirSync(path.join(value.factoryRoot, 'tickets/proj-2'));
+  writeFileSync(path.join(value.factoryRoot, 'tickets/proj-2/plan.md'), '# Other plan\n');
   assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
   writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/plan.md'), '# Edited plan\n');
   writeFileSync(path.join(value.factoryRoot, 'wrapup.md'), 'handoff\n');

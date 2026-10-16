@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
-import { factoryRootOf } from '../controller/keys.ts';
+import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
@@ -21,8 +21,17 @@ export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 // claims. The headings are checked for completeness; the prose is not parsed
 // for operational state.
 
-// Controller-owned or transient parts of the factory root.
-const factoryInternal = new Set(['db', 'sessions', 'worktrees', 'node_modules', '.git']);
+// Controller-owned or transient parts of the factory root: the server writes
+// `runtime/` (Herdr tabs, the handshake) and `local.token` while wrap-up runs.
+const factoryInternal = new Set([
+  'db',
+  'sessions',
+  'worktrees',
+  'runtime',
+  'local.token',
+  'node_modules',
+  '.git',
+]);
 
 type Git = { code: number; stderr: string; stdout: string };
 
@@ -47,8 +56,11 @@ function hashFile(file: string): string {
   }
 }
 
-function factoryFiles(root: string): Record<string, string> {
+// Other tickets keep running beside this one, so only this ticket's
+// directory under `tickets/` is compared.
+function factoryFiles(root: string, ticketDir: string): Record<string, string> {
   const files: Record<string, string> = {};
+  const ownTicket = path.relative(root, ticketDir).split(path.sep).join('/');
   const walk = (directory: string, prefix: string) => {
     let entries: Array<string>;
     try {
@@ -62,6 +74,9 @@ function factoryFiles(root: string): Record<string, string> {
       }
       const absolute = path.join(directory, entry);
       const relative = prefix === '' ? entry : `${prefix}/${entry}`;
+      if (prefix === 'tickets' && relative !== ownTicket) {
+        continue;
+      }
       const stats = statSync(absolute, { throwIfNoEntry: false });
       if (stats?.isDirectory() === true) {
         walk(absolute, relative);
@@ -134,13 +149,14 @@ export function captureWrapupState(input: {
   branch: string;
   codeRoot: string;
   factoryRoot: string;
+  ticketDir: string;
   worktree: string;
 }): WrapupBaseline {
   return {
     baseHead:
       input.baseBranch === null ? null : refSha(input.codeRoot, `refs/heads/${input.baseBranch}`),
     branch: input.branch,
-    factory: factoryFiles(input.factoryRoot),
+    factory: factoryFiles(input.factoryRoot, input.ticketDir),
     head: gitOk(input.worktree, ['rev-parse', 'HEAD']).trim(),
     remotes: remoteRefs(input.worktree, input.branch),
     worktree: worktreeChanges(input.worktree, input.baseSha),
@@ -263,6 +279,7 @@ export function validateWrapup(input: {
   generated: Array<string>;
   output: string;
   pullRequests: boolean;
+  ticketDir: string;
   // The all-stage usage table, read once the checks are done.
   usage: () => string;
   worktree: string;
@@ -515,6 +532,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         generated: execution.policy.validation.wrapup.generated,
         output: outputOf(run.resultJson),
         pullRequests: execution.policy.pullRequests,
+        ticketDir: ticketDirOf(execution.factoryDir),
         usage: deps.usage,
         worktree: execution.worktreePath,
       }),
