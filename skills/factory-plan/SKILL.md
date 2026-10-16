@@ -49,6 +49,7 @@ Before finishing, verify that:
 - Every task file has a `QA:` line: `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
+- No task commits, pushes, or merges, and no criterion requires a commit. Work leaves its change uncommitted in the worktree and fails validation if HEAD moves; wrap-up hands off the commit.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.
 
 In a controller run, return the planning result and let the controller validate artifacts and transition state. In a direct invocation, report the result without inventing operational state edits.
