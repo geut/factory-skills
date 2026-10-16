@@ -1,8 +1,6 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": [
-    "openapi.json"
-  ],
+  "ignorePatterns": ["openapi.json"],
   "singleQuote": true,
   "experimentalSortImports": {
     "newlinesBetween": false

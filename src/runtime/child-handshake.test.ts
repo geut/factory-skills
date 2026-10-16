@@ -64,15 +64,15 @@ test('a failed model request nudges the child with backoff, then exits', () => {
   });
 });
 
+function assistant(...content: Array<Record<string, string>>) {
+  return { message: { content, role: 'assistant' }, type: 'message' };
+}
+
 test('a reply without a template counts as missing, as in a wrap-up that only thought it through', () => {
   const user = {
     message: { content: [{ text: 'Follow the skill.', type: 'text' }], role: 'user' },
     type: 'message',
   };
-  const assistant = (...content: Array<Record<string, string>>) => ({
-    message: { content, role: 'assistant' },
-    type: 'message',
-  });
   const done = { id: 'call-1', name: 'subagent_done', type: 'toolCall' };
   const template = '## Outcome\n\nDone.\n\n## Files\n\n- `goodbye.md`';
   // The wrap-up in the Herdr tabs check: chatter, then thinking and the call.
