@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The factory's version as stats record it: the package version and the commit
 // it was built from, such as `0.1.0+1ddf4f6`. The single executable has it
@@ -17,7 +18,7 @@ export function factoryVersion(): string {
     cached = FACTORY_BUILD_VERSION;
     return cached;
   }
-  cached = sourceVersion(path.resolve(import.meta.dirname, '..'));
+  cached = sourceVersion(fileURLToPath(new URL('..', import.meta.url)));
   return cached;
 }
 
