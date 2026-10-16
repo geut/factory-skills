@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -152,49 +151,6 @@ test('herdr launch uses the generic argv pane contract', () => {
     'pane-1',
     '🔎 owner/repo#3',
   ]);
-});
-
-// Pi exits mid-turn with mouse reporting on. In a pty, the script turns it
-// off before it stamps the exit code, so the shell that ran it gets no mouse
-// reports as input.
-test('the launch script restores the terminal before it stamps the exit code', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'factory-launch-'));
-  try {
-    const pi = path.join(dir, 'pi');
-    writeFileSync(pi, "#!/bin/sh\nprintf '\\033[?1000h\\033[?1006h'\nexit 3\n");
-    chmodSync(pi, 0o755);
-    const sessionFile = path.join(dir, 'session.jsonl');
-    const launch = path.join(dir, 'run.sh');
-    writeFileSync(
-      launch,
-      renderLaunchScript({
-        handshakePath: '/pkg/child-handshake.ts',
-        model: 'work-model',
-        piBin: pi,
-        promptFile: path.join(dir, 'prompt.txt'),
-        runId: 'run-1',
-        sessionFile,
-        thinking: 'medium',
-        tools: 'read',
-      }),
-    );
-    chmodSync(launch, 0o755);
-    // Without a terminal the reset is skipped quietly.
-    const plain = spawnSync(launch, { encoding: 'utf8' });
-    assert.equal(plain.status, 3);
-    assert.equal(plain.stderr, '');
-    assert.equal(readFileSync(`${sessionFile}.exitcode`, 'utf8'), '3 run-1\n');
-    if (process.platform === 'linux' && spawnSync('script', ['--version']).status === 0) {
-      const tty = spawnSync('script', ['-qec', launch, '/dev/null'], { encoding: 'utf8' });
-      assert.equal(tty.status, 3);
-      const on = tty.stdout.indexOf('\u001b[?1000h');
-      const off = tty.stdout.indexOf('\u001b[?1000l');
-      assert.ok(on >= 0 && off > on, JSON.stringify(tty.stdout));
-      assert.ok(tty.stdout.includes('\u001b[?1006l'));
-    }
-  } finally {
-    rmSync(dir, { force: true, recursive: true });
-  }
 });
 
 test('pane id comes from the nested herdr plugin pane payload', () => {
@@ -450,8 +406,12 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     taskLabel: null,
   });
   assert.equal(replaced.paneId, 'pane-new');
-  assert.deepEqual(calls[1], ['pane', 'close', 'pane-old']);
-  assert.equal(calls[2]?.[0], 'plugin');
+  // The new pane opens first, then the dead one closes.
+  const opened = calls.findIndex((args) => args[0] === 'plugin');
+  const closed = calls.findIndex(
+    (args) => args[0] === 'pane' && args[1] === 'close' && args[2] === 'pane-old',
+  );
+  assert.ok(opened > 0 && closed > opened, JSON.stringify(calls));
   assert.equal(
     calls.some(
       (args) => args.includes('status=initial') && !args.some((arg) => arg.startsWith('task=')),
@@ -581,36 +541,36 @@ test('a pane exit waits one poll for the exit code written after pi', () => {
   }
 });
 
-test('a ticket runs its agents in its tab root shell, splits only when the root is busy, and keeps the tab', async () => {
+test('each agent opens in its own pane in the ticket tab, and the tab outlives each pane', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
   const tabsFile = path.join(directory, 'runtime', 'tabs.json');
   const calls: Array<Array<string>> = [];
   let tabs = 0;
-  const gone = new Set<string>();
-  // A root pane's tab; herdr may give a closed pane's id to a pane elsewhere.
-  const moved = new Map<string, string>();
+  let panes = 0;
+  // Each open pane's tab. Herdr may give a closed pane's id to a pane elsewhere.
+  const paneTabs = new Map<string, string>([['server', 'host-tab']]);
   const run = async (args: Array<string>) => {
     calls.push(args);
     if (args[0] === 'pane' && args[1] === 'get') {
       const pane = args[2] ?? '';
-      return gone.has(pane)
+      const tab = paneTabs.get(pane);
+      return tab === undefined
         ? { code: 1, stderr: 'no such pane', stdout: '' }
         : {
             code: 0,
             stderr: '',
             stdout: JSON.stringify({
-              result: {
-                pane: {
-                  pane_id: pane,
-                  tab_id: moved.get(pane) ?? pane.replace(/^root-/, 'tab-'),
-                  workspace_id: 'ws-1',
-                },
-              },
+              result: { pane: { pane_id: pane, tab_id: tab, workspace_id: 'ws-1' } },
             }),
           };
     }
+    if (args[0] === 'pane' && args[1] === 'close') {
+      paneTabs.delete(args[2] ?? '');
+      return { code: 0, stderr: '', stdout: '' };
+    }
     if (args[0] === 'tab' && args[1] === 'create') {
       tabs += 1;
+      paneTabs.set(`root-${tabs}`, `tab-${tabs}`);
       return {
         code: 0,
         stderr: '',
@@ -620,10 +580,13 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
       };
     }
     if (args[0] === 'plugin') {
+      panes += 1;
+      const target = args[args.indexOf('--target-pane') + 1] ?? '';
+      paneTabs.set(`p${panes}`, paneTabs.get(target) ?? 'host-tab');
       return {
         code: 0,
         stderr: '',
-        stdout: JSON.stringify({ result: { plugin_pane: { pane_id: `split-${calls.length}` } } }),
+        stdout: JSON.stringify({ result: { plugin_pane: { pane_id: `p${panes}` } } }),
       };
     }
     return { code: 0, stderr: '', stdout: '' };
@@ -645,63 +608,56 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
     thinking: 'medium',
     tools: 'read',
   });
-  const finish = (id: string) =>
-    writeFileSync(path.join(directory, `${id}.jsonl.exitcode`), `0 ${id}\n`);
-  // Where each pane went: `run <pane>` for a root shell, `split <target>` for a split.
-  const placements = () =>
+  // What happened to panes, in order: `split <target>` and `close <pane>`.
+  const layout = () =>
     calls.flatMap((args) =>
-      args[0] === 'pane' && args[1] === 'run'
-        ? [`run ${args[2]}`]
-        : args[0] === 'plugin'
-          ? [`split ${args[args.indexOf('--target-pane') + 1]}`]
+      args[0] === 'plugin'
+        ? [`split ${args[args.indexOf('--target-pane') + 1]}`]
+        : args[0] === 'pane' && (args[1] === 'close' || args[1] === 'run')
+          ? [`${args[1]} ${args[2]}`]
           : [],
     );
 
   const runtime = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
+  // The first agent splits beside the new tab's shell, which then closes.
   const first = await runtime.launch(spec('repo#1', 'r1'));
-  assert.equal(first.paneId, 'root-1');
-  assert.match(
-    calls.find((args) => args[1] === 'run')?.[3] ?? '',
-    /^cd '.*' && '.*r1\.jsonl\.sh'$/,
-  );
-  // r1 is still running: the next pane for repo#1 splits beside it.
+  assert.equal(first.paneId, 'p1');
   await runtime.launch(spec('repo#1', 'r2'));
   await runtime.launch(spec('repo#2', 'r3'));
-  finish('r1');
-  await runtime.launch(spec('repo#1', 'r4'));
-  assert.deepEqual(placements(), ['run root-1', 'split root-1', 'run root-2', 'run root-1']);
+  assert.deepEqual(layout(), [
+    'split root-1',
+    'close root-1',
+    'split p1',
+    'split root-2',
+    'close root-2',
+  ]);
   const created = calls.filter((args) => args[0] === 'tab' && args[1] === 'create');
   assert.equal(created.length, 2);
   assert.deepEqual(created[0]?.slice(2, 4), ['--workspace', 'ws-1']);
 
-  // A restarted runtime remembers the tab and what runs in its root.
+  // A restarted runtime remembers the tab and splits from its newest pane.
   const restarted = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
   calls.length = 0;
-  await restarted.launch(spec('repo#1', 'r5'));
-  finish('r4');
-  // A resume never closes a root shell; the finished root runs the next turn.
-  await restarted.resume({ ...spec('repo#1', 'r6', 'root-1'), mode: 'resume' });
-  assert.deepEqual(placements(), ['split root-1', 'run root-1']);
-  assert.equal(
-    calls.some((args) => args[0] === 'pane' && args[1] === 'close'),
-    false,
-  );
+  await restarted.launch(spec('repo#1', 'r4'));
+  // A resume opens its pane before closing the finished one, so the tab stays.
+  paneTabs.delete('p1');
+  paneTabs.delete('p2');
+  await restarted.resume({ ...spec('repo#1', 'r5', 'p4'), mode: 'resume' });
+  assert.deepEqual(layout(), ['split p2', 'split p4', 'close p4']);
 
-  // A tab whose root is gone is made again.
-  gone.add('root-2');
+  // A tab whose panes are all gone is made again.
+  paneTabs.delete('p3');
+  calls.length = 0;
+  await restarted.launch(spec('repo#2', 'r6'));
+  assert.deepEqual(layout(), ['split root-3', 'close root-3']);
+
+  // So is one whose pane id now names a pane in another tab.
+  paneTabs.set('p6', 'tab-elsewhere');
   calls.length = 0;
   await restarted.launch(spec('repo#2', 'r7'));
-  assert.deepEqual(placements(), ['run root-3']);
+  assert.deepEqual(layout(), ['split root-4', 'close root-4']);
 
-  // So is one whose root id now names a pane in another tab.
-  moved.set('root-3', 'tab-elsewhere');
-  calls.length = 0;
-  finish('r7');
-  await restarted.launch(spec('repo#2', 'r8'));
-  assert.deepEqual(placements(), ['run root-4']);
-
-  // Handoff: the first pane takes the free root, the second splits beside it.
-  finish('r6');
+  // Handoff panes split in the tab too; nothing is typed into a shell.
   calls.length = 0;
   for (const name of ['📦 repo#1', '🔀 repo#1']) {
     await restarted.openPane({
@@ -709,10 +665,10 @@ test('a ticket runs its agents in its tab root shell, splits only when the root 
       name,
       scriptFile: path.join(directory, `${name.length}.sh`),
       tab: { key: 'repo#1-key', label: 'repo#1' },
-      target: { kind: 'session', sessionFile: path.join(directory, 'r6.jsonl') },
+      target: { kind: 'session', sessionFile: path.join(directory, 'r5.jsonl') },
     });
   }
-  assert.deepEqual(placements(), ['run root-1', 'split root-1']);
+  assert.deepEqual(layout(), ['split p5', 'split p8']);
 
   await restarted.closeTab?.('repo#1-key');
   assert.deepEqual(calls.at(-1), ['tab', 'close', 'tab-1']);
