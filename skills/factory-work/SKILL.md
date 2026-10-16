@@ -11,7 +11,7 @@ Implement one task. Keep the change no larger than the task's observable outcome
 
 Read `.factory/CONTEXT.md`, the ticket's `plan.md`, optional `adr.md`, the target task, its blockers, relevant code and tests, and project instructions. Confirm the ticket and task identifiers before editing. Do not begin when a dependency is incomplete or the worktree is shared with another active ticket.
 
-If the plan conflicts with current evidence, update `plan.md` under `Discoveries` and adjust affected task scope before continuing. Escalate when the new evidence changes product behavior or invalidates multiple tasks.
+If the plan conflicts with current evidence, add a bullet to `plan.md` under `Discoveries` and adjust affected task scope before continuing. A bullet is a plain finding, what was found and what it changed, with no date, round, or run label; see [the plan artifacts](../factory-plan/references/artifacts.md). Escalate when the new evidence changes product behavior or invalidates multiple tasks.
 
 Read [references/playbooks.md](references/playbooks.md) and use only the playbook matching the task type.
 
