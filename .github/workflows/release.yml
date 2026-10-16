@@ -1,0 +1,90 @@
+name: Release
+
+# Builds the factory single executable for Linux, so consumers can download it
+# instead of installing Node and building it. A pushed v* tag publishes the
+# binaries to a GitHub Release; a manual run only keeps them as workflow
+# artifacts.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The executable is a copy of the node that builds it, so each architecture
+    # builds on its own runner.
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      ASSET: factory-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $expected" >&2
+            exit 1
+          fi
+      - run: npm run build
+      # Runs the binary away from the checkout, so it only has what it carries.
+      # token list opens the state database, which needs the bundled schema.sql
+      # and node:sqlite.
+      - name: Smoke test
+        run: |
+          dir="$(mktemp -d)"
+          cp dist/factory "$dir/factory"
+          cd "$dir"
+          ./factory --help
+          mkdir .factory
+          ./factory token list
+          test -f .factory/db/state.sqlite
+      - name: Package
+        run: |
+          mkdir out
+          cp dist/factory "out/$ASSET"
+          cd out
+          sha256sum "$ASSET" > "$ASSET.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: factory-linux-*
+          merge-multiple: true
+          path: out
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
