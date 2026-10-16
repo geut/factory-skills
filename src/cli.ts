@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { serve } from './server/serve.ts';
+import { runSessionsCommand } from './server/sessions-cli.ts';
 import { runTokenCommand } from './server/token-cli.ts';
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
@@ -8,6 +9,7 @@ const fail = (line: string) => process.stderr.write(`${line}\n`);
 const usage = `Usage:
   factory serve     run the factory server for the repository in this directory
   factory token     manage API client tokens (factory token --help)
+  factory sessions  list each stage's Pi session file (factory sessions [ticket])
 
 Start the server inside a Herdr pane; agents open in that pane's workspace.`;
 
@@ -15,6 +17,9 @@ async function main(argv: Array<string>): Promise<number> {
   const [command, ...rest] = argv;
   if (command === 'token') {
     return runTokenCommand(rest, process.cwd(), { err: fail, out: say });
+  }
+  if (command === 'sessions') {
+    return runSessionsCommand(rest, process.cwd(), { err: fail, out: say });
   }
   if (command !== 'serve') {
     fail(usage);

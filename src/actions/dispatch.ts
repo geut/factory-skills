@@ -57,6 +57,26 @@ function paneName(snapshot: FactorySnapshot, session: SessionRecord): string {
   return paneLabel(session.stage, snapshot.ticket.displayRef, session.taskId);
 }
 
+// Where a new session is written: grouped by ticket (and rerun generation),
+// named for its stage and task, so a person can find a stage's session by
+// browsing `.factory/sessions/`.
+export function newSessionFile(
+  factoryRoot: string,
+  snapshot: FactorySnapshot,
+  session: SessionRecord,
+): string {
+  const ticket = path.relative(path.join(factoryRoot, 'tickets'), snapshot.execution.factoryDir);
+  const folder = ticket.length === 0 || ticket.startsWith('..') ? [] : ticket.split(path.sep);
+  const task =
+    session.taskId === null ? '' : `-${session.taskId.replaceAll(/[^A-Za-z0-9._-]/g, '_')}`;
+  return path.join(
+    factoryRoot,
+    'sessions',
+    ...folder,
+    `${session.stage}${task}-${session.id}.jsonl`,
+  );
+}
+
 function previousPaneId(snapshot: FactorySnapshot, run: RunRecord): string | null {
   let paneId: string | null = null;
   for (const item of snapshot.runs) {
@@ -197,8 +217,7 @@ async function launch(
   }
   mkdirSync(path.dirname(snapshot.execution.factoryDir), { recursive: true });
   mkdirSync(snapshot.execution.factoryDir, { recursive: true });
-  const sessionFile =
-    session.sessionFile ?? path.join(input.factoryRoot, 'sessions', `${session.id}.jsonl`);
+  const sessionFile = session.sessionFile ?? newSessionFile(input.factoryRoot, snapshot, session);
   const mode = action.kind === 'resume_run' ? 'resume' : action.mode;
   const spec: LaunchSpec = {
     cwd: action.cwd,

@@ -2607,6 +2607,13 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
+          "sessionFile": {
+            "description": "The Pi session file of the run's session. Open it with `pi --session`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "stage": {
             "type": "string",
             "enum": [
@@ -2682,6 +2689,7 @@
           "review",
           "round",
           "sequence",
+          "sessionFile",
           "stage",
           "startedAt",
           "status",
@@ -2916,6 +2924,12 @@
           "runId": {
             "type": "string"
           },
+          "sessionFile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "stage": {
             "type": "string",
             "enum": [
@@ -2947,6 +2961,7 @@
           "model",
           "paneName",
           "runId",
+          "sessionFile",
           "stage",
           "startedAt",
           "task",
