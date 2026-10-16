@@ -21,6 +21,8 @@ type Tracked = {
 };
 
 export class FakeRuntime implements FactorySubagentRuntime {
+  readonly closedTabs: Array<string> = [];
+  readonly interrupted: Array<RunId> = [];
   readonly launches: Array<LaunchSpec> = [];
   readonly panes: Array<PaneSpec> = [];
   failNext = false;
@@ -28,6 +30,10 @@ export class FakeRuntime implements FactorySubagentRuntime {
   failuresRemaining = 0;
   private readonly tracked = new Map<string, Tracked>();
   private readonly watchers = new Map<string, (event: TerminalOutcome) => void>();
+
+  async closeTab(key: string): Promise<void> {
+    this.closedTabs.push(key);
+  }
 
   async launch(spec: LaunchSpec): Promise<RunStarted> {
     return this.start(spec);
@@ -46,8 +52,8 @@ export class FakeRuntime implements FactorySubagentRuntime {
     return { paneId: `pane-${spec.name}` };
   }
 
-  async interrupt(): Promise<void> {
-    return undefined;
+  async interrupt(input: { paneId: string; runId: RunId }): Promise<void> {
+    this.interrupted.push(input.runId);
   }
 
   observe(run: ActiveWatch, handler: (event: TerminalOutcome) => void): () => void {

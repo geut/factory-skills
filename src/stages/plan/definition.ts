@@ -5,6 +5,8 @@ export type PlanInput = { body: string; displayRef: string; factoryDir: string; 
 
 const skill = 'factory-plan';
 const contract = 'factory.plan.v3';
+// The plan is the files the planner writes; its reply is only a summary.
+const handoff = `Write plan.md and the task files. The ${contract} template in the skill is a suggested summary, not a requirement. Then call subagent_done once.`;
 
 // The FACTORY.json limits this stage reads.
 export const planLimits = { planCorrections: { default: 3, min: 0 } } as const satisfies Record<
@@ -24,6 +26,7 @@ export const plan = defineStage<PlanInput, 'plan'>({
     per: 'session',
   },
   emoji: '🔎',
+  handoff,
   label: 'Plan',
   model: 'plan',
   name: 'plan',
@@ -33,14 +36,14 @@ export const plan = defineStage<PlanInput, 'plan'>({
   prompts: {
     correction: (failures) =>
       [
-        childInstructions(skill, contract),
+        childInstructions(skill, contract, handoff),
         '',
-        'Plan validation failed. plan.md must exist and at least one task file must be defined. Fix these exact problems, then return the factory.plan.v3 template again:',
+        'Plan validation failed. plan.md must exist and at least one task file must be defined. Fix these exact problems:',
         ...failures.map((failure) => `- ${failure}`),
       ].join('\n'),
     initial: (input) =>
       [
-        childInstructions(skill, contract),
+        childInstructions(skill, contract, handoff),
         '',
         `Ticket: ${input.displayRef}`,
         `Title: ${input.title}`,

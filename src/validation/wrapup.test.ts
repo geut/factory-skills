@@ -65,7 +65,15 @@ function fixture(): Fixture {
   writeFileSync(path.join(worktree, 'src/store.ts'), 'export const store = {};\n');
   return {
     baseline: () =>
-      captureWrapupState({ baseBranch: 'main', baseSha, branch, codeRoot, factoryRoot, worktree }),
+      captureWrapupState({
+        baseBranch: 'main',
+        baseSha,
+        branch,
+        codeRoot,
+        factoryRoot,
+        ticketDir: path.join(factoryRoot, 'tickets/proj-1'),
+        worktree,
+      }),
     baseSha,
     codeRoot,
     factoryRoot,
@@ -254,6 +262,12 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', a
   mkdirSync(path.join(value.factoryRoot, 'learnings'));
   writeFileSync(path.join(value.factoryRoot, 'CONTEXT.md'), '# Context\n');
   writeFileSync(path.join(value.factoryRoot, 'learnings/filters.md'), 'Persist early.\n');
+  // The server and other tickets write beside wrap-up; that is not wrap-up's change.
+  mkdirSync(path.join(value.factoryRoot, 'runtime'));
+  writeFileSync(path.join(value.factoryRoot, 'runtime/tabs.json'), '{}\n');
+  writeFileSync(path.join(value.factoryRoot, 'local.token'), 'token\n');
+  mkdirSync(path.join(value.factoryRoot, 'tickets/proj-2'));
+  writeFileSync(path.join(value.factoryRoot, 'tickets/proj-2/plan.md'), '# Other plan\n');
   assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
   writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/plan.md'), '# Edited plan\n');
   writeFileSync(path.join(value.factoryRoot, 'wrapup.md'), 'handoff\n');
@@ -285,7 +299,7 @@ test('with pull requests off, a push fails and commands are required', async () 
   git(value.worktree, ['push', '-u', 'origin', branch]);
   assert.match(
     failures(await validate(value, baseline, handoff(value))),
-    /pushed, but github\.pullRequests is off/,
+    /pushed, but codeHost\.pullRequests is off/,
   );
 });
 
@@ -317,12 +331,24 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   const baseline = value.baseline();
   git(value.worktree, ['push', '-u', 'origin', branch]);
   const url = 'https://github.com/geut/demo/pull/7';
-  const found: PullRequestLookup = () => ({ headRefName: branch, state: 'OPEN' });
+  const pullRequest = {
+    author: 'dpaez',
+    closedAt: null,
+    headBranch: branch,
+    mergedAt: null,
+    number: 7,
+    openedAt: '2026-10-15T10:00:00Z',
+    state: 'open' as const,
+    url,
+  };
+  const found: PullRequestLookup = () => pullRequest;
   const passed = await validate(value, baseline, handoff(value, { merge: url }), {
     findPullRequest: found,
     pullRequests: true,
   });
   assert.equal(passed.status, 'passed', failures(passed));
+  // A passing wrap-up hands the controller the pull request it checked.
+  assert.deepEqual(passed.status === 'passed' ? passed.detail.pullRequest : null, pullRequest);
   assert.match(
     failures(
       await validate(value, baseline, handoff(value, { merge: url }), { pullRequests: true }),

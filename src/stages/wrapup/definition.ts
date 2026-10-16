@@ -1,4 +1,4 @@
-import path from 'node:path';
+import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
 import { runOutput } from '../output.ts';
@@ -78,7 +78,13 @@ const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
   conclude: (_view, _run, report) =>
     report.status === 'passed'
-      ? { kind: 'accept', notice: report.detail.usage }
+      ? {
+          kind: 'accept',
+          notice: report.detail.usage,
+          ...(report.detail.pullRequest === null
+            ? {}
+            : { pullRequestUrl: report.detail.pullRequest.url }),
+        }
       : { failures: report.failures, kind: 'correct' },
   contract,
   corrections: {
@@ -98,7 +104,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       codeRoot: execution.policy.codeRoot,
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
-      factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+      factoryRoot: factoryRootOf(execution.factoryDir),
       minorFindings: minorFindings(snapshot),
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
@@ -159,7 +165,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         `Branch: ${input.worktreeBranch}`,
         `Base branch: ${input.baseBranch ?? 'unknown'}`,
         `Model: ${input.model}. Tools: ${childToolList(tools)}.`,
-        `github.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
+        `codeHost.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
         '',
         'Tasks:',
         ...input.tasks.map(
@@ -189,7 +195,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
         input.usage,
         '',
-        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless github.pullRequests allows it.',
+        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless codeHost.pullRequests allows it.',
       ].join('\n'),
   },
   runBaseline: (prepared) => prepared.baseline,

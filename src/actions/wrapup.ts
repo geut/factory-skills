@@ -1,41 +1,21 @@
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { finishLeasedAction } from '../controller/store.ts';
+import { finishLeasedAction, ticketTab } from '../controller/store.ts';
 import type { ActionRecord, FactorySnapshot, IdSource, RunId } from '../domain.ts';
+import type { CodeHost } from '../ports/code-host.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { collectWorkDiff } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 
 type Context = { db: DatabaseSync; ids: IdSource; now: () => string };
 
-// `gh pr view` for the URL in the handoff. A missing pull request is a
-// validation failure; any other gh error is an infrastructure error.
-export const ghPullRequest: PullRequestLookup = (url) => {
-  const result = spawnSync('gh', ['pr', 'view', url, '--json', 'headRefName,state'], {
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    const message = (result.stderr || result.stdout || 'gh failed').trim();
-    if (/no pull requests? found|could not resolve|not found/i.test(message)) {
-      return { missing: true };
-    }
-    throw new Error(message);
-  }
-  const parsed: unknown = JSON.parse(result.stdout);
-  if (
-    typeof parsed === 'object' &&
-    parsed !== null &&
-    'headRefName' in parsed &&
-    typeof parsed.headRefName === 'string' &&
-    'state' in parsed &&
-    typeof parsed.state === 'string'
-  ) {
-    return { headRefName: parsed.headRefName, state: parsed.state };
-  }
-  throw new Error('gh pr view returned an unexpected shape');
-};
+// Wrap-up validation's view of the pull request at the handoff URL. A missing
+// pull request is a validation failure; any other code host error is an
+// infrastructure error.
+export function pullRequestLookup(codeHost: CodeHost): PullRequestLookup {
+  return (url) => codeHost.pullRequest(url) ?? { missing: true };
+}
 
 // Opens a handoff pane. A failure retries here and never fails the handoff.
 export async function openHandoffPane(
@@ -70,6 +50,7 @@ export async function openHandoffPane(
           cwd: action.cwd,
           name: action.name,
           scriptFile: `${sessionFile}.diff.sh`,
+          tab: ticketTab(snapshot),
           target: { file, kind: 'diff' },
         });
       } else {
@@ -77,6 +58,7 @@ export async function openHandoffPane(
           cwd: worktree,
           name: action.name,
           scriptFile: `${sessionFile}.inspect.sh`,
+          tab: ticketTab(snapshot),
           target: { kind: 'session', sessionFile },
         });
       }

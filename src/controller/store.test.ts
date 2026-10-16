@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { randomIds } from '../domain.ts';
+import { randomIds, type Actor } from '../domain.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { blank } from '../stories/fixtures.ts';
-import { applyControllerEvent, loadCurrentByTicketKey } from './store.ts';
+import {
+  applyControllerEvent,
+  loadCurrentByTicketKey,
+  requeueOrphanedTrackerUpdates,
+} from './store.ts';
 
 const roots: Array<string> = [];
 const now = '2026-10-11T00:00:00.000Z';
@@ -18,12 +22,13 @@ afterEach(() => {
 });
 
 // A started ticket, so its execution loads through the store.
-function started() {
+function started(actor: Actor | null = null) {
   const root = mkdtempSync(path.join(tmpdir(), 'factory-store-'));
   roots.push(root);
   const db = openStateDatabase(root, { create: true });
   const { execution, ticket } = blank();
   applyControllerEvent(db, {
+    actor,
     dedupeKey: 'start',
     event: {
       kind: 'start',
@@ -71,5 +76,29 @@ test('a stage the registry does not know does not load', () => {
   const { addSession, db, ticketId } = started();
   addSession('removed-stage', 'triage', null);
   assert.throws(() => loadCurrentByTicketKey(db, ticketId), /unknown stage triage/);
+  db.close();
+});
+
+test('a command records the API client behind it on its event', () => {
+  const { db } = started({ client: 'dashboard', onBehalfOf: 'diego' });
+  const event = db
+    .prepare("SELECT actor, actor_on_behalf_of FROM events WHERE dedupe_key = 'start'")
+    .get();
+  assert.deepEqual({ ...event }, { actor: 'dashboard', actor_on_behalf_of: 'diego' });
+  db.close();
+});
+
+test('a tracker update a dead server left leased goes back to pending', () => {
+  const { db } = started();
+  const execution = String(db.prepare('SELECT id FROM ticket_executions').get()?.['id']);
+  db.prepare(
+    `INSERT INTO actions (id, execution_id, kind, status, idempotency_key, payload_json, lease_owner, lease_token, lease_expires_at)
+     VALUES ('a1', ?, 'update_ticket_source', 'leased', 'tracker:x:started', '{"comment":"c","issueStatus":null,"update":"started"}', 'old', 't1', '2026-10-11T00:00:30.000Z')`,
+  ).run(execution);
+  requeueOrphanedTrackerUpdates(db, now);
+  assert.deepEqual(
+    { ...db.prepare("SELECT status, lease_owner FROM actions WHERE id = 'a1'").get() },
+    { lease_owner: null, status: 'pending' },
+  );
   db.close();
 });

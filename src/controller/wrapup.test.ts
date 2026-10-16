@@ -107,7 +107,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
     report: passedReport(
       WRAPUP_VALIDATOR_VERSION,
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
-      { usage: 'Stage  Sess  Input' },
+      { pullRequest: null, usage: 'Stage  Sess  Input' },
     ),
     runId,
     stage: 'wrapup' as const,
@@ -118,7 +118,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
   assert.equal(after.execution.status, 'ready_for_handoff');
   assert.deepEqual(
     after.actions.filter((item) => item.status === 'pending').map((item) => item.kind),
-    ['open_pane', 'open_diff', 'notify_attention'],
+    ['open_pane', 'open_diff', 'update_ticket_source', 'notify_attention'],
   );
   assert.equal(after.attention.at(-1)?.kind, 'manual_approval');
   assert.match(after.attention.at(-1)?.question ?? '', /Stage {2}Sess {2}Input/);

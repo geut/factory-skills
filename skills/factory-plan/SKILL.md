@@ -49,6 +49,7 @@ Before finishing, verify that:
 - Every task file has a `QA:` line: `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
+- No task commits, pushes, or merges, and no criterion requires a commit. Work leaves its change uncommitted in the worktree and fails validation if HEAD moves; wrap-up hands off the commit.
 - Unknowns that could invalidate implementation are resolved or marked as blockers.
 
 In a controller run, return the planning result and let the controller validate artifacts and transition state. In a direct invocation, report the result without inventing operational state edits.
@@ -57,6 +58,4 @@ Do not commit or publish anything.
 
 ## Output
 
-Write `plan.md` and one or more numbered task files, using [references/artifacts.md](references/artifacts.md). Hand off with the `factory.plan.v3` template in [references/output.md](references/output.md). No JSON object, no recap after it.
-
-The controller accepts the plan when `plan.md` exists and at least one task file is present. It does not grade the chat text. After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source. Do not edit the controller database.
+Write `plan.md` and one or more numbered task files, using [references/artifacts.md](references/artifacts.md). The plan is those files: the controller accepts it when `plan.md` exists and at least one task file is present, and it does not grade the chat text. Summarize the result in your reply using the `factory.plan.v3` template in [references/output.md](references/output.md) as a model; it is a suggestion, not a requirement. Then call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source. Do not edit the controller database.

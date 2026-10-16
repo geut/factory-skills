@@ -57,6 +57,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
     attention: [],
     execution: {
       factoryDir: '/repo/.factory',
+      factoryVersion: null,
       generation: 1,
       id: executionId('exec-1'),
       inputFetchedAt: at(240),
@@ -72,6 +73,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         pullRequests: false,
         stages: {},
         validation: { work: { commands: [] }, wrapup: { generated: [] } },
+        worktreeSetup: [],
       },
       retry: null,
       stage: 'plan',

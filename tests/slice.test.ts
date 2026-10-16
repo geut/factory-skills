@@ -1,24 +1,41 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { createRouter } from '../src/api/router.ts';
+import { apiRoutes } from '../src/api/routes.ts';
+import { unusedCommands } from '../src/api/testing.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import { createFactoryService } from '../src/controller/service.ts';
-import { applyControllerEvent } from '../src/controller/store.ts';
+import { applyControllerEvent, loadGeneration } from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
 import {
   executionId,
   randomIds,
+  runId,
   ticketId,
   type Policy,
   type ResolvedTicket,
   type RunId,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
+import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
+import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { openStateDatabase } from '../src/state/database.ts';
-import type { GithubClient } from '../src/tickets.ts';
+import { runFacts, ticketFacts } from '../src/stats/facts.ts';
+import { stageMeasures, summarize } from '../src/stats/measures.ts';
 
 const roots: Array<string> = [];
 const scratch = path.join(process.cwd(), '.scratch');
@@ -64,9 +81,9 @@ function repo(withGit = false): { codeRoot: string; factoryRoot: string } {
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
-      github: { owner: 'geut', repo: 'factory-skills' },
-      keys: { PROJ: { provider: 'github' } },
+      codeHost: { kind: 'github', owner: 'geut', pullRequests: false, repo: 'factory-skills' },
       models: { review: 'review-model', work: 'work-model' },
+      tracker: { kind: 'github', owner: 'geut', repo: 'factory-skills' },
     })}\n`,
   );
   return { codeRoot, factoryRoot };
@@ -175,6 +192,69 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   assert.equal(work.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
 });
 
+// The Herdr tabs check: the database was reset, but the ticket directory and
+// worktree of the earlier run stayed. The new run read the old plan and found
+// the old hello.md in its worktree, and spent most of its time untangling them.
+test('a forgotten run’s ticket directory, worktree, and branch move to the archive', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const firstDb = openStateDatabase(factoryRoot, { create: true });
+  const first = createFactoryService({
+    codeRoot,
+    db: firstDb,
+    factoryRoot,
+    github,
+    runtime: new FakeRuntime(),
+  });
+  await first.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  const key = path.basename(directory);
+  writeFileSync(path.join(directory, 'plan.md'), '# Old plan\n');
+  const oldWorktree = path.join(factoryRoot, 'worktrees', key);
+  git(codeRoot, ['worktree', 'add', '-b', `factory/${key}`, oldWorktree, 'HEAD']);
+  writeFileSync(path.join(oldWorktree, 'hello.md'), '# HELLO\n');
+  git(oldWorktree, ['add', 'hello.md']);
+  git(oldWorktree, ['commit', '-m', 'old work']);
+  writeFileSync(path.join(oldWorktree, 'notes.md'), 'uncommitted\n');
+  firstDb.close();
+  rmSync(path.join(factoryRoot, 'db'), { force: true, recursive: true });
+
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  const archive = path.join(factoryRoot, 'archive');
+  const [stamp] = readdirSync(archive);
+  assert.ok(stamp !== undefined);
+  assert.equal(
+    readFileSync(path.join(archive, stamp, 'tickets', key, 'plan.md'), 'utf8'),
+    '# Old plan\n',
+  );
+  assert.deepEqual(readdirSync(directory), []);
+
+  writePlanFiles(directory, '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'Planned.', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  // The new worktree starts clean from HEAD on a fresh branch.
+  assert.equal(runtime.launches.find((launch) => launch.stage === 'work')?.cwd, oldWorktree);
+  assert.equal(existsSync(path.join(oldWorktree, 'hello.md')), false);
+  assert.equal(existsSync(path.join(oldWorktree, 'notes.md')), false);
+  // The old one keeps its changes in the archive, on its renamed branch.
+  const [later] = readdirSync(archive).sort().reverse();
+  const archived = [stamp, later].map((item) => path.join(archive, item ?? '', 'worktrees', key));
+  const kept = archived.find((item) => existsSync(path.join(item, 'notes.md')));
+  assert.ok(kept, 'expected the old worktree in the archive');
+  assert.equal(readFileSync(path.join(kept, 'hello.md'), 'utf8'), '# HELLO\n');
+  const branches = spawnSync('git', ['branch', '--list', `factory/${key}*`], {
+    cwd: codeRoot,
+    encoding: 'utf8',
+  }).stdout;
+  assert.match(branches, new RegExp(`factory/${key}-archived-`));
+});
+
 test('caller_ping is durable and reply resumes that session', async () => {
   const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
@@ -267,6 +347,7 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     pullRequests: false,
     stages: {},
     validation: { work: { commands: [] }, wrapup: { generated: [] } },
+    worktreeSetup: [],
   };
   applyControllerEvent(db, {
     dedupeKey: `command:start:${canonical}`,
@@ -319,7 +400,7 @@ test('github umbrella issues do not create an execution', async () => {
     listSubIssues: () => [{ body: '', number: 7, title: 'Concrete slice', url: null }],
   };
   const service = createFactoryService({ codeRoot, factoryRoot, github: umbrella, runtime });
-  const text = await service.command('start PROJ-6');
+  const text = await service.command('start #6');
   assert.match(text, /umbrella/);
   assert.equal(runtime.launches.length, 0);
 });
@@ -662,6 +743,7 @@ type ReviewHarness = {
 async function reachReview(
   config: Record<string, unknown> = {},
   taskCount = 1,
+  codeHost?: () => CodeHost,
 ): Promise<ReviewHarness> {
   const { codeRoot, factoryRoot } = repo(true);
   writeFileSync(
@@ -673,6 +755,7 @@ async function reachReview(
   const runtime = new FakeRuntime();
   const notified: Array<string> = [];
   const service = createFactoryService({
+    ...(codeHost === undefined ? {} : { codeHost }),
     codeRoot,
     db,
     factoryRoot,
@@ -790,6 +873,10 @@ test('an approving review marks the task done and launches one wrap-up run', asy
   await closeWhenIdle(db);
 });
 
+// Each stage once per stretch, in order.
+const stagesOf = (steps: Array<string>): Array<string | undefined> =>
+  steps.map((step) => step.split('/')[0]).filter((step, index, steps) => step !== steps[index - 1]);
+
 test('changes requested resume the same worker, then round 2 resumes the same reviewer', async () => {
   const { db, review, runtime, service, work } = await reachReview();
   runtime.emit(review.runId, {
@@ -830,6 +917,26 @@ test('changes requested resume the same worker, then round 2 resumes the same re
   });
   await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
   assert.equal(taskRow(db)['review_round'], 2);
+
+  // Status history replays the path, including the return to work.
+  const history = (task: string | null) =>
+    db
+      .prepare('SELECT stage, status, ended_at FROM status_history WHERE task_id IS ? ORDER BY id')
+      .all(task)
+      .map((item) => `${String(item['stage'])}/${String(item['status'])}`)
+      .filter((step, index, steps) => step !== steps[index - 1]);
+  assert.deepEqual(stagesOf(history(null)), ['plan', 'work', 'review', 'work', 'review', 'wrapup']);
+  const task = String(db.prepare('SELECT task_id FROM tasks').get()?.['task_id']);
+  assert.deepEqual(stagesOf(history(task)), ['null', 'work', 'review', 'work', 'review', 'null']);
+  assert.equal(history(task).at(-1), 'null/done');
+  const open = db
+    .prepare('SELECT count(*) AS n FROM status_history WHERE task_id IS ? AND ended_at IS NULL')
+    .get(task);
+  assert.equal(open?.['n'], 1);
+  assert.match(
+    String(db.prepare('SELECT factory_version FROM ticket_executions').get()?.['factory_version']),
+    /^\d+\.\d+\.\d+/,
+  );
   await closeWhenIdle(db);
 });
 
@@ -1101,8 +1208,11 @@ test('restart after a finished review records one verdict and launches one wrap-
 
 type WrapupHarness = ReviewHarness & { branch: string; wrapup: FakeRuntime['launches'][number] };
 
-async function reachWrapup(config: Record<string, unknown> = {}): Promise<WrapupHarness> {
-  const harness = await reachReview(config);
+async function reachWrapup(
+  config: Record<string, unknown> = {},
+  codeHost?: () => CodeHost,
+): Promise<WrapupHarness> {
+  const harness = await reachReview(config, 1, codeHost);
   harness.runtime.emit(harness.review.runId, {
     kind: 'subagent_done',
     output: reviewOutput('approve', minorFinding),
@@ -1175,7 +1285,8 @@ test('wrap-up launches from checked input with the tasks, findings, verification
   assert.match(wrapup.prompt, /^Review\s+1\s+20\s/m);
   assert.match(wrapup.prompt, /Models: plan work-model · work work-model · review review-model/);
   assert.doesNotMatch(wrapup.prompt, /^Wrap-up/m);
-  assert.match(wrapup.prompt, /github\.pullRequests: false/);
+  // No codeHost block: pull requests default to on.
+  assert.match(wrapup.prompt, /codeHost\.pullRequests: true/);
   const prepared: unknown = db
     .prepare(
       "SELECT status FROM actions WHERE kind = 'prepare_input' AND json_extract(payload_json, '$.stage') = 'wrapup'",
@@ -1588,4 +1699,477 @@ test('QA corrects its own output, returns a failing product to work, then hands 
     /QA screenshots[\s\S]*Task 01 screenshot AC1: .*qa\/01\/screenshots\/ac1\.png/,
   );
   await closeWhenIdle(db);
+});
+
+// A code host whose pull request for the ticket's branch is in `state`, or
+// that finds none when `state` is null.
+function codeHostWith(
+  state: PullRequestInfo['state'] | null,
+  found: Array<string>,
+  reviews?: PullRequestOutcome['reviews'],
+): CodeHost {
+  const pullRequest = (branch: string): PullRequestInfo => ({
+    author: 'dpaez',
+    closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
+    headBranch: branch,
+    mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
+    number: 7,
+    openedAt: '2026-10-15T10:00:00Z',
+    state: state ?? 'open',
+    url: 'https://github.com/geut/factory-skills/pull/7',
+  });
+  return {
+    findPullRequest: (branch) => {
+      found.push(branch);
+      return state === null ? null : pullRequest(branch);
+    },
+    kind: 'github',
+    pullRequest: () => null,
+    pullRequestOutcome: (current) => ({
+      commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
+      pullRequest: current,
+      reviews: reviews ?? [
+        {
+          author: 'reviewer',
+          authorType: 'human',
+          commitSha: 'abc',
+          hasBody: true,
+          id: 'R1',
+          state: 'changes_requested',
+          submittedAt: '2026-10-15T13:00:00Z',
+        },
+      ],
+    }),
+    verifyWebhook: () => false,
+  };
+}
+
+async function handedOff(
+  state: PullRequestInfo['state'] | null,
+  reviews?: PullRequestOutcome['reviews'],
+) {
+  const found: Array<string> = [];
+  const harness = await reachWrapup({}, () => codeHostWith(state, found, reviews));
+  harness.runtime.emit(harness.wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(harness.wrapup.cwd, harness.branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => harness.service.status('proj-123').includes('ready_for_handoff'));
+  return { ...harness, found };
+}
+
+test('sync finds a merged pull request by branch, records it, and completes the ticket', async () => {
+  const { branch, db, found, service } = await handedOff('merged');
+  const result = await service.syncPullRequests();
+  assert.deepEqual(result, { errors: [], synced: 1 });
+  assert.deepEqual(found, [branch]);
+  assert.match(service.status('proj-123'), /done\/complete|status: complete/);
+  assert.deepEqual(
+    { ...db.prepare('SELECT state, merged_at FROM pull_requests').get() },
+    { merged_at: '2026-10-16T09:00:00Z', state: 'merged' },
+  );
+  assert.equal(db.prepare('SELECT count(*) AS n FROM pull_request_reviews').get()?.['n'], 1);
+  assert.equal(
+    db.prepare("SELECT actor FROM events WHERE kind = 'complete'").get()?.['actor'],
+    'code-host',
+  );
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 0 });
+  await closeWhenIdle(db);
+});
+
+test('sync cancels a ticket whose pull request was closed without merging', async () => {
+  const { db, service } = await handedOff('closed');
+  await service.syncPullRequests();
+  assert.deepEqual(
+    { ...db.prepare('SELECT stage, status, status_reason_code FROM ticket_executions').get() },
+    { stage: 'done', status: 'cancelled', status_reason_code: 'pull_request_closed' },
+  );
+  await closeWhenIdle(db);
+});
+
+test('sync leaves an open pull request waiting at handoff', async () => {
+  const { db, service } = await handedOff('open');
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 1 });
+  assert.match(service.status('proj-123'), /ready_for_handoff/);
+  assert.notEqual(
+    db.prepare('SELECT last_synced_at FROM pull_requests').get()?.['last_synced_at'],
+    null,
+  );
+  await closeWhenIdle(db);
+});
+
+test('a webhook about a ticket pull request completes it like a sync would', async () => {
+  const { branch, db, service } = await handedOff('merged');
+  const ticket = service.pullRequestChanged({
+    author: 'dpaez',
+    closedAt: '2026-10-16T09:00:00Z',
+    headBranch: branch,
+    mergedAt: '2026-10-16T09:00:00Z',
+    number: 7,
+    openedAt: null,
+    state: 'merged',
+    url: 'https://github.com/geut/factory-skills/pull/7',
+  });
+  assert.match(ticket ?? '', /^proj-123-[0-9a-f]{8}$/);
+  await waitFor(() => service.status('proj-123').includes('complete'));
+  assert.equal(
+    service.pullRequestChanged({
+      author: null,
+      closedAt: null,
+      headBranch: 'someone/else',
+      mergedAt: null,
+      number: 9,
+      openedAt: null,
+      state: 'open',
+      url: 'https://github.com/geut/factory-skills/pull/9',
+    }),
+    null,
+  );
+  await closeWhenIdle(db);
+});
+
+const review = (
+  id: string,
+  author: string,
+  authorType: 'bot' | 'human',
+  state: PullRequestOutcome['reviews'][number]['state'],
+  commitSha: string,
+  hasBody = true,
+) => ({ author, authorType, commitSha, hasBody, id, state, submittedAt: '2026-10-15T13:00:00Z' });
+
+test('external review rounds count commits that drew pushback, split human and bot', async () => {
+  const { db, service } = await handedOff('merged', [
+    review('R1', 'reviewer', 'human', 'changes_requested', 'c1'),
+    review('R2', 'reviewer', 'human', 'commented', 'c1'),
+    review('R3', 'coderabbitai[bot]', 'bot', 'commented', 'c2'),
+    review('R4', 'coderabbitai[bot]', 'bot', 'commented', 'c3', false),
+    review('R5', 'dpaez', 'human', 'commented', 'c4'),
+    review('R6', 'reviewer', 'human', 'approved', 'c5'),
+  ]);
+  await service.syncPullRequests();
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(ticket?.outcome, 'merged');
+  assert.deepEqual(ticket?.externalReviewRounds, { bot: 1, human: 1, total: 2 });
+  assert.equal(
+    ticket?.configuration,
+    'plan=work-model · medium review=review-model · high work=work-model · medium wrapup=work-model · medium',
+  );
+  const summary = summarize(ticketFacts(db, { now: new Date().toISOString() }));
+  assert.equal(summary.mergeRate, 1);
+  assert.equal(summary.externalReviewRounds.median, 2);
+  assert.ok(ticket !== undefined && ticket.leadMs !== null && ticket.factoryMs !== null);
+  await closeWhenIdle(db);
+});
+
+test('a ticket finished without a known pull request is unknown: no merge rate, but its cost counts', async () => {
+  const { db, service } = await handedOff(null);
+  assert.deepEqual(await service.syncPullRequests(), { errors: [], synced: 0 });
+  await service.command('complete proj-123');
+  const facts = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(facts[0]?.outcome, 'unknown');
+  assert.equal(facts[0]?.interventions.manualCompletes, 1);
+  const summary = summarize(facts);
+  assert.equal(summary.mergeRate, null);
+  assert.equal(summary.outcomes.unknown, 1);
+  // The fake runtime reports tokens and no cost; both are totalled.
+  assert.equal(summary.tokens, facts[0]?.tokens);
+  assert.ok(summary.tokens > 0);
+
+  const stages = stageMeasures(
+    runFacts(
+      db,
+      facts.map((item) => item.execution),
+    ),
+  );
+  const review = stages.find((row) => row.stage === 'review');
+  assert.equal(review?.model, 'review-model');
+  assert.equal(review?.firstPassAcceptance, 1);
+  assert.equal(review?.reviewRoundsPerTask, 1);
+  await closeWhenIdle(db);
+});
+
+test('the stats routes answer for the factory, and the export is NDJSON', async () => {
+  const { db, service } = await handedOff('merged');
+  await service.syncPullRequests();
+  const server = createServer(
+    createRouter({
+      context: {
+        backlog: null,
+        commands: unusedCommands,
+        db,
+        events: null,
+        instanceId: 'test',
+        openapi: () => ({ openapi: '3.1.0' }),
+        webhooks: null,
+      },
+      routes: apiRoutes,
+      validateResponses: true,
+    }),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const base = `http://127.0.0.1:${typeof address === 'object' && address !== null ? address.port : 0}`;
+  const summary = (await (await fetch(`${base}/v1/stats/summary`)).json()) as {
+    definitions: string;
+    factoryId: string;
+    factoryVersions: Array<string>;
+    outcomes: { merged: number };
+  };
+  assert.equal(summary.definitions, 'stats.v1');
+  assert.match(summary.factoryId, /^[0-9a-f-]{36}$/);
+  assert.equal(summary.outcomes.merged, 1);
+  assert.equal(summary.factoryVersions.length, 1);
+  for (const route of ['stages', 'configurations', 'tickets']) {
+    assert.equal((await fetch(`${base}/v1/stats/${route}`)).status, 200, route);
+  }
+  const later = await (await fetch(`${base}/v1/stats/summary?from=2999-01-01T00:00:00Z`)).json();
+  assert.equal((later as { started: number }).started, 0);
+  const exported = await fetch(`${base}/v1/stats/export`);
+  assert.equal(exported.headers.get('content-type'), 'application/x-ndjson');
+  const lines = (await exported.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { factoryId: string; type: string });
+  assert.equal(lines.filter((line) => line.type === 'ticket').length, 1);
+  assert.ok(lines.filter((line) => line.type === 'run').length > 1);
+  assert.ok(lines.every((line) => line.factoryId === summary.factoryId));
+  server.close();
+  await closeWhenIdle(db);
+});
+
+test('each ticket runs in its own tab, which closes when the ticket finishes', async () => {
+  const { db, runtime, service } = await handedOff('merged');
+  const tabs = new Set(runtime.launches.map((launch) => launch.tab?.key));
+  assert.equal(tabs.size, 1);
+  assert.match([...tabs][0] ?? '', /^proj-123-[0-9a-f]{8}$/);
+  assert.ok(runtime.panes.every((pane) => pane.tab?.key === [...tabs][0]));
+  assert.deepEqual(runtime.closedTabs, []);
+  await service.syncPullRequests();
+  assert.deepEqual(runtime.closedTabs, [...tabs]);
+  await closeWhenIdle(db);
+});
+
+test('stopping a work agent pauses the ticket, and a reply resumes the same session with the answer', async () => {
+  const { runtime, service, workRunId } = await reachWork();
+  const work = runtime.launches.find((launch) => launch.runId === workRunId);
+  const stopped = service.commands.stopRun(workRunId, {
+    actor: { client: 'dashboard', onBehalfOf: 'diego' },
+    idempotencyKey: null,
+  });
+  assert.equal(stopped.kind, 'accepted');
+  assert.match(service.status('proj-123'), /paused/);
+  assert.match(service.status('proj-123'), /stopped by a person/);
+  await waitFor(() => runtime.interrupted.includes(workRunId));
+  // The closed pane's exit arrives later and is ignored.
+  runtime.emit(workRunId, { kind: 'pane_killed', message: 'pane closed' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.match(service.status('proj-123'), /paused/);
+  // Repeating the stop returns its first result; stopping a finished run is refused.
+  const again = service.commands.stopRun(workRunId, { actor: null, idempotencyKey: null });
+  assert.equal(
+    again.kind === 'accepted' ? again.revision : null,
+    stopped.kind === 'accepted' ? stopped.revision : undefined,
+  );
+  const planRun = runtime.launches.find((launch) => launch.stage === 'plan')?.runId ?? workRunId;
+  const finished = service.commands.stopRun(planRun, { actor: null, idempotencyKey: null });
+  assert.equal(finished.kind === 'refused' ? finished.reason : 'accepted', 'invalid_state');
+
+  const before = runtime.launches.length;
+  await service.command('reply proj-123 "Keep the filter in the URL instead"');
+  await waitFor(() => runtime.launches.length === before + 1);
+  const resumed = runtime.launches.at(-1);
+  assert.equal(resumed?.sessionId, work?.sessionId);
+  assert.equal(resumed?.mode, 'resume');
+  assert.match(resumed?.prompt ?? '', /Keep the filter in the URL instead/);
+  assert.match(await service.command('stop nope'), /No factory execution matches nope/);
+});
+
+test('a reply whose input fails pauses with one open question, and a retry carries the answer', async () => {
+  const { factoryRoot, runtime, service, workRunId } = await reachWork();
+  service.commands.stopRun(workRunId, { actor: null, idempotencyKey: null });
+  // Make the reply's input check fail: the task is no longer the paused one.
+  const db = openStateDatabase(factoryRoot);
+  db.prepare("UPDATE tasks SET status = 'active'").run();
+  await service.command('reply proj-123 "Keep the filter in the URL instead"');
+  await waitFor(() =>
+    service.status('proj-123').includes('not the selected dependency-ready task'),
+  );
+  assert.match(service.status('proj-123'), /status: paused/);
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) AS n FROM attention_requests WHERE status IN ('open', 'answered', 'resuming')",
+      )
+      .get()?.['n'],
+    1,
+  );
+  db.prepare("UPDATE tasks SET status = 'blocked'").run();
+  db.close();
+  const before = runtime.launches.length;
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.length === before + 1);
+  assert.match(runtime.launches.at(-1)?.prompt ?? '', /Keep the filter in the URL instead/);
+});
+
+test('cancelling a running ticket closes its panes and tab and leaves its worktree and branch', async () => {
+  const { factoryRoot, runtime, service, workCwd, workRunId } = await reachWork();
+  const answer = await service.command('cancel proj-123 "Not needed anymore"');
+  assert.match(answer, /cancelled/);
+  await waitFor(() => runtime.interrupted.includes(workRunId));
+  assert.equal(runtime.closedTabs.length, 1);
+  assert.ok(existsSync(workCwd));
+  const branch = spawnSync('git', ['-C', workCwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+    encoding: 'utf8',
+  }).stdout.trim();
+  assert.match(branch, /proj-123/);
+
+  // The closed pane's exit arrives later and is ignored.
+  runtime.emit(workRunId, { kind: 'pane_killed', message: 'pane closed' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const db = openStateDatabase(factoryRoot);
+  assert.deepEqual(
+    {
+      ...db
+        .prepare('SELECT stage, status, status_reason_code, status_reason FROM ticket_executions')
+        .get(),
+    },
+    {
+      stage: 'done',
+      status: 'cancelled',
+      status_reason: 'Not needed anymore',
+      status_reason_code: 'cancelled_by_actor',
+    },
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM actions WHERE status IN ('pending', 'leased')").get()?.[
+      'n'
+    ],
+    0,
+  );
+  assert.equal(ticketFacts(db, { now: new Date().toISOString() })[0]?.outcome, 'cancelled');
+  db.close();
+  assert.match(await service.command('reply proj-123 "too late"'), /not waiting for a reply/);
+  assert.match(await service.command('cancel proj-123'), /is cancelled/);
+});
+
+test('rerunning a cancelled ticket starts generation 2 on a new branch, and generation 1 stays readable', async () => {
+  const { factoryRoot, runtime, service } = await reachWork();
+  await service.command('cancel proj-123');
+  const before = runtime.launches.length;
+  const answer = await service.command('rerun proj-123');
+  assert.match(answer, /Planning queued|stage: plan/);
+  await waitFor(() => runtime.launches.length === before + 1);
+  const plan = runtime.launches.at(-1);
+  assert.equal(plan?.stage, 'plan');
+  assert.equal(plan?.mode, 'launch');
+
+  const db = openStateDatabase(factoryRoot);
+  const generations = db
+    .prepare(
+      'SELECT generation, status, is_current, factory_dir FROM ticket_executions ORDER BY generation',
+    )
+    .all()
+    .map((item) => [
+      item['generation'],
+      item['status'],
+      item['is_current'],
+      String(item['factory_dir']),
+    ]);
+  assert.equal(generations.length, 2);
+  assert.deepEqual(generations[0]?.slice(0, 3), [1, 'cancelled', 0]);
+  assert.deepEqual(generations[1]?.slice(0, 3), [2, 'active', 1]);
+  assert.match(String(generations[1]?.[3]), /\/r2$/);
+  const ticket = String(db.prepare('SELECT id FROM tickets').get()?.['id']);
+  assert.equal(loadGeneration(db, ticketId(ticket), 1)?.execution.status, 'cancelled');
+
+  // Plan generation 2 so it prepares its own worktree and branch.
+  const directory = String(generations[1]?.[3]);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  runtime.emit(plan?.runId ?? runId('none'), {
+    kind: 'subagent_done',
+    output: 'files',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => runtime.launches.filter((launch) => launch.stage === 'work').length === 2);
+  const branches = db
+    .prepare('SELECT worktree_branch FROM ticket_executions ORDER BY generation')
+    .all()
+    .map((item) => String(item['worktree_branch']));
+  assert.match(branches[0] ?? '', /^factory\/proj-123-[0-9a-f]{8}$/);
+  assert.match(branches[1] ?? '', /^factory\/proj-123-[0-9a-f]{8}-r2$/);
+  const worktrees = db
+    .prepare('SELECT worktree_path FROM ticket_executions ORDER BY generation')
+    .all()
+    .map((item) => String(item['worktree_path']));
+  // Every generation's worktree sits in the factory root's worktrees directory.
+  assert.equal(path.dirname(worktrees[1] ?? ''), path.dirname(worktrees[0] ?? ''));
+  assert.equal(path.basename(path.dirname(worktrees[1] ?? '')), 'worktrees');
+  db.close();
+
+  assert.match(
+    await service.command('rerun proj-123'),
+    /only a complete, cancelled, or failed ticket can be rerun/,
+  );
+});
+
+test('the work prompt lists every check work validation runs', async () => {
+  const { runtime } = await reachWork();
+  const prompt = runtime.launches.find((launch) => launch.stage === 'work')?.prompt ?? '';
+  assert.match(prompt, /Work validation checks that:/);
+  assert.match(prompt, /- the worktree has a change/);
+  assert.match(prompt, /- nothing is committed: HEAD stays at the base commit/);
+  assert.doesNotMatch(prompt, /git diff --check/);
+});
+
+// A ticket whose FACTORY.json sets up each worktree, up to its planner finishing.
+async function plannedWithSetup(setup: Array<{ argv: Array<string>; name: string }>) {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, worktree: { setup } })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files written', usage: sampleUsage() });
+  return { codeRoot, runtime, service };
+}
+
+test('worktree setup runs in the new worktree before its first agent', async () => {
+  const { runtime } = await plannedWithSetup([
+    { argv: ['sh', '-c', 'echo installed > .setup-done'], name: 'install' },
+  ]);
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  assert.equal(readFileSync(path.join(work?.cwd ?? '', '.setup-done'), 'utf8'), 'installed\n');
+});
+
+test('a failing worktree setup stops the ticket with its output, and retry reuses the worktree', async () => {
+  const flag = path.join(mkdtempSync(path.join(tmpdir(), 'factory-setup-')), 'ok');
+  const { runtime, service } = await plannedWithSetup([
+    {
+      argv: ['sh', '-c', `test -f '${flag}' || { echo registry unreachable; exit 3; }`],
+      name: 'install',
+    },
+  ]);
+  // A failed setup fails the worktree step, which takes a retry.
+  await waitFor(() => service.status('proj-123').includes('next: /factory retry'));
+  const paused = service.status('proj-123');
+  assert.match(paused, /Worktree setup install .* exited with code 3/);
+  assert.match(paused, /registry unreachable/);
+  assert.equal(
+    runtime.launches.some((launch) => launch.stage === 'work'),
+    false,
+  );
+
+  writeFileSync(flag, '');
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
 });

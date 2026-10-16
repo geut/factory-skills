@@ -7,6 +7,9 @@ import type {
   TerminalOutcome,
 } from '../domain.ts';
 
+// The Herdr tab a ticket's panes open in: one per ticket, named after it.
+export type TicketTab = { key: string; label: string };
+
 export type LaunchSpec = {
   cwd: string;
   mode: 'launch' | 'resume';
@@ -19,6 +22,8 @@ export type LaunchSpec = {
   sessionFile: string;
   sessionId: SessionId;
   stage: StageName;
+  // Without a tab, the pane opens next to the host's own pane.
+  tab?: TicketTab | null;
   taskLabel: string | null;
   thinking: string;
   tools: string;
@@ -44,10 +49,13 @@ export type PaneSpec = {
   cwd: string;
   name: string;
   scriptFile: string;
+  tab?: TicketTab | null;
   target: { file: string; kind: 'diff' } | { kind: 'session'; sessionFile: string };
 };
 
 export type FactorySubagentRuntime = {
+  // Closes a finished ticket's tab, if the runtime opened one.
+  closeTab?: (key: string) => Promise<void>;
   interrupt: (input: { paneId: string; runId: RunId }) => Promise<void>;
   launch: (spec: LaunchSpec) => Promise<RunStarted>;
   observe: (run: ActiveWatch, handler: (event: TerminalOutcome) => void) => () => void;

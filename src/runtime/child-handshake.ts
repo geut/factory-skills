@@ -87,6 +87,43 @@ export function createTerminalWriter(): (
   };
 }
 
+// The controller grades a stage's reply: the last assistant text since the
+// latest prompt. When it holds no `## ` heading, the agent has not written
+// its template yet; an agent that calls subagent_done after only thinking it
+// through would end the run with nothing to grade.
+export const MISSING_REPLY =
+  'Not finished: the controller grades your reply text, and this run has no template in it yet. Write the stage template now as plain text, then call subagent_done.';
+
+type SessionEntryLike = { message?: { content?: unknown; role?: string }; type?: string };
+
+export function replyIsMissing(entries: ReadonlyArray<SessionEntryLike>): boolean {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.type === 'message' ? entries[index]?.message : undefined;
+    if (message?.role === 'user') {
+      return true;
+    }
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) {
+      continue;
+    }
+    const text = message.content
+      .flatMap((part: unknown) =>
+        typeof part === 'object' &&
+        part !== null &&
+        'type' in part &&
+        part.type === 'text' &&
+        'text' in part &&
+        typeof part.text === 'string'
+          ? [part.text]
+          : [],
+      )
+      .join('\n');
+    if (text.trim().length > 0) {
+      return !/^##\s+\S/m.test(text);
+    }
+  }
+  return true;
+}
+
 function pingName(env: NodeJS.ProcessEnv): string {
   const name = env['PI_SUBAGENT_NAME'];
   return name !== undefined && name.length > 0 ? name : 'factory';
@@ -94,11 +131,24 @@ function pingName(env: NodeJS.ProcessEnv): string {
 
 export default function factoryChildHandshake(pi: ExtensionAPI): void {
   const writeTerminal = createTerminalWriter();
+  let replyNudged = false;
 
   pi.registerTool({
     description:
-      'Finish this factory stage. Call it once. The process exits immediately. If a reply still arrives, stop. Do not call it again and do not call caller_ping.',
-    async execute() {
+      'Finish this factory stage once your reply is written as text. Call it once. The process exits immediately. If a reply still arrives, stop. Do not call it again and do not call caller_ping.',
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      // A Pi without a tool context cannot be checked; it ends as before.
+      const entries = (ctx as typeof ctx | undefined)?.sessionManager.getEntries();
+      // Asked once per run; a second call ends the run either way.
+      if (
+        process.env['FACTORY_REPLY_REQUIRED'] === '1' &&
+        !replyNudged &&
+        entries !== undefined &&
+        replyIsMissing(entries as ReadonlyArray<SessionEntryLike>)
+      ) {
+        replyNudged = true;
+        return { content: [{ text: MISSING_REPLY, type: 'text' }], details: undefined };
+      }
       writeTerminal(process.env['PI_SUBAGENT_SESSION'], { type: 'done' });
       process.exit(0);
     },

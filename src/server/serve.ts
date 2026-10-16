@@ -1,0 +1,354 @@
+import { randomUUID } from 'node:crypto';
+import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import path from 'node:path';
+import { getAsset, isSea } from 'node:sea';
+import type { DatabaseSync } from 'node:sqlite';
+import { buildOpenApiDocument } from '../api/openapi.ts';
+import { ProblemError } from '../api/problem.ts';
+import { createRouter } from '../api/router.ts';
+import { apiRoutes } from '../api/routes.ts';
+import { DEFAULT_SYNC_MINUTES, readFactoryConfig } from '../config.ts';
+import {
+  createFactoryService,
+  factoryPaths,
+  type FactoryCommands,
+  type FactoryService,
+} from '../controller/service.ts';
+import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
+import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
+import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
+import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { openStateDatabase } from '../state/database.ts';
+import { createAuthorizer, ensureLocalClient } from './clients.ts';
+import { createEventHub } from './events.ts';
+import {
+  acquireServerLease,
+  HEARTBEAT_MS,
+  leaseIsLive,
+  readServerLease,
+  releaseServerLease,
+  renewServerLease,
+  type ServerLease,
+} from './lease.ts';
+
+export type RunningServer = {
+  close: () => Promise<void>;
+  instanceId: string;
+  url: string;
+};
+
+export type ServeResult =
+  | { kind: 'error'; message: string }
+  | { kind: 'ok'; server: RunningServer };
+
+type ServeInput = {
+  // Tests pass stand-ins; the server uses the gh CLI otherwise.
+  codeHost?: () => CodeHost;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  github?: GithubClient;
+  // Called when the server loses its lease and has shut itself down.
+  onLost?: (message: string) => void;
+  out: (line: string) => void;
+  // Overrides FACTORY.json server.port; tests pass 0 for a free port.
+  port?: number;
+  // Tests pass a fake; the server builds the Herdr runtime otherwise.
+  runtime?: (input: { handshakePath: string; piBin: string }) => FactorySubagentRuntime;
+};
+
+// Resolves a command the way a shell would, so launch scripts can use an
+// absolute path: the Herdr dispatcher runs them in a non-login shell.
+export function findOnPath(name: string, env: NodeJS.ProcessEnv): string | null {
+  for (const dir of (env['PATH'] ?? '').split(path.delimiter)) {
+    if (dir.length === 0) {
+      continue;
+    }
+    const candidate = path.join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not in this directory.
+    }
+  }
+  return null;
+}
+
+function piBinary(env: NodeJS.ProcessEnv): string | null {
+  const override = env['FACTORY_PI_BIN'];
+  if (override !== undefined && override.length > 0) {
+    return path.isAbsolute(override) ? override : null;
+  }
+  return findOnPath('pi', env);
+}
+
+// The single executable carries the child handshake extension as an asset and
+// writes it into the factory root, where each agent's Pi loads it with -e.
+function handshakePath(factoryRoot: string): string {
+  if (!isSea()) {
+    return handshakeExtensionPath();
+  }
+  const file = path.join(factoryRoot, 'runtime', 'child-handshake.ts');
+  const source = getAsset('child-handshake.ts', 'utf8');
+  let current: string | null = null;
+  try {
+    current = readFileSync(file, 'utf8');
+  } catch {
+    // Not written yet.
+  }
+  if (current !== source) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, source);
+  }
+  return file;
+}
+
+function isLoopback(host: string): boolean {
+  return host === 'localhost' || host === '::1' || host.startsWith('127.');
+}
+
+// The address clients use: a wildcard bind is reached through loopback.
+function clientUrl(host: string, port: number): string {
+  const reachable = host === '0.0.0.0' ? '127.0.0.1' : host === '::' ? '::1' : host;
+  return `http://${reachable.includes(':') ? `[${reachable}]` : reachable}:${port}`;
+}
+
+function listen(server: Server, host: string, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      server.off('error', reject);
+      const address = server.address();
+      resolve(typeof address === 'object' && address !== null ? address.port : port);
+    });
+  });
+}
+
+function closeHttp(server: Server): Promise<void> {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections();
+  });
+}
+
+function heldMessage(factoryRoot: string, lease: ServerLease): string {
+  return `A factory server already runs for ${factoryRoot} (pid ${lease.pid}, ${lease.url}).`;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function serve(input: ServeInput): Promise<ServeResult> {
+  const { codeRoot, factoryRoot } = factoryPaths(input.cwd);
+  const targetPaneId = input.env['HERDR_PANE_ID'] ?? '';
+  const socketPath = input.env['HERDR_SOCKET_PATH'] ?? '';
+  if (targetPaneId.length === 0 || socketPath.length === 0) {
+    return {
+      kind: 'error',
+      message:
+        'factory serve must run inside a Herdr pane: HERDR_PANE_ID and HERDR_SOCKET_PATH are not set.',
+    };
+  }
+  const piBin = piBinary(input.env);
+  if (piBin === null) {
+    return {
+      kind: 'error',
+      message: 'Cannot find pi. Put it on PATH or set FACTORY_PI_BIN to its absolute path.',
+    };
+  }
+  if (input.runtime === undefined && findOnPath('herdr', input.env) === null) {
+    return { kind: 'error', message: 'Cannot find herdr on PATH.' };
+  }
+  const config = readFactoryConfig(factoryRoot);
+  if (config.kind === 'error') {
+    return config;
+  }
+  const { host } = config.config.server;
+  // Ask only for what the tracker can do; better to stop here than to fail later.
+  const tracker = config.config.tracker;
+  if (tracker !== null) {
+    const capabilities = createGithubTracker(
+      tracker,
+      input.github ?? githubCliClient(),
+    ).capabilities;
+    if (Object.keys(tracker.status).length > 0 && !capabilities.has('status')) {
+      return {
+        kind: 'error',
+        message: `The ${tracker.kind} tracker cannot show statuses; remove tracker.status from FACTORY.json.`,
+      };
+    }
+  }
+
+  let db: DatabaseSync;
+  try {
+    db = openStateDatabase(factoryRoot, { create: true });
+  } catch (error: unknown) {
+    return { kind: 'error', message: messageOf(error) };
+  }
+
+  // Checked before binding so a second server reports the first, not a busy
+  // port. Acquiring the lease below is the check that holds under a race.
+  const existing = readServerLease(db);
+  if (existing !== null && leaseIsLive(existing, new Date().toISOString())) {
+    db.close();
+    return { kind: 'error', message: heldMessage(factoryRoot, existing) };
+  }
+
+  const instanceId = randomUUID();
+  const events = createEventHub(db);
+  let document: Record<string, unknown> | null = null;
+  // The router listens before the service exists; commands wait for it.
+  let service: FactoryService | null = null;
+  const started = (): FactoryService => {
+    if (service === null) {
+      throw new ProblemError('internal_error', 'The server is still starting.');
+    }
+    return service;
+  };
+  const ready = (): FactoryService & FactoryCommands => ({ ...started(), ...started().commands });
+  const commands: FactoryCommands = {
+    cancel: (key, reason, options) => ready().cancel(key, reason, options),
+    complete: (key, options) => ready().complete(key, options),
+    reply: (key, answer, options) => ready().reply(key, answer, options),
+    rerun: (key, options) => ready().rerun(key, options),
+    retry: (key, options) => ready().retry(key, options),
+    start: (source, options) => ready().start(source, options),
+    stopRun: (id, options) => ready().stopRun(id, options),
+  };
+  const http = createServer(
+    createRouter({
+      authorize: createAuthorizer(db, () => new Date().toISOString()),
+      context: {
+        backlog: (refresh) => ready().backlog(refresh),
+        commands,
+        db,
+        events,
+        instanceId,
+        openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+        webhooks: {
+          pullRequestChanged: (pullRequest) => ready().pullRequestChanged(pullRequest),
+          secret: () => {
+            const current = readFactoryConfig(factoryRoot);
+            const name = current.kind === 'ok' ? current.config.codeHost?.webhookSecretEnv : null;
+            const value = name === null || name === undefined ? '' : (input.env[name] ?? '');
+            return value.length > 0 ? value : null;
+          },
+          verify: verifyGithubSignature,
+        },
+      },
+      onError: (error) => {
+        input.out(
+          `API error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+        );
+      },
+      routes: apiRoutes,
+      // Source runs and tests check every response against its schema; the
+      // single executable trusts the types.
+      validateResponses: !isSea(),
+    }),
+  );
+  let port: number;
+  try {
+    port = await listen(http, host, input.port ?? config.config.server.port);
+  } catch (error: unknown) {
+    db.close();
+    return { kind: 'error', message: `Cannot listen on ${host}: ${messageOf(error)}` };
+  }
+  const url = clientUrl(host, port);
+
+  const acquired = acquireServerLease(db, {
+    instanceId,
+    now: new Date().toISOString(),
+    pid: process.pid,
+    url,
+  });
+  if (acquired.kind === 'held') {
+    await closeHttp(http);
+    db.close();
+    return { kind: 'error', message: heldMessage(factoryRoot, acquired.lease) };
+  }
+
+  ensureLocalClient(db, factoryRoot, new Date().toISOString());
+  const handshake = handshakePath(factoryRoot);
+  const runtime =
+    input.runtime?.({ handshakePath: handshake, piBin }) ??
+    createPiHerdrRuntime({
+      handshakePath: handshake,
+      piBin,
+      socketPath,
+      tabsFile: path.join(factoryRoot, 'runtime', 'tabs.json'),
+      targetPaneId,
+    });
+  const running = createFactoryService({
+    codeRoot,
+    db,
+    factoryRoot,
+    ...(input.codeHost === undefined ? {} : { codeHost: input.codeHost }),
+    ...(input.github === undefined ? {} : { github: input.github }),
+    leaseOwner: instanceId,
+    notify: input.out,
+    runtime,
+  });
+
+  let closed = false;
+  async function close(): Promise<void> {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    clearInterval(heartbeat);
+    if (timers.sync !== null) {
+      clearInterval(timers.sync);
+    }
+    events.close();
+    await running.stop();
+    await closeHttp(http);
+    releaseServerLease(db, instanceId);
+    db.close();
+  }
+
+  // Set once recovery is done; close() may run before that.
+  const timers: { sync: ReturnType<typeof setInterval> | null } = { sync: null };
+  const heartbeat = setInterval(() => {
+    if (!renewServerLease(db, instanceId, new Date().toISOString())) {
+      void close().then(() => {
+        input.onLost?.('Another factory server took the lease; this one stopped.');
+      });
+    }
+  }, HEARTBEAT_MS);
+
+  if (!isLoopback(host)) {
+    input.out(`Warning: listening on ${host} over plain HTTP; tokens travel unencrypted.`);
+  }
+  try {
+    await running.recover();
+  } catch (error: unknown) {
+    await close();
+    return { kind: 'error', message: `Recovery failed: ${messageOf(error)}` };
+  }
+  // Commands start after recovery has adopted the runs already in flight.
+  service = running;
+
+  // Pull requests of tickets in handoff: once now, then on an interval.
+  // Webhooks are faster; this is the backstop, since GitHub does not retry a
+  // failed delivery.
+  const syncPullRequests = (): void => {
+    void running.syncPullRequests().then(
+      ({ errors }) => {
+        for (const error of errors) {
+          input.out(`Pull request sync: ${error}`);
+        }
+      },
+      (error: unknown) => {
+        input.out(`Pull request sync failed: ${messageOf(error)}`);
+      },
+    );
+  };
+  const minutes = config.config.codeHost?.syncMinutes ?? DEFAULT_SYNC_MINUTES;
+  timers.sync = setInterval(syncPullRequests, minutes * 60_000);
+  syncPullRequests();
+  input.out(`Factory server for ${codeRoot} listening on ${url}`);
+  return { kind: 'ok', server: { close, instanceId, url } };
+}

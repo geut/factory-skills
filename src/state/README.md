@@ -1,23 +1,28 @@
 # Controller state
 
-This directory is the persistence boundary for the deterministic factory controller. The SQLite database at `<factory-root>/db/state.sqlite` is authoritative. Dashboard reads use the SQL views below. The controller does not write a JSON state file.
+This directory is the persistence boundary for the deterministic factory controller. The SQLite database at `<factory-root>/db/state.sqlite` is authoritative. Only code in this package reads it: the factory server, which writes it, and the Pi extension, which reads it to show status. The views below are internal, so they can change with the schema; other clients, such as the dashboard, use the server's API ([ADR-003](../../docs/adr/0003-a-factory-server-owns-the-controller.md)). The controller does not write a JSON state file.
 
-The schema starts at version 2. It does not migrate a legacy database that still has the old `meta` table, or an older factory database. `openStateDatabase()` rejects that database with a message telling the operator to back it up or remove it.
+The schema is version 6. A read-write open upgrades a schema 3 database in place with the forward-only steps in [`upgrades.ts`](upgrades.ts). A read-only open of an older database fails until something opens it read-write once. Databases older than schema 3, and legacy databases with the old `meta` table, are rejected with a message telling the operator to back them up or remove them.
 
 ## Model
 
-| Table                                     | Purpose                                                           |
-| ----------------------------------------- | ----------------------------------------------------------------- |
-| `tickets`                                 | Stable external ticket identity and source.                       |
-| `ticket_executions`                       | Explicit rerun generations and the current workflow state.        |
-| `tasks`, `task_dependencies`              | Ordered plan slices and their ready frontier.                     |
-| `agent_sessions`                          | Logical Pi conversations. A resumed agent reuses its session.     |
-| `agent_runs`                              | One Herdr pane/process attempt. A resume creates a new run.       |
-| `attention_requests`, `attention_replies` | Durable questions and versioned answers.                          |
-| `actions`                                 | Transactional outbox leased by the runtime dispatcher.            |
-| `events`                                  | Deduplicated inputs and a monotonic dashboard/change cursor.      |
-| `validation_runs`, `validation_checks`    | Checks for a finished run. A pass does not require a result hash. |
-| `usage_snapshots`                         | Cumulative Pi usage plus per-run deltas.                          |
+| Table                                                           | Purpose                                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `tickets`                                                       | Stable external ticket identity and source.                                                                  |
+| `ticket_executions`                                             | Explicit rerun generations and the current workflow state.                                                   |
+| `tasks`, `task_dependencies`                                    | Ordered plan slices and their ready frontier.                                                                |
+| `agent_sessions`                                                | Logical Pi conversations. A resumed agent reuses its session.                                                |
+| `agent_runs`                                                    | One Herdr pane/process attempt. A resume creates a new run.                                                  |
+| `attention_requests`, `attention_replies`                       | Durable questions and versioned answers.                                                                     |
+| `actions`                                                       | Transactional outbox leased by the runtime dispatcher.                                                       |
+| `events`                                                        | Deduplicated inputs, the API client behind each command, posted status cards, and a monotonic change cursor. |
+| `validation_runs`, `validation_checks`                          | Checks for a finished run. A pass does not require a result hash.                                            |
+| `usage_snapshots`                                               | Cumulative Pi usage plus per-run deltas.                                                                     |
+| `server_lease`                                                  | The factory server that owns the database, its URL, and heartbeat.                                           |
+| `api_clients`                                                   | Named API clients, their scope, and the SHA-256 of their token.                                              |
+| `factory_identity`                                              | This factory's id, created with the database, for telling exported stats apart.                              |
+| `status_history`                                                | Every stage and status an execution or task was in, and when.                                                |
+| `pull_requests`, `pull_request_reviews`, `pull_request_commits` | A ticket's pull request and its reviews and commits, as the code host reports them.                          |
 
 Accepted stage output is stored on `agent_runs.result_json`. Review findings do not need a separate audit tree in v0; the normalized review result stays with the review run and the latest verdict/counts are projected onto its task.
 
@@ -55,7 +60,7 @@ Action execution happens after commit. A dispatcher claims one pending action wi
 
 ## Useful views
 
-- `current_ticket_executions`: dashboard rows for every ticket's current generation.
+- `current_ticket_executions`: one row for every ticket's current generation.
 - `ready_task_frontier`: pending tasks whose dependencies are done.
 - `open_attention`: questions or approvals still requiring resolution.
 - `latest_usage_by_session`: the cumulative record to use for totals.
@@ -72,6 +77,6 @@ const db = openStateDatabase('/absolute/project/.factory', { create: true });
 db.close();
 ```
 
-The schema is version 3. Older databases are not upgraded: opening one fails with a message to finish or cancel its tickets with the older controller and remove the database. Stage names are not constrained by the schema; the store checks them against the stage registry when it reads rows ([ADR-002](../../docs/adr/0002-stage-names-live-in-the-registry.md)).
+A new schema version adds its tables to `schema.sql` and an additive step to `upgrades.ts`; a test checks that an upgraded database and a new one have the same tables and columns. Stage names are not constrained by the schema; the store checks them against the stage registry when it reads rows ([ADR-002](../../docs/adr/0002-stage-names-live-in-the-registry.md)).
 
 The opener enables foreign keys, WAL, and a five-second busy timeout. It publishes SQLite `application_id` `FACT`, `user_version`, and `schema_meta` in one schema transaction. Concurrent creators converge on that transaction. Only an empty SQLite file can be initialized; legacy, partial, and unrelated databases are rejected without modification.

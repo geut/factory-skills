@@ -24,6 +24,7 @@ import { childDescription } from '../runtime/policy.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
 import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
+import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
@@ -223,23 +224,38 @@ function pauseWithNotice(
   snapshot.execution.retry = input.retry;
   snapshot.execution.statusReasonCode = input.code;
   snapshot.execution.statusReason = input.failures.join('\n');
-  snapshot.attention.push({
-    id: input.ids.attention(),
-    kind: 'policy_limit',
-    question: input.question,
-    runId: input.runId ?? null,
-    status: 'open',
-  });
-  const attention = snapshot.attention.at(-1);
+  // A reply being prepared keeps its question, which stays the one unresolved
+  // question of the execution; a retry then carries the stored answer.
+  const kept =
+    input.keepReply === true
+      ? (snapshot.attention.find((item) => item.status === 'resuming') ?? null)
+      : null;
+  if (kept === null) {
+    snapshot.attention.push({
+      id: input.ids.attention(),
+      kind: 'policy_limit',
+      question: input.question,
+      runId: input.runId ?? null,
+      status: 'open',
+    });
+  }
+  const attention = kept ?? snapshot.attention.at(-1);
   if (attention === undefined) {
     return;
   }
+  const once = kept === null ? attention.id : `${attention.id}:${input.ids.action()}`;
+  trackerUpdate(snapshot, input.ids, {
+    comment: pausedComment(snapshot, input.question),
+    issueStatus: null,
+    key: `paused:${once}`,
+    update: 'paused',
+  });
   snapshot.actions.push({
     attempts: 0,
     attentionReplyId: null,
     attentionRequestId: attention.id,
     id: input.ids.action(),
-    idempotencyKey: `notify:${attention.id}`,
+    idempotencyKey: `notify:${once}`,
     kind: 'notify_attention',
     lastError: null,
     maxAttempts: 1,
@@ -248,6 +264,53 @@ function pauseWithNotice(
     runId: null,
     status: 'pending',
   });
+}
+
+// Queues a tracker update for a ticket that came from a tracker: a comment and,
+// when given, a status. Local files and --text tickets have no issue to update.
+export function trackerUpdate(
+  snapshot: FactorySnapshot,
+  ids: IdSource,
+  input: {
+    comment: string;
+    issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
+    key: string;
+    update: 'cancelled' | 'handoff' | 'paused' | 'started';
+  },
+): void {
+  if (snapshot.ticket.sourceKind === 'file' || snapshot.ticket.sourceKind === 'text') {
+    return;
+  }
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    comment: input.comment,
+    id: ids.action(),
+    idempotencyKey: `tracker:${snapshot.execution.id}:${input.key}`,
+    issueStatus: input.issueStatus,
+    kind: 'update_ticket_source',
+    lastError: null,
+    maxAttempts: 3,
+    retryOfActionId: null,
+    runId: null,
+    status: 'pending',
+    update: input.update,
+  });
+}
+
+// The comment a pause that needs a person leaves on the issue.
+function pausedComment(snapshot: FactorySnapshot, question: string): string {
+  return [
+    'The factory paused this ticket and needs a person:',
+    '',
+    question
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n'),
+    '',
+    `Answer from the dashboard, or in Pi with \`/factory reply ${snapshot.ticket.commandRef} "answer"\`.`,
+  ].join('\n');
 }
 
 // A prepared session for one stage, launched with that stage's model and thinking.
@@ -556,6 +619,12 @@ function applyTerminal(
       snapshot.execution.status = 'waiting_for_user';
       snapshot.execution.retry = null;
       if (attention !== undefined) {
+        trackerUpdate(snapshot, ids, {
+          comment: pausedComment(snapshot, terminal.question),
+          issueStatus: null,
+          key: `paused:${attention.id}`,
+          update: 'paused',
+        });
         snapshot.actions.push({
           attempts: 0,
           attentionReplyId: null,
@@ -612,7 +681,8 @@ function reduceStart(
     attention: [],
     execution: {
       factoryDir: event.ticket.factoryDir,
-      generation: 1,
+      factoryVersion: event.factoryVersion ?? null,
+      generation: event.generation ?? 1,
       id: executionId,
       inputFetchedAt: event.ticket.fetchedAt,
       inputHash: event.ticket.contentHash,
@@ -658,6 +728,12 @@ function reduceStart(
   const run = addRun(created, session, null, 'initial', 0, ids, prompt);
   run.description = childDescription(event.ticket.title);
   launchAction(created, run, prompt, 'launch', ids, event.policy.codeRoot);
+  trackerUpdate(created, ids, {
+    comment: 'The factory started working on this issue.',
+    issueStatus: 'in_progress',
+    key: 'started',
+    update: 'started',
+  });
   return finish(created, `Planning queued for ${event.ticket.displayRef}.`);
 }
 
@@ -846,7 +922,7 @@ function begin(
           maxAttempts: 3,
           retryOfActionId: null,
           runId: null,
-          slug: snapshot.execution.factoryDir.split('/').at(-1) ?? snapshot.execution.id,
+          slug: worktreeSlugFor(snapshot.execution.factoryDir, snapshot.execution.generation),
           status: 'pending',
         });
         return 'Preparing the worktree.';
@@ -932,6 +1008,7 @@ function handOff(
   run: RunRecord,
   notice: string,
   ids: IdSource,
+  pullRequestUrl: string | null,
 ): Reduction {
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
@@ -967,6 +1044,15 @@ function handOff(
       name: `🔀 ${ref}`,
     },
   );
+  trackerUpdate(snapshot, ids, {
+    comment:
+      pullRequestUrl === null
+        ? 'The factory finished this ticket. Its handoff has the merge commands.'
+        : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
+    issueStatus: 'in_review',
+    key: `handoff:${run.id}`,
+    update: 'handoff',
+  });
   resolveOpen(snapshot);
   snapshot.attention.push({
     id: ids.attention(),
@@ -1080,7 +1166,14 @@ function applyOutcome(
       }
       const step = nextStep(snapshot, session.stage, task?.taskId ?? null);
       if (step.kind === 'handoff') {
-        return handOff(snapshot, session, run, outcome.notice ?? '', ids);
+        return handOff(
+          snapshot,
+          session,
+          run,
+          outcome.notice ?? '',
+          ids,
+          outcome.pullRequestUrl ?? null,
+        );
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;
       if (task !== null && !sameTask) {
@@ -1379,6 +1472,130 @@ export function reduce(input: {
       snapshot.execution.status = 'complete';
       return finish(snapshot, `${snapshot.ticket.displayRef} is complete.`);
     }
+    case 'rerun':
+      // The store retires the old generation and applies the start itself.
+      return reject(existing, 'A rerun is applied as a start.');
+    case 'cancel': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'Cancel does not match the current ticket.');
+      }
+      if (snapshot.execution.stage === 'done') {
+        return unchanged(existing, `${snapshot.ticket.displayRef} is already finished.`);
+      }
+      for (const run of snapshot.runs) {
+        if (run.status !== 'terminal') {
+          run.status = 'terminal';
+          run.terminalKind = 'cancelled';
+          run.endedAt = now;
+        }
+      }
+      for (const action of snapshot.actions) {
+        if (action.status === 'pending') {
+          action.status = 'cancelled';
+        }
+      }
+      for (const task of snapshot.tasks) {
+        if (task.status !== 'done' && task.status !== 'cancelled') {
+          task.status = 'cancelled';
+          task.stage = null;
+        }
+      }
+      for (const attention of snapshot.attention) {
+        if (
+          attention.status === 'open' ||
+          attention.status === 'answered' ||
+          attention.status === 'resuming'
+        ) {
+          attention.status = 'cancelled';
+        }
+      }
+      for (const session of snapshot.sessions) {
+        if (session.status === 'open' || session.status === 'prepared') {
+          session.status = 'abandoned';
+        }
+      }
+      snapshot.execution.stage = 'done';
+      snapshot.execution.status = 'cancelled';
+      snapshot.execution.retry = null;
+      snapshot.execution.statusReasonCode = 'cancelled_by_actor';
+      snapshot.execution.statusReason = event.reason ?? 'Cancelled by a person.';
+      trackerUpdate(snapshot, ids, {
+        comment: [
+          `The factory stopped working on this issue: cancelled${event.by === null ? '' : ` by ${event.by}`}.`,
+          ...(event.reason === null ? [] : ['', `> ${event.reason}`]),
+        ].join('\n'),
+        issueStatus: 'clear',
+        key: 'cancelled',
+        update: 'cancelled',
+      });
+      return finish(snapshot, `${snapshot.ticket.displayRef} was cancelled.`);
+    }
+    case 'stop': {
+      const run = runFor(snapshot, event.runId);
+      if (run === null) {
+        return reject(existing, 'No such run.');
+      }
+      if (run.status === 'terminal') {
+        return reject(existing, 'That agent already finished.');
+      }
+      const session = sessionFor(snapshot, run.sessionId);
+      const label = session === null ? 'The' : `The ${stages[session.stage].label.toLowerCase()}`;
+      run.status = 'terminal';
+      // `cancelled` is the terminal kind the schema has for a run ended on purpose.
+      run.terminalKind = 'cancelled';
+      run.endedAt = now;
+      // Like a question, a stop blocks the task until a reply or a retry.
+      const task = session?.taskId == null ? null : taskById(snapshot, session.taskId);
+      if (task !== null && task.status === 'active') {
+        task.status = 'blocked';
+      }
+      for (const action of snapshot.actions) {
+        if (
+          action.runId === run.id &&
+          (action.kind === 'launch_run' || action.kind === 'resume_run') &&
+          action.status === 'pending'
+        ) {
+          action.status = 'cancelled';
+        }
+      }
+      pauseWithNotice(snapshot, {
+        code: 'stopped_by_actor',
+        failures: [`${label} agent was stopped.`],
+        ids,
+        question: `${label} agent was stopped by a person. Reply with what it should do instead to resume it, retry to relaunch it, or cancel the ticket.`,
+        retry: { kind: 'relaunch' },
+        runId: run.id,
+      });
+      return finish(snapshot, `${label} agent was stopped. The ticket is paused.`);
+    }
+    case 'pull_request_closed': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'The pull request does not match the current ticket.');
+      }
+      if (snapshot.execution.stage === 'done') {
+        return unchanged(existing, `${snapshot.ticket.displayRef} is already finished.`);
+      }
+      if (snapshot.execution.status !== 'ready_for_handoff') {
+        return reject(
+          existing,
+          `${snapshot.ticket.displayRef} is ${snapshot.execution.stage}/${snapshot.execution.status}, not ready for handoff.`,
+        );
+      }
+      resolveOpen(snapshot);
+      for (const session of snapshot.sessions) {
+        if (session.status === 'open' || session.status === 'prepared') {
+          session.status = 'completed';
+        }
+      }
+      snapshot.execution.stage = 'done';
+      snapshot.execution.status = 'cancelled';
+      snapshot.execution.statusReasonCode = 'pull_request_closed';
+      snapshot.execution.statusReason = `${event.url} was closed without merging.`;
+      return finish(
+        snapshot,
+        `${snapshot.ticket.displayRef} was cancelled: its pull request was closed.`,
+      );
+    }
     case 'run_started': {
       const run = runFor(snapshot, event.runId);
       const action = snapshot.actions.find((item) => item.id === event.actionId) ?? null;
@@ -1390,6 +1607,10 @@ export function reduce(input: {
       }
       if (run.status === 'running' && run.paneId === event.paneId) {
         return unchanged(existing, 'Run is already started.', run.id);
+      }
+      // A launch that was in flight when the run was stopped or cancelled.
+      if (run.status === 'terminal') {
+        return unchanged(existing, 'The run ended before its pane started.');
       }
       action.status = 'succeeded';
       run.status = 'running';
@@ -1444,9 +1665,14 @@ export function reduce(input: {
         return reject(existing, 'This ticket is not waiting for a reply.');
       }
       // A retryable pause takes only a retry; otherwise a reply resumes the run
-      // that paused the ticket, and a pause no run asked for takes neither.
-      if (snapshot.execution.retry !== null) {
+      // that paused the ticket, and a pause no run asked for takes neither. A
+      // stopped agent takes either: a reply resumes it with instructions.
+      const stopped = snapshot.execution.statusReasonCode === 'stopped_by_actor';
+      if (snapshot.execution.retry !== null && !stopped) {
         return reject(existing, `Retry with /factory retry ${snapshot.ticket.commandRef}.`);
+      }
+      if (stopped) {
+        snapshot.execution.retry = null;
       }
       const attention =
         snapshot.attention.find((item) => item.status === 'open' || item.status === 'answered') ??
@@ -1472,6 +1698,7 @@ export function reduce(input: {
       const version =
         snapshot.replies.filter((reply) => reply.requestId === attention.id).length + 1;
       snapshot.replies.push({
+        actor: event.actor ?? null,
         answer: event.answer,
         answerHash,
         id: ids.reply(),

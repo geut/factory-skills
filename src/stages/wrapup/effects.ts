@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { inspectWrapupInput } from '../../actions/wrapup-input.ts';
+import { factoryRootOf, ticketDirOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { captureWrapupState } from '../../validation/wrapup.ts';
 import type { InputContext, InputResult } from '../effects.ts';
@@ -13,7 +13,7 @@ function wrapupRuns(snapshot: FactorySnapshot) {
 // Checks the wrap-up input outside the controller transaction, so the reducer
 // can create the run atomically from what it found.
 export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResult<WrapupPrepared> {
-  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
+  const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
   const inspection = inspectWrapupInput({
     activeChild: snapshot.runs.some((run) => run.status !== 'terminal'),
     executionCurrent: deps.executionCurrent,
@@ -38,6 +38,7 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
           branch: worktreeBranch,
           codeRoot: snapshot.execution.policy.codeRoot,
           factoryRoot,
+          ticketDir: ticketDirOf(snapshot.execution.factoryDir),
           worktree: worktreePath,
         }),
       );

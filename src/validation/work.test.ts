@@ -158,7 +158,7 @@ test('work validation records the real diff and configured commands', async () =
   }
 });
 
-test('empty diffs, whitespace, commits, timeouts, and command results are checks', async () => {
+test('empty diffs, commits, timeouts, and command results are checks, and whitespace is not', async () => {
   const empty = repo();
   const emptyResult = await validate({
     allowsEmptyDiff: false,
@@ -193,10 +193,12 @@ test('empty diffs, whitespace, commits, timeouts, and command results are checks
     commands: [],
     cwd: dirty.cwd,
   });
-  assert.equal(whitespace.status, 'failed');
-  if (whitespace.status === 'failed') {
-    assert.match(whitespace.failures.join('\n'), /git diff --check/);
-  }
+  // Whitespace is the ticket's business, not a factory rule.
+  assert.equal(whitespace.status, 'passed');
+  assert.equal(
+    whitespace.checks.some((check) => check.name === 'git diff --check'),
+    false,
+  );
 
   const committed = repo();
   writeFileSync(path.join(committed.cwd, 'README.md'), '# committed\n');

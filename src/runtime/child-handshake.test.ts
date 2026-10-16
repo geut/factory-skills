@@ -8,6 +8,7 @@ import {
   createTerminalWriter,
   NUDGE_DELAYS_MS,
   shouldAutoExit,
+  replyIsMissing,
 } from './child-handshake.ts';
 
 test('the handshake writes the done sidecar once', () => {
@@ -61,4 +62,37 @@ test('a failed model request nudges the child with backoff, then exits', () => {
   assert.deepEqual(afterFailedTurn([{ role: 'assistant', stopReason: 'aborted' }], 0), {
     kind: 'none',
   });
+});
+
+function assistant(...content: Array<Record<string, string>>) {
+  return { message: { content, role: 'assistant' }, type: 'message' };
+}
+
+test('a reply without a template counts as missing, as in a wrap-up that only thought it through', () => {
+  const user = {
+    message: { content: [{ text: 'Follow the skill.', type: 'text' }], role: 'user' },
+    type: 'message',
+  };
+  const done = { id: 'call-1', name: 'subagent_done', type: 'toolCall' };
+  const template = '## Outcome\n\nDone.\n\n## Files\n\n- `goodbye.md`';
+  // The wrap-up in the Herdr tabs check: chatter, then thinking and the call.
+  assert.equal(
+    replyIsMissing([
+      user,
+      assistant({ text: 'Let me verify the file content.', type: 'text' }),
+      assistant({ thinking: 'Now I will write the template.', type: 'thinking' }, done),
+    ]),
+    true,
+  );
+  assert.equal(replyIsMissing([user, assistant(done)]), true);
+  assert.equal(replyIsMissing([user, assistant({ text: template, type: 'text' }, done)]), false);
+  assert.equal(
+    replyIsMissing([user, assistant({ text: template, type: 'text' }), assistant(done)]),
+    false,
+  );
+  // A template before the latest prompt does not answer it.
+  assert.equal(
+    replyIsMissing([user, assistant({ text: template, type: 'text' }), user, assistant(done)]),
+    true,
+  );
 });

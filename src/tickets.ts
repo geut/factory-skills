@@ -1,180 +1,22 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FactoryConfig } from './config.ts';
 import { ticketId, type ResolvedTicket, type TicketId } from './domain.ts';
 import { sha256 } from './hash.ts';
-
-export type RelatedIssue = {
-  body: string;
-  number: number;
-  title: string;
-  url: string | null;
-};
-
-export type IssueGraph =
-  | { kind: 'concrete'; number: number; title: string }
-  | { children: Array<RelatedIssue>; kind: 'umbrella'; number: number; title: string };
-
-const PARENT_RE = /^##\s+parent\s*$/im;
-const BLOCKED_RE = /^##\s+blocked by\s*$/im;
-const ISSUE_RE = /#(\d+)/g;
-
-function section(body: string, headingRe: RegExp): string {
-  const match = headingRe.exec(body);
-  if (!match) {
-    return '';
-  }
-  const rest = body.slice(match.index + match[0].length);
-  const next = rest.search(/^##\s+/m);
-  return next === -1 ? rest : rest.slice(0, next);
-}
-
-export function parseIssueBody(body: string): { blockedBy: Array<number>; parent: number | null } {
-  const parentSection = section(body, PARENT_RE);
-  const blockedSection = section(body, BLOCKED_RE);
-  const parentMatch = parentSection.match(/#(\d+)/);
-  const blockedBy: Array<number> = [];
-  for (const match of blockedSection.matchAll(ISSUE_RE)) {
-    const number = Number(match[1]);
-    if (!blockedBy.includes(number)) {
-      blockedBy.push(number);
-    }
-  }
-  return { blockedBy, parent: parentMatch?.[1] === undefined ? null : Number(parentMatch[1]) };
-}
-
-export function relatedTickets(issues: Array<RelatedIssue>, rootNumber: number): IssueGraph {
-  const root = issues.find((issue) => issue.number === rootNumber);
-  if (root === undefined) {
-    throw new Error(`issue #${rootNumber} not found`);
-  }
-  const children = issues
-    .filter(
-      (issue) => issue.number !== rootNumber && parseIssueBody(issue.body).parent === rootNumber,
-    )
-    .map((issue) => ({ ...issue, blockedBy: parseIssueBody(issue.body).blockedBy }))
-    .sort((left, right) => left.number - right.number);
-  if (children.length === 0) {
-    return { kind: 'concrete', number: rootNumber, title: root.title };
-  }
-  return { children, kind: 'umbrella', number: rootNumber, title: root.title };
-}
-
-export type GithubIssue = {
-  body: string;
-  host: string;
-  labels: Array<string>;
-  nodeId: string;
-  number: number;
-  owner: string;
-  repo: string;
-  title: string;
-  url: string;
-};
-
-export type GithubClient = {
-  fetchIssue: (input: { host: string; number: number; owner: string; repo: string }) => GithubIssue;
-  listSubIssues: (input: { number: number; owner: string; repo: string }) => Array<RelatedIssue>;
-};
+import type { IssueLink, Tracker, TrackerIssue } from './ports/tracker.ts';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function ghJson(args: Array<string>): unknown {
-  const result = spawnSync('gh', args, { encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
-  }
-  const parsed: unknown = JSON.parse(result.stdout);
-  return parsed;
-}
-
-export function githubCliClient(): GithubClient {
-  return {
-    fetchIssue(input) {
-      const payload = ghJson([
-        'issue',
-        'view',
-        String(input.number),
-        '--repo',
-        `${input.owner}/${input.repo}`,
-        '--json',
-        'id,number,title,body,url,labels',
-      ]);
-      if (
-        !isRecord(payload) ||
-        typeof payload['id'] !== 'string' ||
-        typeof payload['number'] !== 'number'
-      ) {
-        throw new Error(
-          `GitHub issue ${input.owner}/${input.repo}#${input.number} did not return an id.`,
-        );
-      }
-      const labels = Array.isArray(payload['labels'])
-        ? payload['labels'].flatMap((item) =>
-            isRecord(item) && typeof item['name'] === 'string' ? [item['name']] : [],
-          )
-        : [];
-      return {
-        body: typeof payload['body'] === 'string' ? payload['body'] : '',
-        host: input.host,
-        labels,
-        nodeId: payload['id'],
-        number: payload['number'],
-        owner: input.owner,
-        repo: input.repo,
-        title:
-          typeof payload['title'] === 'string' ? payload['title'] : `Issue ${payload['number']}`,
-        url: typeof payload['url'] === 'string' ? payload['url'] : '',
-      };
-    },
-    listSubIssues(input) {
-      const result = spawnSync(
-        'gh',
-        ['api', `repos/${input.owner}/${input.repo}/issues/${input.number}/sub_issues`],
-        { encoding: 'utf8' },
-      );
-      if (result.status !== 0 || result.stdout.trim().length === 0) {
-        return [];
-      }
-      const parsed: unknown = JSON.parse(result.stdout);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-      const issues: Array<RelatedIssue> = [];
-      for (const item of parsed) {
-        if (!isRecord(item) || typeof item['number'] !== 'number') {
-          continue;
-        }
-        issues.push({
-          body: typeof item['body'] === 'string' ? item['body'] : '',
-          number: item['number'],
-          title: typeof item['title'] === 'string' ? item['title'] : '',
-          url: typeof item['html_url'] === 'string' ? item['html_url'] : null,
-        });
-      }
-      return issues;
-    },
-  };
 }
 
 export type TicketSource =
   | { kind: 'ref'; value: string }
   | { body: string; id: string; kind: 'text' };
 
+// `reason` marks failures that are not a bad reference: an issue with
+// sub-issues, or a tracker that could not be reached.
 export type ResolveResult =
   | { kind: 'ticket'; ticket: ResolvedTicket }
-  | { kind: 'error'; message: string };
-
-type GithubTarget = {
-  commandRef: string;
-  host: string;
-  number: number;
-  owner: string;
-  repo: string;
-};
+  | { kind: 'error'; message: string; reason?: 'tracker_unavailable' | 'umbrella_issue' };
 
 function slug(value: string): string {
   const cleaned = value
@@ -189,90 +31,26 @@ function factoryDir(factoryRoot: string, displayRef: string, canonical: string):
   return path.join(factoryRoot, 'tickets', `${slug(displayRef)}-${sha256(canonical).slice(0, 8)}`);
 }
 
-function resolvedGithub(
-  issue: GithubIssue,
-  commandRef: string,
+function trackedTicket(
+  kind: string,
+  issue: TrackerIssue,
   fetchedAt: string,
   factoryRoot: string,
 ): ResolvedTicket {
-  const id = ticketId(`github:${issue.host}:${issue.nodeId}`);
-  const displayRef = `${issue.owner}/${issue.repo}#${issue.number}`;
+  const id = ticketId(issue.id);
   return {
     body: issue.body,
-    commandRef,
+    commandRef: issue.ref,
     contentHash: sha256(`${issue.title}\n${issue.body}\n${issue.labels.join('\n')}`),
-    displayRef,
-    factoryDir: factoryDir(factoryRoot, displayRef, id),
+    displayRef: issue.displayRef,
+    factoryDir: factoryDir(factoryRoot, issue.displayRef, id),
     fetchedAt,
     id,
     labels: issue.labels,
-    sourceKind: 'github',
-    sourceRef: issue.url.length > 0 ? issue.url : displayRef,
+    sourceKind: kind,
+    sourceRef: issue.url.length > 0 ? issue.url : issue.displayRef,
     title: issue.title,
   };
-}
-
-function githubTarget(
-  ref: string,
-  config: FactoryConfig,
-): GithubTarget | { kind: 'error'; message: string } | null {
-  const url = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/.exec(ref);
-  if (url?.[1] && url[2] && url[3] && url[4]) {
-    return { commandRef: ref, host: url[1], number: Number(url[4]), owner: url[2], repo: url[3] };
-  }
-  const qualified = /^([^/\s]+)\/([^#\s]+)#(\d+)$/.exec(ref);
-  if (qualified?.[1] && qualified[2] && qualified[3]) {
-    return {
-      commandRef: ref,
-      host: config.github?.host ?? 'github.com',
-      number: Number(qualified[3]),
-      owner: qualified[1],
-      repo: qualified[2],
-    };
-  }
-  const numbered = /^(?:#)?(\d+)$/.exec(ref);
-  if (numbered?.[1]) {
-    if (config.github === null) {
-      return {
-        kind: 'error',
-        message: `Bare issue ${ref} needs a single github owner and repo in FACTORY.json.`,
-      };
-    }
-    return {
-      commandRef: ref,
-      host: config.github.host,
-      number: Number(numbered[1]),
-      owner: config.github.owner,
-      repo: config.github.repo,
-    };
-  }
-  const key = /^([A-Za-z][A-Za-z0-9]+)-(\d+)$/.exec(ref);
-  if (key?.[1] && key[2]) {
-    const mapped = config.keys[key[1]];
-    if (mapped === undefined && config.github === null) {
-      return null;
-    }
-    if (mapped !== undefined && config.github === null) {
-      return {
-        kind: 'error',
-        message: `Key ${key[1]} maps to GitHub, but FACTORY.json has no github owner and repo.`,
-      };
-    }
-    if (mapped === undefined && Object.keys(config.keys).length > 0) {
-      return { kind: 'error', message: `No FACTORY.json key matches ${ref}.` };
-    }
-    if (config.github === null) {
-      return null;
-    }
-    return {
-      commandRef: ref,
-      host: config.github.host,
-      number: Number(key[2]),
-      owner: config.github.owner,
-      repo: config.github.repo,
-    };
-  }
-  return null;
 }
 
 function localTicket(input: {
@@ -310,11 +88,11 @@ function titleFromBody(body: string, fallback: string): string {
 
 export function resolveTicket(input: {
   codeRoot: string;
-  config: FactoryConfig;
   factoryRoot: string;
   fetchedAt: string;
-  github: GithubClient;
   source: TicketSource;
+  // Resolves every ref that is not a local file.
+  tracker: Tracker;
 }): ResolveResult {
   if (input.source.kind === 'text') {
     return {
@@ -376,41 +154,38 @@ export function resolveTicket(input: {
     };
   }
 
-  const target = githubTarget(ref, input.config);
-  if (target === null) {
+  const resolved = input.tracker.resolve(ref);
+  if (resolved === null) {
     return {
       kind: 'error',
-      message: `Cannot resolve ${ref}. Use a GitHub URL, owner/repo#number, a mapped KEY-number, or a local markdown/json ticket.`,
+      message: `Cannot resolve ${ref}. Use a GitHub URL, owner/repo#number, #number, or a local markdown/json ticket.`,
     };
   }
-  if ('kind' in target) {
-    return target;
+  if (resolved.kind === 'error') {
+    return resolved;
   }
-
-  let issue: GithubIssue;
+  const { issue } = resolved;
+  let children: Array<IssueLink>;
   try {
-    issue = input.github.fetchIssue(target);
+    children = input.tracker.children(issue);
   } catch (error: unknown) {
-    const message =
-      typeof error === 'object' &&
-      error !== null &&
-      'message' in error &&
-      typeof error.message === 'string'
-        ? error.message
-        : 'GitHub request failed';
-    return { kind: 'error', message };
-  }
-  const children = input.github.listSubIssues(target);
-  if (children.length > 0) {
-    const names = children.map((child) => `#${child.number} ${child.title}`).join(', ');
     return {
       kind: 'error',
-      message: `${issue.owner}/${issue.repo}#${issue.number} is an umbrella issue. Start each concrete issue separately: ${names}.`,
+      message: error instanceof Error ? error.message : 'The tracker failed.',
+      reason: 'tracker_unavailable',
+    };
+  }
+  if (children.length > 0) {
+    const names = children.map((child) => `${child.displayRef} ${child.title}`).join(', ');
+    return {
+      kind: 'error',
+      message: `${issue.displayRef} is an umbrella issue. Start each concrete issue separately: ${names}.`,
+      reason: 'umbrella_issue',
     };
   }
   return {
     kind: 'ticket',
-    ticket: resolvedGithub(issue, target.commandRef, input.fetchedAt, input.factoryRoot),
+    ticket: trackedTicket(input.tracker.kind, issue, input.fetchedAt, input.factoryRoot),
   };
 }
 

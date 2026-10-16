@@ -4,6 +4,9 @@ import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+// Installing dependencies takes longer than a check.
+export const DEFAULT_SETUP_TIMEOUT_MS = 600_000;
+export const DEFAULT_SERVER = { host: '127.0.0.1', port: 7731 };
 export const INTERNAL_LABELS = ['investigation'] as const;
 export type InternalLabel = (typeof INTERNAL_LABELS)[number];
 
@@ -24,14 +27,51 @@ export const DEFAULT_LIMITS = Object.fromEntries(
   LIMIT_KEYS.map((key) => [key, limitSpecs[key].default]),
 ) as Limits;
 
+// The statuses the factory writes to a ticket's issue; see tracker updates.
+export type TrackerStatus = 'in_progress' | 'in_review';
+
+// Where issues and the backlog live. Only GitHub has an adapter so far.
+export type TrackerConfig = {
+  // Which open issues the backlog shows. GitHub filters by labels and milestone.
+  backlog: { labels: Array<string>; milestone: string | null };
+  host: string;
+  kind: 'github';
+  owner: string;
+  repo: string;
+  // How each factory status shows on the issue; an unmapped status is not written.
+  status: Partial<Record<TrackerStatus, { label: string }>>;
+};
+
+// Where the repository and its pull requests live.
+export type CodeHostConfig = {
+  host: string;
+  kind: 'github';
+  owner: string;
+  // Whether wrap-up may push the branch and open a pull request.
+  pullRequests: boolean;
+  repo: string;
+  // How often the server checks the pull requests of tickets in handoff.
+  syncMinutes: number;
+  // The environment variable that holds the webhook secret, if any.
+  webhookSecretEnv: string | null;
+};
+
+export const DEFAULT_SYNC_MINUTES = 10;
+
 export type FactoryConfig = {
-  github: { host: string; owner: string; pullRequests: boolean; repo: string } | null;
-  keys: Record<string, { provider: 'github' }>;
+  codeHost: CodeHostConfig | null;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
+  // How people tell this factory apart from others in exported stats.
+  name: string | null;
+  // Where `factory serve` listens. Bind 0.0.0.0 to publish the port from a sandbox.
+  server: { host: string; port: number };
   stages: Record<string, StageSettings>;
+  tracker: TrackerConfig | null;
   validation: Validation;
+  // Commands that prepare each new worktree, such as installing dependencies.
+  worktree: { setup: Array<WorkCommand> };
 };
 
 // `wrapup.generated` lists path prefixes or `*` globs of generated artifacts
@@ -94,9 +134,9 @@ function readLabelMap(value: unknown): FactoryConfig['labels'] | null {
   return { map };
 }
 
-function readTimeout(value: unknown): number | null {
+function readTimeout(value: unknown, fallback = DEFAULT_COMMAND_TIMEOUT_MS): number | null {
   if (value === undefined) {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
+    return fallback;
   }
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     return null;
@@ -104,28 +144,18 @@ function readTimeout(value: unknown): number | null {
   return value;
 }
 
-function readCommands(value: unknown): Array<WorkCommand> | null {
-  if (value === undefined) {
-    return [];
-  }
-  if (!isRecord(value)) {
-    return null;
-  }
-  const work = value['work'] ?? {};
-  if (!isRecord(work)) {
-    return null;
-  }
-  const commands = work['commands'] ?? [];
-  if (!Array.isArray(commands)) {
+// A list of { name, argv, timeoutMs? } commands; null when any is malformed.
+function commandList(value: unknown, fallbackTimeout: number): Array<WorkCommand> | null {
+  if (!Array.isArray(value)) {
     return null;
   }
   const parsed: Array<WorkCommand> = [];
-  for (const command of commands) {
+  for (const command of value) {
     if (!isRecord(command)) {
       return null;
     }
     const name = readString(command, 'name');
-    const timeoutMs = readTimeout(command['timeoutMs']);
+    const timeoutMs = readTimeout(command['timeoutMs'], fallbackTimeout);
     const argvValue = command['argv'];
     if (
       name === null ||
@@ -139,6 +169,32 @@ function readCommands(value: unknown): Array<WorkCommand> | null {
     parsed.push({ argv: argvValue, name, timeoutMs });
   }
   return parsed;
+}
+
+function readCommands(value: unknown): Array<WorkCommand> | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const work = value['work'] ?? {};
+  if (!isRecord(work)) {
+    return null;
+  }
+  return commandList(work['commands'] ?? [], DEFAULT_COMMAND_TIMEOUT_MS);
+}
+
+// `worktree.setup` runs once in each new worktree, before its first agent.
+function readWorktree(value: unknown): FactoryConfig['worktree'] | null {
+  if (value === undefined) {
+    return { setup: [] };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const setup = commandList(value['setup'] ?? [], DEFAULT_SETUP_TIMEOUT_MS);
+  return setup === null ? null : { setup };
 }
 
 function readGenerated(value: unknown): Array<string> | null {
@@ -229,37 +285,37 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     };
   }
 
-  let github: FactoryConfig['github'] = null;
-  if (value['github'] !== undefined) {
-    const githubValue = value['github'];
-    if (!isRecord(githubValue)) {
-      return { kind: 'error', message: 'FACTORY.json github must be an object.' };
-    }
-    const owner = readString(githubValue, 'owner');
-    const repo = readString(githubValue, 'repo');
-    const host = readString(githubValue, 'host') ?? 'github.com';
-    if (owner === null || repo === null) {
-      return { kind: 'error', message: 'FACTORY.json github needs owner and repo.' };
-    }
-    const pullRequests = githubValue['pullRequests'] ?? false;
-    if (typeof pullRequests !== 'boolean') {
-      return { kind: 'error', message: 'FACTORY.json github.pullRequests must be true or false.' };
-    }
-    github = { host, owner, pullRequests, repo };
+  if (value['github'] !== undefined || value['keys'] !== undefined) {
+    return {
+      kind: 'error',
+      message:
+        'FACTORY.json github and keys were replaced by tracker and codeHost. Move github.owner and github.repo into both, as { "kind": "github", "owner": ..., "repo": ... }, and github.pullRequests into codeHost.pullRequests.',
+    };
+  }
+  const tracker = readTracker(value['tracker']);
+  if (typeof tracker === 'string') {
+    return { kind: 'error', message: tracker };
+  }
+  const codeHost = readCodeHost(value['codeHost']);
+  if (typeof codeHost === 'string') {
+    return { kind: 'error', message: codeHost };
   }
 
-  const keys: FactoryConfig['keys'] = {};
-  if (value['keys'] !== undefined) {
-    const keysValue = value['keys'];
-    if (!isRecord(keysValue)) {
-      return { kind: 'error', message: 'FACTORY.json keys must be an object.' };
-    }
-    for (const [name, spec] of Object.entries(keysValue)) {
-      if (!isRecord(spec) || spec['provider'] !== 'github') {
-        return { kind: 'error', message: `FACTORY.json key ${name} must set provider to github.` };
-      }
-      keys[name] = { provider: 'github' };
-    }
+  const worktree = readWorktree(value['worktree']);
+  if (worktree === null) {
+    return {
+      kind: 'error',
+      message:
+        'FACTORY.json worktree.setup must be commands with a name, an argv array, and an optional timeoutMs.',
+    };
+  }
+
+  const server = readServer(value['server']);
+  if (server === null) {
+    return {
+      kind: 'error',
+      message: 'FACTORY.json server needs a non-empty host and an integer port from 1 to 65535.',
+    };
   }
 
   const settings = readStageSettings(value['stages']);
@@ -269,16 +325,125 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
 
   return {
     config: {
-      github,
-      keys,
+      codeHost,
       labels,
       limits,
       models: { plan, review, work },
+      name: readString(value, 'name'),
+      server,
       stages: settings.stages,
+      tracker,
       validation: { work: { commands }, wrapup: { generated } },
+      worktree,
     },
     kind: 'ok',
   };
+}
+
+const trackerStatuses: ReadonlyArray<TrackerStatus> = ['in_progress', 'in_review'];
+
+function githubPlace(
+  value: Record<string, unknown>,
+  name: string,
+): { host: string; owner: string; repo: string } | string {
+  if (value['kind'] !== 'github') {
+    return `FACTORY.json ${name}.kind must be github; it is the only ${name} adapter so far.`;
+  }
+  const owner = readString(value, 'owner');
+  const repo = readString(value, 'repo');
+  if (owner === null || repo === null) {
+    return `FACTORY.json ${name} needs owner and repo.`;
+  }
+  return { host: readString(value, 'host') ?? 'github.com', owner, repo };
+}
+
+function stringArray(value: unknown): Array<string> | null {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0)
+    ? value
+    : null;
+}
+
+// A message on error.
+function readTracker(value: unknown): TrackerConfig | null | string {
+  if (value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return 'FACTORY.json tracker must be an object.';
+  }
+  const place = githubPlace(value, 'tracker');
+  if (typeof place === 'string') {
+    return place;
+  }
+  const backlogValue = value['backlog'] ?? {};
+  if (!isRecord(backlogValue)) {
+    return 'FACTORY.json tracker.backlog must be an object.';
+  }
+  const labels = backlogValue['labels'] === undefined ? [] : stringArray(backlogValue['labels']);
+  const milestone = backlogValue['milestone'] ?? null;
+  if (labels === null || (milestone !== null && typeof milestone !== 'string')) {
+    return 'FACTORY.json tracker.backlog takes labels (an array of names) and a milestone name.';
+  }
+  const statusValue = value['status'] ?? {};
+  if (!isRecord(statusValue)) {
+    return 'FACTORY.json tracker.status must be an object.';
+  }
+  const status: TrackerConfig['status'] = {};
+  for (const [name, mapping] of Object.entries(statusValue)) {
+    const known = trackerStatuses.find((item) => item === name);
+    const label = isRecord(mapping) ? readString(mapping, 'label') : null;
+    if (known === undefined || label === null) {
+      return `FACTORY.json tracker.status maps in_progress and in_review to { "label": "<name>" }.`;
+    }
+    status[known] = { label };
+  }
+  return { ...place, backlog: { labels, milestone }, kind: 'github', status };
+}
+
+function readCodeHost(value: unknown): CodeHostConfig | null | string {
+  if (value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return 'FACTORY.json codeHost must be an object.';
+  }
+  const place = githubPlace(value, 'codeHost');
+  if (typeof place === 'string') {
+    return place;
+  }
+  const pullRequests = value['pullRequests'] ?? true;
+  if (typeof pullRequests !== 'boolean') {
+    return 'FACTORY.json codeHost.pullRequests must be true or false.';
+  }
+  const syncMinutes = value['syncMinutes'] ?? DEFAULT_SYNC_MINUTES;
+  if (typeof syncMinutes !== 'number' || !(syncMinutes > 0)) {
+    return 'FACTORY.json codeHost.syncMinutes must be a positive number.';
+  }
+  const secret = value['webhookSecretEnv'];
+  if (secret !== undefined && (typeof secret !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(secret))) {
+    return 'FACTORY.json codeHost.webhookSecretEnv must name an environment variable.';
+  }
+  return { ...place, kind: 'github', pullRequests, syncMinutes, webhookSecretEnv: secret ?? null };
+}
+
+// Pull requests are on unless the code host turns them off.
+export function pullRequestsAllowed(config: FactoryConfig): boolean {
+  return config.codeHost?.pullRequests ?? true;
+}
+
+function readServer(value: unknown): FactoryConfig['server'] | null {
+  if (value === undefined) {
+    return { ...DEFAULT_SERVER };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const host = value['host'] === undefined ? DEFAULT_SERVER.host : readString(value, 'host');
+  const port = value['port'] ?? DEFAULT_SERVER.port;
+  if (host === null || typeof port !== 'number' || !Number.isInteger(port)) {
+    return null;
+  }
+  return port >= 1 && port <= 65_535 ? { host, port } : null;
 }
 
 // `stages.<name>` holds an optional stage's settings, which that stage reads.

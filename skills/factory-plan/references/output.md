@@ -1,6 +1,6 @@
 # Planning output
 
-Use this template (`factory.plan.v3`) as the handoff. No JSON object, no Markdown fence around the whole result, no recap after it. The plan is accepted when `plan.md` exists and at least one task file is defined.
+Use this template (`factory.plan.v3`) as a model for the reply that hands the plan off. It is a suggestion: the plan is accepted from its files, when `plan.md` exists and at least one task file is defined, whatever the reply says. No JSON object, no Markdown fence around the whole result, no recap after it.
 
 ```markdown
 ## Status

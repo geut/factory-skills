@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
+import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import type { PullRequestInfo } from '../ports/code-host.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
@@ -19,8 +21,20 @@ export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 // claims. The headings are checked for completeness; the prose is not parsed
 // for operational state.
 
-// Controller-owned or transient parts of the factory root.
-const factoryInternal = new Set(['db', 'sessions', 'worktrees', 'node_modules', '.git']);
+// Controller-owned or transient parts of the factory root: the server writes
+// `runtime/` (Herdr tabs, the handshake) and `local.token`, and another
+// ticket's start may move a forgotten run's files to `archive/`, while
+// wrap-up runs.
+const factoryInternal = new Set([
+  'db',
+  'sessions',
+  'worktrees',
+  'runtime',
+  'local.token',
+  'archive',
+  'node_modules',
+  '.git',
+]);
 
 type Git = { code: number; stderr: string; stdout: string };
 
@@ -45,8 +59,11 @@ function hashFile(file: string): string {
   }
 }
 
-function factoryFiles(root: string): Record<string, string> {
+// Other tickets keep running beside this one, so only this ticket's
+// directory under `tickets/` is compared.
+function factoryFiles(root: string, ticketDir: string): Record<string, string> {
   const files: Record<string, string> = {};
+  const ownTicket = path.relative(root, ticketDir).split(path.sep).join('/');
   const walk = (directory: string, prefix: string) => {
     let entries: Array<string>;
     try {
@@ -60,6 +77,9 @@ function factoryFiles(root: string): Record<string, string> {
       }
       const absolute = path.join(directory, entry);
       const relative = prefix === '' ? entry : `${prefix}/${entry}`;
+      if (prefix === 'tickets' && relative !== ownTicket) {
+        continue;
+      }
       const stats = statSync(absolute, { throwIfNoEntry: false });
       if (stats?.isDirectory() === true) {
         walk(absolute, relative);
@@ -132,13 +152,14 @@ export function captureWrapupState(input: {
   branch: string;
   codeRoot: string;
   factoryRoot: string;
+  ticketDir: string;
   worktree: string;
 }): WrapupBaseline {
   return {
     baseHead:
       input.baseBranch === null ? null : refSha(input.codeRoot, `refs/heads/${input.baseBranch}`),
     branch: input.branch,
-    factory: factoryFiles(input.factoryRoot),
+    factory: factoryFiles(input.factoryRoot, input.ticketDir),
     head: gitOk(input.worktree, ['rev-parse', 'HEAD']).trim(),
     remotes: remoteRefs(input.worktree, input.branch),
     worktree: worktreeChanges(input.worktree, input.baseSha),
@@ -246,9 +267,8 @@ function check(
   };
 }
 
-export type PullRequestLookup = (
-  url: string,
-) => { headRefName: string; state: string } | { missing: true };
+// The code host's view of the pull request at a URL.
+export type PullRequestLookup = (url: string) => PullRequestInfo | { missing: true };
 
 export function validateWrapup(input: {
   baseBranch: string | null;
@@ -262,6 +282,7 @@ export function validateWrapup(input: {
   generated: Array<string>;
   output: string;
   pullRequests: boolean;
+  ticketDir: string;
   // The all-stage usage table, read once the checks are done.
   usage: () => string;
   worktree: string;
@@ -337,6 +358,7 @@ export function validateWrapup(input: {
   );
 
   const merge = section('Merge commands');
+  let checked: PullRequestInfo | null = null;
   const url = pullRequestUrl.exec(merge)?.[0] ?? null;
   const commands = merge.includes(input.worktree) && merge.includes(input.branch);
   checks.push(
@@ -411,11 +433,11 @@ export function validateWrapup(input: {
   const policy: Array<string> = [];
   if (!input.pullRequests) {
     if (pushed) {
-      policy.push(`The branch was pushed, but github.pullRequests is off.`);
+      policy.push(`The branch was pushed, but codeHost.pullRequests is off.`);
     }
     if (!commands) {
       policy.push(
-        'github.pullRequests is off, so ## Merge commands must list commit and merge commands.',
+        'codeHost.pullRequests is off, so ## Merge commands must list commit and merge commands.',
       );
     }
   } else if (dirty) {
@@ -427,12 +449,13 @@ export function validateWrapup(input: {
     }
   } else if (url === null) {
     policy.push(
-      'The worktree is clean and github.pullRequests is on, so ## Merge commands needs the pull-request URL.',
+      'The worktree is clean and codeHost.pullRequests is on, so ## Merge commands needs the pull-request URL.',
     );
   } else {
     let found: ReturnType<PullRequestLookup>;
     try {
       found = input.findPullRequest(url);
+      checked = 'missing' in found ? null : found;
     } catch (error: unknown) {
       return errorReport(
         WRAPUP_VALIDATOR_VERSION,
@@ -441,8 +464,8 @@ export function validateWrapup(input: {
     }
     if ('missing' in found) {
       policy.push(`No pull request exists at ${url}.`);
-    } else if (found.headRefName !== input.branch) {
-      policy.push(`${url} is for ${found.headRefName}, not ${input.branch}.`);
+    } else if (found.headBranch !== input.branch) {
+      policy.push(`${url} is for ${found.headBranch}, not ${input.branch}.`);
     }
   }
   checks.push(
@@ -461,7 +484,7 @@ export function validateWrapup(input: {
   const failures = checks
     .filter((item) => item.status === 'failed')
     .flatMap((item) => item.details.split('\n'));
-  const detail = { usage: input.usage() };
+  const detail = { pullRequest: policy.length === 0 ? checked : null, usage: input.usage() };
   return failures.length === 0
     ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
     : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
@@ -507,11 +530,12 @@ export const wrapupValidator: Validator<'wrapup'> = {
         branch: execution.worktreeBranch,
         codeRoot: execution.policy.codeRoot,
         commands: execution.policy.validation.work.commands,
-        factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+        factoryRoot: factoryRootOf(execution.factoryDir),
         findPullRequest: deps.findPullRequest,
         generated: execution.policy.validation.wrapup.generated,
         output: outputOf(run.resultJson),
         pullRequests: execution.policy.pullRequests,
+        ticketDir: ticketDirOf(execution.factoryDir),
         usage: deps.usage,
         worktree: execution.worktreePath,
       }),

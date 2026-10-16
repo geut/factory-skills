@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { InternalLabel, Limits, Validation, WorkCommand } from './config.ts';
+import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ValidationReport } from './validation/report.ts';
@@ -174,11 +175,13 @@ export type Policy = {
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
-  // `github.pullRequests`: wrap-up may push the branch and open a pull request.
+  // `codeHost.pullRequests`: wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
   // Optional stages' settings, by stage name; a stage absent here is off.
   stages: Record<string, StageSettings>;
   validation: Validation;
+  // Commands run once in each new worktree; `worktree.setup` in FACTORY.json.
+  worktreeSetup: Array<WorkCommand>;
 };
 
 export type UsageTotals = {
@@ -202,6 +205,15 @@ export type TerminalOutcome =
   | { kind: 'gap_exit'; message: string }
   | { kind: 'cancelled'; message: string };
 
+export type StartEvent = {
+  factoryVersion?: string;
+  // 1 for a first start; a rerun passes N+1.
+  generation?: number;
+  kind: 'start';
+  policy: Policy;
+  ticket: ResolvedTicket;
+};
+
 export type ResolvedTicket = {
   body: string;
   commandRef: string;
@@ -211,7 +223,8 @@ export type ResolvedTicket = {
   fetchedAt: string;
   id: TicketId;
   labels: Array<string>;
-  sourceKind: 'github' | 'file' | 'text';
+  // `file`, `text`, or the tracker's kind, such as `github`.
+  sourceKind: string;
   sourceRef: string;
   title: string;
 };
@@ -262,7 +275,17 @@ export type ReviewValidationReport = ValidationReport<
 >;
 
 // The all-stage usage table, including the finished wrap-up run.
-export type WrapupValidationReport = ValidationReport<{ usage: string }, { usage: string }>;
+// A passing wrap-up carries the pull request it checked, which the controller
+// records as the ticket's pull request.
+export type WrapupValidationDetail = {
+  pullRequest: PullRequestInfo | null;
+  usage: string;
+};
+
+export type WrapupValidationReport = ValidationReport<
+  WrapupValidationDetail,
+  WrapupValidationDetail
+>;
 
 // What wrap-up validation compares against: taken when the first wrap-up
 // input is prepared, before the agent runs.
@@ -286,12 +309,27 @@ export type ReconcileObservation =
   | { kind: 'terminal'; terminal: TerminalOutcome };
 
 export type ControllerEvent =
-  | { kind: 'start'; policy: Policy; ticket: ResolvedTicket }
+  | StartEvent
+  // A new generation of a finished ticket: the current one is retired, then
+  // `start` creates generation N+1.
+  | { kind: 'rerun'; previous: ExecutionId; start: StartEvent }
   | { kind: 'runtime_terminal'; runId: RunId; terminal: TerminalOutcome }
   | ValidationFinished
   | InputReady
   | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
+  // A person cancelled the ticket for good. `by` names them for the tracker.
+  | {
+      by: string | null;
+      idempotencyKey: string;
+      kind: 'cancel';
+      reason: string | null;
+      ticketId: TicketId;
+    }
+  // A person stopped a running agent; the ticket pauses.
+  | { idempotencyKey: string; kind: 'stop'; runId: RunId }
+  // The code host closed the ticket's pull request without merging it.
+  | { idempotencyKey: string; kind: 'pull_request_closed'; ticketId: TicketId; url: string }
   | {
       actionId: ActionId;
       baseBranch: string;
@@ -311,7 +349,13 @@ export type ControllerEvent =
       sessionFile: string;
     }
   | { actionId: ActionId; kind: 'launch_failed'; message: string; runId: RunId }
-  | { answer: string; idempotencyKey: string; kind: 'reply'; ticketId: TicketId }
+  | {
+      actor?: Actor;
+      answer: string;
+      idempotencyKey: string;
+      kind: 'reply';
+      ticketId: TicketId;
+    }
   | { idempotencyKey: string; kind: 'retry'; ticketId: TicketId }
   | { kind: 'reconciled'; observation: ReconcileObservation; runId: RunId };
 
@@ -362,6 +406,8 @@ export type Retry =
 
 export type ExecutionRecord = {
   factoryDir: string;
+  // The factory package version and commit that ran it, for stats.
+  factoryVersion: string | null;
   generation: number;
   id: ExecutionId;
   inputFetchedAt: string;
@@ -449,7 +495,12 @@ export type AttentionRecord = {
   status: AttentionStatus;
 };
 
+// The API client that sent a command, and who it said it acted for. The second
+// is the client's own claim: shown, never trusted for access.
+export type Actor = { client: string; onBehalfOf: string | null };
+
 export type ReplyRecord = {
+  actor: Actor | null;
   answer: string;
   answerHash: string;
   id: ReplyId;
@@ -536,6 +587,19 @@ export type ActionRecord =
       kind: 'notify_attention';
       message: string;
       runId: null;
+    })
+  // A tracker update: a comment on the ticket's issue and, when mapped, a
+  // status label. It is best effort: a failure is a warning, never a pause.
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      // Markdown for the comment.
+      comment: string;
+      // The status to show on the issue; null leaves it, `clear` removes it.
+      issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
+      kind: 'update_ticket_source';
+      runId: null;
+      update: 'cancelled' | 'handoff' | 'paused' | 'started';
     });
 
 export type FactorySnapshot = {

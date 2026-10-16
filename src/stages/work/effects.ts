@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { inspectWorkInput } from '../../actions/work-input.ts';
+import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot, TaskRecord } from '../../domain.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import type { WorkPrepared } from './definition.ts';
@@ -25,7 +26,7 @@ export function prepareWorkInput({
   deps,
   snapshot,
 }: InputContext): InputResult<WorkPrepared> {
-  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
+  const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
   const task = snapshot.tasks.find((item) => item.taskId === action.taskId) ?? null;
   const selected =
     task !== null &&

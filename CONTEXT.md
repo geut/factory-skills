@@ -62,9 +62,104 @@ _Avoid_: block, halt
 A person's answer to the agent that paused the ticket, either because it asked a question or because it reached a limit. The reply resumes that agent's session.
 _Avoid_: answer (as a command), resume
 
+**Cancel**:
+A person ending a ticket for good. Its worktree, branch, and pull request are kept.
+_Avoid_: abort, abandon
+
+**Stop**:
+A person ending one running agent's run without ending the ticket, which then pauses.
+_Avoid_: interrupt, kill
+
+**Rerun**:
+Starting a new execution of a finished ticket from a fresh copy of its issue.
+_Avoid_: restart, retry (which redoes one failed step)
+
 **Retry**:
 Redoing a step that failed for infrastructure reasons, such as input preparation, a validation, or a launch. A retry never asks an agent to change its output.
 
 **Review verdict**:
 The reviewer agent's judgment on a task: approve, changes requested, or blocked. It is model judgment, unlike a validation report.
 _Avoid_: verdict, when a validation report is meant
+
+### Tracker and repository
+
+**Issue**:
+A work item in the issue tracker (GitHub, Linear, Jira). The factory may never have seen it.
+_Avoid_: ticket, when the factory has not started it
+
+**Ticket**:
+An issue, or a local document, that the factory has started.
+_Avoid_: issue, once the factory owns it
+
+**Backlog**:
+The issues in scope for the factory that are not yet tickets.
+
+**External review**:
+A review of a ticket's pull request by a human or an agent outside the factory. Each one is a round the factory's own review did not prevent.
+_Avoid_: review (alone), when the factory's review stage is meant
+
+**Tracker**:
+The system that holds issues and the backlog, such as GitHub Issues, Linear, or Jira.
+_Avoid_: provider
+
+**Code host**:
+The system that holds the repository and its pull requests, such as GitHub.
+_Avoid_: repo provider, provider
+
+**Tracker update**:
+A comment or status change the factory writes to a ticket's issue when the ticket starts, pauses for a person, or reaches handoff. It never blocks the ticket.
+_Avoid_: write-back, sync
+
+**Pull request outcome**:
+What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.
+
+**External review round**:
+A commit on a ticket's pull request that drew at least one review asking for changes, or commenting, from someone other than the pull request's author.
+_Avoid_: review round, when the factory's own review stage is meant
+
+**Follow-up commit**:
+A commit pushed to a ticket's pull request after handoff.
+
+**Abandoned**:
+A cancelled ticket whose pull request was closed without merging, as distinct from one a person cancelled.
+
+### Server and clients
+
+**Factory server**:
+The long-running process that owns the controller and serves the API. Pi, the dashboard, and webhooks are its clients.
+_Avoid_: daemon, backend
+
+**API client**:
+A named holder of a factory server token, such as `local` (Pi) or `dashboard`. Every command records the client that sent it as its actor.
+_Avoid_: user, app, consumer
+
+**Factory stats**:
+Measures of how well a factory turns tickets into merged pull requests, compared across models and stages.
+_Avoid_: metrics, analytics
+
+### Stats
+
+**Model setup**:
+A model and its thinking level, as used for one stage. Stage measures are compared per model setup.
+_Avoid_: model, when the thinking level matters
+
+**Factory configuration**:
+The model setup of every stage that worked on a ticket. Ticket outcomes are compared per factory configuration.
+
+**Factory version**:
+The package version and commit of the factory that ran a ticket, so a change to skills is not mistaken for a better model.
+
+**Stage time**:
+Wall-clock time a ticket, or a task in a per-task stage, spends in a stage, excluding waiting time.
+
+**Agent time**:
+Time an agent's runs are actually running.
+
+**Waiting time**:
+Time a ticket spends waiting on a person: waiting for a reply, paused, or failed to resume.
+
+**Factory time**:
+Time from a ticket's start to handoff, excluding waiting time.
+
+**Human intervention**:
+Something a person had to do for a ticket: answer a question, unblock a limit pause, reply, retry, or complete it by hand.

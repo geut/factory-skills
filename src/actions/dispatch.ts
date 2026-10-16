@@ -1,6 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { recordPullRequest } from '../controller/facts.ts';
+import { factoryRootOf } from '../controller/keys.ts';
 import { attentionCard } from '../controller/run-card.ts';
 import {
   claimNextAction,
@@ -10,6 +12,7 @@ import {
   loadSnapshotByExecution,
   loadSnapshotByRun,
   passedChecks,
+  ticketTab,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
 import type {
@@ -21,7 +24,9 @@ import type {
   RunRecord,
   SessionRecord,
   TerminalOutcome,
+  WrapupValidationDetail,
 } from '../domain.ts';
+import type { Tracker, TrackerIssue } from '../ports/tracker.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
@@ -29,7 +34,8 @@ import { stages, stageTools } from '../stages/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
-import { prepareWorktree } from './worktree.ts';
+import { archiveStamp } from './leftovers.ts';
+import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
@@ -50,6 +56,26 @@ function sessionForRun(snapshot: FactorySnapshot, run: RunRecord): SessionRecord
 
 function paneName(snapshot: FactorySnapshot, session: SessionRecord): string {
   return paneLabel(session.stage, snapshot.ticket.displayRef, session.taskId);
+}
+
+// Where a new session is written: grouped by ticket (and rerun generation),
+// named for its stage and task, so a person can find a stage's session by
+// browsing `.factory/sessions/`.
+export function newSessionFile(
+  factoryRoot: string,
+  snapshot: FactorySnapshot,
+  session: SessionRecord,
+): string {
+  const ticket = path.relative(path.join(factoryRoot, 'tickets'), snapshot.execution.factoryDir);
+  const folder = ticket.length === 0 || ticket.startsWith('..') ? [] : ticket.split(path.sep);
+  const task =
+    session.taskId === null ? '' : `-${session.taskId.replaceAll(/[^A-Za-z0-9._-]/g, '_')}`;
+  return path.join(
+    factoryRoot,
+    'sessions',
+    ...folder,
+    `${session.stage}${task}-${session.id}.jsonl`,
+  );
 }
 
 function previousPaneId(snapshot: FactorySnapshot, run: RunRecord): string | null {
@@ -81,13 +107,21 @@ export async function dispatchPending(input: {
   factoryRoot: string;
   findPullRequest: PullRequestLookup;
   ids: IdSource;
+  leaseOwner: string;
   liveValidations: Set<string>;
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
+  // True once the host is shutting down: leave the remaining actions pending.
+  stopped: () => boolean;
+  // The tracker for tracker updates, or null when FACTORY.json has none.
+  tracker: () => Tracker | null;
 }): Promise<void> {
   for (;;) {
-    const claimed = claimNextAction(input.db, input.now());
+    if (input.stopped()) {
+      return;
+    }
+    const claimed = claimNextAction(input.db, input.now(), input.leaseOwner);
     if (claimed === null) {
       return;
     }
@@ -132,6 +166,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    tracker: () => Tracker | null;
   },
   action: ActionRecord,
   snapshot: FactorySnapshot,
@@ -153,6 +188,8 @@ async function perform(
       input.notify(attentionCard(snapshot, action.message));
       finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
       return null;
+    case 'update_ticket_source':
+      return updateTicketSource(input, action, snapshot);
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -181,8 +218,7 @@ async function launch(
   }
   mkdirSync(path.dirname(snapshot.execution.factoryDir), { recursive: true });
   mkdirSync(snapshot.execution.factoryDir, { recursive: true });
-  const sessionFile =
-    session.sessionFile ?? path.join(input.factoryRoot, 'sessions', `${session.id}.jsonl`);
+  const sessionFile = session.sessionFile ?? newSessionFile(input.factoryRoot, snapshot, session);
   const mode = action.kind === 'resume_run' ? 'resume' : action.mode;
   const spec: LaunchSpec = {
     cwd: action.cwd,
@@ -196,6 +232,7 @@ async function launch(
     sessionFile,
     sessionId: session.id,
     stage: session.stage,
+    tab: ticketTab(snapshot),
     taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
     tools: stageTools(session.stage),
@@ -227,24 +264,41 @@ async function launch(
   }
 }
 
-function worktree(
+async function worktree(
   input: { db: DatabaseSync; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'prepare_worktree' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
-  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
+  const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
+  // Only a retry reuses a worktree already at the path.
+  const retry = snapshot.actions.some(
+    (item) => item.kind === 'prepare_worktree' && item.id !== action.id,
+  );
   const prepared = prepareWorktree({
     codeRoot: snapshot.execution.policy.codeRoot,
     factoryRoot,
+    leftoverStamp: retry ? null : archiveStamp(input.now()),
     slug: action.slug,
   });
-  if (prepared.kind === 'failed') {
+  const setup = snapshot.execution.policy.worktreeSetup;
+  if (prepared.kind === 'ready' && setup.length > 0) {
+    // An install can outlast the default lease; hold it for the commands' timeouts.
+    extendActionLease(
+      input.db,
+      action.id,
+      input.now(),
+      setup.reduce((sum, command) => sum + command.timeoutMs, 0) + 30_000,
+    );
+  }
+  const ready = prepared.kind === 'ready' ? await setUpWorktree(setup, prepared.path) : prepared;
+  if (prepared.kind === 'failed' || ready.kind === 'failed') {
+    const message = ready.kind === 'failed' ? ready.message : 'worktree preparation failed';
     applyActionEvent(
       input,
-      { actionId: action.id, kind: 'worktree_failed', message: prepared.message },
+      { actionId: action.id, kind: 'worktree_failed', message },
       `worktree-failed:${action.id}`,
     );
-    return Promise.resolve(null);
+    return null;
   }
   applyActionEvent(
     input,
@@ -258,7 +312,7 @@ function worktree(
     },
     `worktree-ready:${action.id}`,
   );
-  return Promise.resolve(null);
+  return null;
 }
 
 function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
@@ -269,6 +323,57 @@ function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
 
 // Runs the validator for the run's stage and records its report. A
 // long-running validator holds its action lease for as long as it declares.
+// Writes a tracker update. A tracker that keeps failing leaves the action
+// failed, which the API shows as a warning; the ticket goes on either way.
+async function updateTicketSource(
+  input: { db: DatabaseSync; now: () => string; tracker: () => Tracker | null },
+  action: Extract<ActionRecord, { kind: 'update_ticket_source' }>,
+  snapshot: FactorySnapshot,
+): Promise<RunId | null> {
+  const tracker = input.tracker();
+  if (tracker === null) {
+    finishLeasedAction(input.db, action.id, input.now(), 'failed', 'FACTORY.json has no tracker.');
+    return null;
+  }
+  const issue: TrackerIssue = {
+    body: snapshot.ticket.body,
+    displayRef: snapshot.ticket.displayRef,
+    id: snapshot.ticket.id,
+    labels: snapshot.ticket.labels,
+    ref: snapshot.ticket.commandRef,
+    title: snapshot.ticket.title,
+    url: snapshot.ticket.sourceRef,
+  };
+  // The marker makes a retried comment a no-op, even after a crash.
+  const marker = `<!-- factory:${action.idempotencyKey} -->`;
+  let failure = '';
+  for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
+    try {
+      if (tracker.capabilities.has('comment')) {
+        tracker.comment(issue, action.comment, marker);
+      }
+      if (action.issueStatus !== null && tracker.capabilities.has('status')) {
+        tracker.setStatus(issue, action.issueStatus);
+      }
+      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
+      return null;
+    } catch (error: unknown) {
+      failure = messageOf(error);
+      if (attempt < action.maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  finishLeasedAction(
+    input.db,
+    action.id,
+    input.now(),
+    'failed',
+    `Tracker update failed: ${failure}`,
+  );
+  return null;
+}
+
 async function runValidation(
   input: { db: DatabaseSync; findPullRequest: PullRequestLookup; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
@@ -295,6 +400,13 @@ async function runValidation(
     session,
     snapshot,
   });
+  // The pull request a passing wrap-up checked becomes the ticket's.
+  if (stage === 'wrapup' && report.status === 'passed') {
+    const pullRequest = (report.detail as WrapupValidationDetail).pullRequest;
+    if (pullRequest !== null) {
+      recordPullRequest(input.db, { ...pullRequest, executionId }, input.now());
+    }
+  }
   recordValidation(input, {
     actionId: action.id,
     executionId,

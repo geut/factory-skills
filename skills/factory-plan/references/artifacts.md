@@ -54,10 +54,18 @@ Only unresolved items that could change the work.
 
 ## Discoveries
 
-New information learned during implementation that changed this plan.
+- A plain list of findings: what was found, and what changed because of it.
 ```
 
 `plan.md` is the living guide. Later agents update `Discoveries`, scope, or the task map when evidence changes the plan; they explain the change rather than silently drifting.
+
+`Discoveries` is a plain bullet list. Each bullet says what was found and what it changed, with no dates, rounds, or run labels:
+
+```markdown
+## Discoveries
+
+- `git diff --check` rejected the trailing space the ticket asked for; the person chose to drop it, so `hello.md` starts with `# HELLO` and no trailing space.
+```
 
 ## Task file
 

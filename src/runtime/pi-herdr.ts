@@ -11,7 +11,13 @@ import {
 } from '../domain.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { runStatusLabel } from './policy.ts';
-import type { FactorySubagentRuntime, LaunchSpec, PaneSpec, RunStarted } from './runtime.ts';
+import type {
+  FactorySubagentRuntime,
+  LaunchSpec,
+  PaneSpec,
+  RunStarted,
+  TicketTab,
+} from './runtime.ts';
 import { lastAssistantText } from './session-activity.ts';
 
 export type ClassifiedChild =
@@ -212,6 +218,8 @@ export function renderLaunchScript(input: {
   model: string;
   piBin: string;
   promptFile: string;
+  // The controller grades the reply, so subagent_done asks for a missing one.
+  replyRequired: boolean;
   runId: string;
   sessionFile: string;
   thinking: string;
@@ -224,7 +232,7 @@ trap '' TSTP
 export PI_SUBAGENT_SESSION=${session}
 export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
-${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
+${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -519,6 +527,44 @@ function takeExitJson(sessionFile: string, runId: string, sessionText: string): 
 
 const childPollMs = 5000;
 
+function nested(value: unknown, keys: Array<string>): unknown {
+  let current = value;
+  for (const key of keys) {
+    if (typeof current !== 'object' || current === null || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+// What the runtime knows about a ticket's tab: the panes it opened there,
+// newest last. A new pane splits from one of them that is still open.
+type TicketTabState = { panes: Array<string>; tabId: string };
+
+function readTabs(file: string | null): Record<string, TicketTabState> {
+  if (file === null) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return {};
+  }
+  const tabs: Record<string, TicketTabState> = {};
+  for (const [key, value] of Object.entries(isRecord(parsed) ? parsed : {})) {
+    if (!isRecord(value) || typeof value['tabId'] !== 'string') {
+      continue;
+    }
+    const panes = Array.isArray(value['panes'])
+      ? value['panes'].filter((pane): pane is string => typeof pane === 'string')
+      : [];
+    tabs[key] = { panes, tabId: value['tabId'] };
+  }
+  return tabs;
+}
+
 function noop(): void {
   return undefined;
 }
@@ -526,16 +572,151 @@ function noop(): void {
 export function createPiHerdrRuntime(options?: {
   events?: PaneExitSource | null;
   freshBin?: string;
+  // The child handshake extension Pi loads with -e; the source file by default.
+  handshakePath?: string;
   piBin?: string;
   pollMs?: number;
   run?: CommandRunner;
   socketPath?: string;
+  // Where each ticket's tab is remembered across restarts.
+  tabsFile?: string;
   targetPaneId?: string;
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
   const piBin = options?.piBin ?? 'pi';
+  const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
+  const tabsFile = options?.tabsFile ?? null;
+  const tabs = new Map<string, TicketTabState>(Object.entries(readTabs(tabsFile)));
+
+  function saveTabs(): void {
+    if (tabsFile === null) {
+      return;
+    }
+    mkdirSync(path.dirname(tabsFile), { recursive: true });
+    writeFileSync(tabsFile, `${JSON.stringify(Object.fromEntries(tabs), null, 2)}\n`);
+  }
+
+  // The workspace the host's pane is in, so tickets' tabs open beside it.
+  async function hostWorkspace(): Promise<string | null> {
+    const got = await run(['pane', 'get', targetPaneId]);
+    if (got.code !== 0) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(got.stdout);
+      const pane = nested(parsed, ['result', 'pane']) ?? nested(parsed, ['result']);
+      const workspace = nested(pane, ['workspace_id']);
+      return typeof workspace === 'string' ? workspace : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The tab a pane is in, or null when it is gone. Herdr may give a closed
+  // pane's id to a new pane, so a remembered root counts only while it is
+  // still in the ticket's tab.
+  async function paneTab(paneId: string): Promise<string | null> {
+    const got = await run(['pane', 'get', paneId]);
+    if (got.code !== 0) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(got.stdout);
+      const pane = nested(parsed, ['result', 'pane']) ?? nested(parsed, ['result']);
+      const tabId = nested(pane, ['tab_id']);
+      return typeof tabId === 'string' ? tabId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The pane a ticket's next pane splits from: the newest of its panes still
+  // in its tab. Without one, the ticket gets a new tab, and `root` is that
+  // tab's empty shell, to close once the new pane is open. Without a tab, the
+  // pane splits from the host's pane.
+  async function splitTarget(
+    tab: TicketTab | null | undefined,
+    cwd: string,
+  ): Promise<{ root: string | null; target: string }> {
+    if (tab === null || tab === undefined) {
+      return { root: null, target: targetPaneId };
+    }
+    const known = tabs.get(tab.key);
+    if (known !== undefined) {
+      for (const pane of [...known.panes].reverse()) {
+        if ((await paneTab(pane)) === known.tabId) {
+          return { root: null, target: pane };
+        }
+      }
+    }
+    const workspace = await hostWorkspace();
+    const created = await run([
+      'tab',
+      'create',
+      ...(workspace === null ? [] : ['--workspace', workspace]),
+      '--cwd',
+      cwd,
+      '--label',
+      tab.label,
+      '--no-focus',
+    ]);
+    if (created.code !== 0) {
+      return { root: null, target: targetPaneId };
+    }
+    try {
+      const parsed: unknown = JSON.parse(created.stdout);
+      const tabId = nested(parsed, ['result', 'tab', 'tab_id']);
+      const rootPaneId = nested(parsed, ['result', 'root_pane', 'pane_id']);
+      if (typeof tabId !== 'string' || typeof rootPaneId !== 'string') {
+        return { root: null, target: targetPaneId };
+      }
+      tabs.set(tab.key, { panes: [], tabId });
+      saveTabs();
+      return { root: rootPaneId, target: rootPaneId };
+    } catch {
+      return { root: null, target: targetPaneId };
+    }
+  }
+
+  // Opens `script` in its own pane, split inside the ticket's tab. The pane
+  // closes when its process exits. Returns the pane id.
+  async function openIn(
+    tab: TicketTab | null | undefined,
+    cwd: string,
+    script: string,
+  ): Promise<string> {
+    const { root, target } = await splitTarget(tab, cwd);
+    const opened = await run(herdrPaneArgs({ cwd, launchScript: script, targetPaneId: target }));
+    if (opened.code !== 0) {
+      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
+    }
+    const paneId = parsePaneId(opened.stdout);
+    if (paneId === null) {
+      throw new Error('herdr did not return a pane id');
+    }
+    const known = tab === null || tab === undefined ? undefined : tabs.get(tab.key);
+    if (known !== undefined) {
+      known.panes = [...known.panes.filter((pane) => pane !== paneId), paneId];
+      saveTabs();
+    }
+    // A new tab's shell has nothing to do once the tab holds the pane.
+    if (root !== null) {
+      await run(['pane', 'close', root]);
+    }
+    return paneId;
+  }
+
+  async function closeTab(key: string): Promise<void> {
+    const known = tabs.get(key);
+    if (known === undefined) {
+      return;
+    }
+    await run(['tab', 'close', known.tabId]);
+    tabs.delete(key);
+    saveTabs();
+  }
   const pollMs = options?.pollMs ?? childPollMs;
   const watchers = new Map<string, () => void>();
   const startedAt = new Map<string, number>();
@@ -599,10 +780,12 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
-        handshakePath: handshakeExtensionPath(),
+        handshakePath,
         model: spec.model,
         piBin,
         promptFile,
+        // A plan is accepted from its files, whatever the reply says.
+        replyRequired: spec.stage !== 'plan',
         runId: spec.runId,
         sessionFile: spec.sessionFile,
         thinking: spec.thinking,
@@ -610,16 +793,7 @@ export function createPiHerdrRuntime(options?: {
       }),
       { mode: 0o755 },
     );
-    const opened = await run(
-      herdrPaneArgs({ cwd: spec.cwd, launchScript: scriptFile, targetPaneId }),
-    );
-    if (opened.code !== 0) {
-      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
-    }
-    const paneId = parsePaneId(opened.stdout);
-    if (paneId === null) {
-      throw new Error('herdr did not return a pane id');
-    }
+    const paneId = await openIn(spec.tab, spec.cwd, scriptFile);
     const renamed = await run(herdrRenameArgs(paneId, spec.paneName));
     if (renamed.code !== 0) {
       await run(['pane', 'close', paneId]);
@@ -653,14 +827,17 @@ export function createPiHerdrRuntime(options?: {
         sessionFile: spec.sessionFile,
       };
     }
-    if (previous !== null) {
+    // The new pane opens before the finished one closes, so a tab that holds
+    // only the finished pane stays open.
+    const started = await openPane(spec);
+    if (previous !== null && previous !== started.paneId) {
       try {
         await run(['pane', 'close', previous]);
       } catch {
         // The dead pane is already gone.
       }
     }
-    return openPane(spec);
+    return started;
   }
 
   async function openHandoffPane(spec: PaneSpec): Promise<{ paneId: string }> {
@@ -672,16 +849,7 @@ export function createPiHerdrRuntime(options?: {
       renderPaneScript({ cwd: spec.cwd, freshBin, piBin, target: spec.target }),
       { mode: 0o755 },
     );
-    const opened = await run(
-      herdrPaneArgs({ cwd: spec.cwd, launchScript: spec.scriptFile, targetPaneId }),
-    );
-    if (opened.code !== 0) {
-      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
-    }
-    const paneId = parsePaneId(opened.stdout);
-    if (paneId === null) {
-      throw new Error('herdr did not return a pane id');
-    }
+    const paneId = await openIn(spec.tab, spec.cwd, spec.scriptFile);
     const renamed = await run(herdrRenameArgs(paneId, spec.name));
     if (renamed.code !== 0) {
       throw new Error(renamed.stderr.trim() || `herdr pane rename failed for ${paneId}`);
@@ -690,7 +858,14 @@ export function createPiHerdrRuntime(options?: {
   }
 
   return {
-    interrupt: async () => undefined,
+    closeTab,
+    // Closes the agent's pane; its pi process ends with it.
+    interrupt: async ({ paneId }) => {
+      const closed = await run(['pane', 'close', paneId]);
+      if (closed.code !== 0) {
+        throw new Error(closed.stderr.trim() || `herdr pane close failed for ${paneId}`);
+      }
+    },
     launch: openPane,
     observe(active, handler) {
       const sessionFile = active.sessionFile;

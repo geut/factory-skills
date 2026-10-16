@@ -1,12 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { getAsset, isSea } from 'node:sea';
 import { DatabaseSync } from 'node:sqlite';
+import { OLDEST_UPGRADABLE_VERSION, upgrades } from './upgrades.ts';
 
 export const APPLICATION_ID = 0x46_41_43_54; // "FACT"
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 6;
 export const STATE_DATABASE_RELATIVE_PATH = path.join('db', 'state.sqlite');
 
-const schemaSql = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+// The single executable carries schema.sql as an asset; source runs read it
+// from next to this file.
+function schemaSql(): string {
+  return isSea()
+    ? getAsset('schema.sql', 'utf8')
+    : readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+}
 
 export class FactoryDatabaseError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -16,6 +24,9 @@ export class FactoryDatabaseError extends Error {
 }
 
 export class IncompatibleFactoryDatabaseError extends FactoryDatabaseError {}
+
+// An older schema this controller can upgrade in place.
+class UpgradableFactoryDatabaseError extends IncompatibleFactoryDatabaseError {}
 
 export type OpenStateDatabaseOptions = {
   create?: boolean;
@@ -92,10 +103,20 @@ function assertCompatible(db: DatabaseSync, databasePath: string): void {
   if (
     applicationId === APPLICATION_ID &&
     storedSchemaVersion !== null &&
-    storedSchemaVersion < SCHEMA_VERSION
+    storedSchemaVersion < OLDEST_UPGRADABLE_VERSION
   ) {
     throw new IncompatibleFactoryDatabaseError(
-      `factory database at ${databasePath} is schema ${storedSchemaVersion}; this controller needs schema ${SCHEMA_VERSION} and does not upgrade older databases. Finish or cancel its tickets with the older controller, then remove ${path.dirname(databasePath)} and start again.`,
+      `factory database at ${databasePath} is schema ${storedSchemaVersion}; this controller needs schema ${SCHEMA_VERSION} and only upgrades schema ${OLDEST_UPGRADABLE_VERSION} or later. Finish or cancel its tickets with the older controller, then remove ${path.dirname(databasePath)} and start again.`,
+    );
+  }
+
+  if (
+    applicationId === APPLICATION_ID &&
+    storedSchemaVersion !== null &&
+    storedSchemaVersion < SCHEMA_VERSION
+  ) {
+    throw new UpgradableFactoryDatabaseError(
+      `factory database at ${databasePath} is schema ${storedSchemaVersion}; open it read-write once to upgrade it to schema ${SCHEMA_VERSION}.`,
     );
   }
 
@@ -126,11 +147,40 @@ function canInitialize(db: DatabaseSync): boolean {
   return applicationId === 0 && userVersion === 0 && userObjectCount === 0;
 }
 
+function isLocked(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'errcode' in error &&
+    (error.errcode === 5 || error.errcode === 6)
+  );
+}
+
+// Switching to WAL needs an exclusive lock and ignores busy_timeout, so
+// processes opening a new database together retry briefly instead of failing.
+function enableWal(db: DatabaseSync): void {
+  const mode = db.prepare('PRAGMA journal_mode').get();
+  if (isRow(mode) && String(Object.values(mode)[0]).toLowerCase() === 'wal') {
+    return;
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      db.exec('PRAGMA journal_mode = WAL');
+      return;
+    } catch (error: unknown) {
+      if (!isLocked(error) || attempt >= 100) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}
+
 function configureConnection(db: DatabaseSync, readOnly: boolean): void {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
   if (!readOnly) {
-    db.exec('PRAGMA journal_mode = WAL');
+    enableWal(db);
   }
 }
 
@@ -163,16 +213,21 @@ export function openStateDatabase(
     try {
       assertCompatible(db, databasePath);
     } catch (compatibilityError: unknown) {
-      compatible = false;
-      if (!create || readOnly || !canInitialize(db)) {
-        throw compatibilityError;
+      if (compatibilityError instanceof UpgradableFactoryDatabaseError && !readOnly) {
+        configureConnection(db, false);
+        upgrade(db);
+      } else {
+        compatible = false;
+        if (!create || readOnly || !canInitialize(db)) {
+          throw compatibilityError;
+        }
       }
     }
 
     if (!compatible) {
       configureConnection(db, false);
       try {
-        db.exec(schemaSql);
+        db.exec(schemaSql());
       } catch (initializationError: unknown) {
         try {
           db.exec('ROLLBACK');
@@ -196,6 +251,26 @@ export function openStateDatabase(
     db.close();
     throw error;
   }
+}
+
+// Runs every step from the stored version to SCHEMA_VERSION in one
+// transaction. A concurrent opener that upgraded first leaves nothing to do.
+function upgrade(db: DatabaseSync): void {
+  immediateTransaction(db, () => {
+    const from = schemaVersion(db);
+    if (from === null || from >= SCHEMA_VERSION) {
+      return;
+    }
+    for (let version = from; version < SCHEMA_VERSION; version += 1) {
+      const step = upgrades[version];
+      if (step === undefined) {
+        throw new FactoryDatabaseError(`no upgrade step from schema ${version}`);
+      }
+      db.exec(step);
+    }
+    db.prepare('UPDATE schema_meta SET schema_version = ? WHERE singleton = 1').run(SCHEMA_VERSION);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  });
 }
 
 export function initializeStateDatabase(factoryRoot: string): string {

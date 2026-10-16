@@ -130,6 +130,7 @@ test('herdr launch uses the generic argv pane contract', () => {
     model: 'work-model',
     piBin: 'pi',
     promptFile: '/tmp/prompt.txt',
+    replyRequired: true,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
     thinking: 'medium',
@@ -139,6 +140,7 @@ test('herdr launch uses the generic argv pane contract', () => {
   assert.match(script, /-e '\/pkg\/child-handshake\.ts'/);
   assert.match(script, /PI_SUBAGENT_AUTO_EXIT=1/);
   assert.match(script, /FACTORY_CHILD=1/);
+  assert.match(script, /FACTORY_REPLY_REQUIRED=1/);
   assert.match(script, /--tools 'read,bash,grep,find,ls,caller_ping,subagent_done'/);
   assert.match(script, / '@\/tmp\/prompt\.txt'/);
   assert.match(script, /\.exitcode/);
@@ -406,8 +408,12 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     taskLabel: null,
   });
   assert.equal(replaced.paneId, 'pane-new');
-  assert.deepEqual(calls[1], ['pane', 'close', 'pane-old']);
-  assert.equal(calls[2]?.[0], 'plugin');
+  // The new pane opens first, then the dead one closes.
+  const opened = calls.findIndex((args) => args[0] === 'plugin');
+  const closed = calls.findIndex(
+    (args) => args[0] === 'pane' && args[1] === 'close' && args[2] === 'pane-old',
+  );
+  assert.ok(opened > 0 && closed > opened, JSON.stringify(calls));
   assert.equal(
     calls.some(
       (args) => args.includes('status=initial') && !args.some((arg) => arg.startsWith('task=')),
@@ -535,4 +541,179 @@ test('a pane exit waits one poll for the exit code written after pi', () => {
     stop();
     mock.timers.reset();
   }
+});
+
+test('each agent opens in its own pane in the ticket tab, and the tab outlives each pane', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
+  const tabsFile = path.join(directory, 'runtime', 'tabs.json');
+  const calls: Array<Array<string>> = [];
+  let tabs = 0;
+  let panes = 0;
+  // Each open pane's tab. Herdr may give a closed pane's id to a pane elsewhere.
+  const paneTabs = new Map<string, string>([['server', 'host-tab']]);
+  const run = async (args: Array<string>) => {
+    calls.push(args);
+    if (args[0] === 'pane' && args[1] === 'get') {
+      const pane = args[2] ?? '';
+      const tab = paneTabs.get(pane);
+      return tab === undefined
+        ? { code: 1, stderr: 'no such pane', stdout: '' }
+        : {
+            code: 0,
+            stderr: '',
+            stdout: JSON.stringify({
+              result: { pane: { pane_id: pane, tab_id: tab, workspace_id: 'ws-1' } },
+            }),
+          };
+    }
+    if (args[0] === 'pane' && args[1] === 'close') {
+      paneTabs.delete(args[2] ?? '');
+      return { code: 0, stderr: '', stdout: '' };
+    }
+    if (args[0] === 'tab' && args[1] === 'create') {
+      tabs += 1;
+      paneTabs.set(`root-${tabs}`, `tab-${tabs}`);
+      return {
+        code: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          result: { root_pane: { pane_id: `root-${tabs}` }, tab: { tab_id: `tab-${tabs}` } },
+        }),
+      };
+    }
+    if (args[0] === 'plugin') {
+      panes += 1;
+      const target = args[args.indexOf('--target-pane') + 1] ?? '';
+      paneTabs.set(`p${panes}`, paneTabs.get(target) ?? 'host-tab');
+      return {
+        code: 0,
+        stderr: '',
+        stdout: JSON.stringify({ result: { plugin_pane: { pane_id: `p${panes}` } } }),
+      };
+    }
+    return { code: 0, stderr: '', stdout: '' };
+  };
+  const spec = (ticket: string, id: string, previousPaneId: string | null = null) => ({
+    cwd: directory,
+    mode: 'launch' as const,
+    model: 'work-model',
+    paneName: `🛠 ${ticket}`,
+    previousPaneId,
+    prompt: 'Work.',
+    purpose: 'initial' as const,
+    runId: runId(id),
+    sessionFile: path.join(directory, `${id}.jsonl`),
+    sessionId: sessionId(id),
+    stage: 'work' as const,
+    tab: { key: `${ticket}-key`, label: ticket },
+    taskLabel: null,
+    thinking: 'medium',
+    tools: 'read',
+  });
+  // What happened to panes, in order: `split <target>` and `close <pane>`.
+  const layout = () =>
+    calls.flatMap((args) =>
+      args[0] === 'plugin'
+        ? [`split ${args[args.indexOf('--target-pane') + 1]}`]
+        : args[0] === 'pane' && (args[1] === 'close' || args[1] === 'run')
+          ? [`${args[1]} ${args[2]}`]
+          : [],
+    );
+
+  const runtime = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
+  // The first agent splits beside the new tab's shell, which then closes.
+  const first = await runtime.launch(spec('repo#1', 'r1'));
+  assert.equal(first.paneId, 'p1');
+  await runtime.launch(spec('repo#1', 'r2'));
+  await runtime.launch(spec('repo#2', 'r3'));
+  assert.deepEqual(layout(), [
+    'split root-1',
+    'close root-1',
+    'split p1',
+    'split root-2',
+    'close root-2',
+  ]);
+  const created = calls.filter((args) => args[0] === 'tab' && args[1] === 'create');
+  assert.equal(created.length, 2);
+  assert.deepEqual(created[0]?.slice(2, 4), ['--workspace', 'ws-1']);
+
+  // A restarted runtime remembers the tab and splits from its newest pane.
+  const restarted = createPiHerdrRuntime({ run, tabsFile, targetPaneId: 'server' });
+  calls.length = 0;
+  await restarted.launch(spec('repo#1', 'r4'));
+  // A resume opens its pane before closing the finished one, so the tab stays.
+  paneTabs.delete('p1');
+  paneTabs.delete('p2');
+  await restarted.resume({ ...spec('repo#1', 'r5', 'p4'), mode: 'resume' });
+  assert.deepEqual(layout(), ['split p2', 'split p4', 'close p4']);
+
+  // A tab whose panes are all gone is made again.
+  paneTabs.delete('p3');
+  calls.length = 0;
+  await restarted.launch(spec('repo#2', 'r6'));
+  assert.deepEqual(layout(), ['split root-3', 'close root-3']);
+
+  // So is one whose pane id now names a pane in another tab.
+  paneTabs.set('p6', 'tab-elsewhere');
+  calls.length = 0;
+  await restarted.launch(spec('repo#2', 'r7'));
+  assert.deepEqual(layout(), ['split root-4', 'close root-4']);
+
+  // Handoff panes split in the tab too; nothing is typed into a shell.
+  calls.length = 0;
+  for (const name of ['📦 repo#1', '🔀 repo#1']) {
+    await restarted.openPane({
+      cwd: directory,
+      name,
+      scriptFile: path.join(directory, `${name.length}.sh`),
+      tab: { key: 'repo#1-key', label: 'repo#1' },
+      target: { kind: 'session', sessionFile: path.join(directory, 'r5.jsonl') },
+    });
+  }
+  assert.deepEqual(layout(), ['split p5', 'split p8']);
+
+  await restarted.closeTab?.('repo#1-key');
+  assert.deepEqual(calls.at(-1), ['tab', 'close', 'tab-1']);
+  assert.equal(JSON.parse(readFileSync(tabsFile, 'utf8'))['repo#1-key'], undefined);
+});
+
+test('a tab that cannot be made falls back to the server pane', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
+  const calls: Array<Array<string>> = [];
+  const runtime = createPiHerdrRuntime({
+    run: async (args) => {
+      calls.push(args);
+      if (args[0] === 'tab') {
+        return { code: 1, stderr: 'no workspace', stdout: '' };
+      }
+      if (args[0] === 'plugin') {
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify({ result: { plugin_pane: { pane_id: 'p' } } }),
+        };
+      }
+      return { code: 0, stderr: '', stdout: '' };
+    },
+    targetPaneId: 'server',
+  });
+  await runtime.launch({
+    cwd: directory,
+    mode: 'launch',
+    model: 'm',
+    paneName: 'x',
+    previousPaneId: null,
+    prompt: 'p',
+    purpose: 'initial',
+    runId: runId('r'),
+    sessionFile: path.join(directory, 'r.jsonl'),
+    sessionId: sessionId('s'),
+    stage: 'plan',
+    tab: { key: 'k', label: 'repo#1' },
+    taskLabel: null,
+    thinking: 'medium',
+    tools: 'read',
+  });
+  const plugin = calls.find((args) => args[0] === 'plugin') ?? [];
+  assert.equal(plugin[plugin.indexOf('--target-pane') + 1], 'server');
 });

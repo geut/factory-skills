@@ -1,23 +1,32 @@
 {
   "name": "factory-skills",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-sea.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "gallery": "node --watch src/stories/server.ts",
     "lint": "oxlint .",
+    "openapi:update": "node --test --test-update-snapshots src/api/openapi.test.ts",
     "stories": "node src/stories/run.ts",
     "stories:update": "STORIES_UPDATE=1 node --test src/stories/stories.test.ts",
     "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "zod": "^4.6.7",
+    "zod-openapi": "^6.0.2"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@nkzw/eslint-plugin": "^2.0.0",
     "@nkzw/oxlint-config": "^2.0.1",
+    "esbuild": "^0.28.2",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.9.2"
   },
   "peerDependencies": {

@@ -12,6 +12,7 @@ import {
   ticketId,
   type ActionId,
   type ActionRecord,
+  type Actor,
   type AttentionRecord,
   type ControllerEvent,
   type ControllerResponse,
@@ -34,10 +35,12 @@ import {
   type UsageTotals,
   type UsageWrite,
   type WorktreeStatus,
+  type TicketId,
 } from '../domain.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { card, encodeCard } from './card.ts';
+import { keyOfFactoryDir } from './keys.ts';
 import { describeExisting, reduce } from './reduce.ts';
 
 type ApplySource = 'command' | 'runtime' | 'action' | 'validator' | 'controller';
@@ -45,6 +48,9 @@ type ApplySource = 'command' | 'runtime' | 'action' | 'validator' | 'controller'
 export type ApplyResult = {
   armRunId: RunId | null;
   response: ControllerResponse;
+  // The events.revision that recorded this input, or that recorded it the
+  // first time for a duplicate. Null when nothing was recorded.
+  revision: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -182,6 +188,8 @@ function parsePolicy(raw: string): Policy {
       work: { commands: parseCommands(validation['work']['commands']) },
       wrapup: { generated: parseGenerated(validation['wrapup']) },
     },
+    // Executions started before worktree setup existed have none.
+    worktreeSetup: parseCommands(value['worktreeSetup'] ?? []),
   };
 }
 
@@ -371,9 +379,17 @@ function worktreeStatus(value: string | null): WorktreeStatus | null {
   throw new FactoryDatabaseError(`unknown worktree status ${value}`);
 }
 
-function loadExecutionRow(db: DatabaseSync, execution: ExecutionId): FactorySnapshot | null {
+function loadExecutionRow(
+  db: DatabaseSync,
+  execution: ExecutionId,
+  currentOnly = true,
+): FactorySnapshot | null {
   const executionRow = db
-    .prepare('SELECT * FROM ticket_executions WHERE id = ? AND is_current = 1')
+    .prepare(
+      currentOnly
+        ? 'SELECT * FROM ticket_executions WHERE id = ? AND is_current = 1'
+        : 'SELECT * FROM ticket_executions WHERE id = ?',
+    )
     .get(execution);
   if (executionRow === undefined) {
     return null;
@@ -409,6 +425,83 @@ export function listCurrentTicketRefs(db: DatabaseSync): Array<string> {
     }
   }
   return refs;
+}
+
+// A status card the controller posted, kept as a domain event so clients that
+// did not see it live (Pi, the event stream) can render it after their cursor.
+export function recordCard(db: DatabaseSync, card: string, now: string): number {
+  const id = randomUUID();
+  const inserted = db
+    .prepare(
+      `INSERT INTO events
+        (id, direction, source, kind, dedupe_key, payload_json, processing_status, received_at,
+         processed_at)
+       VALUES (?, 'domain', 'controller', 'card', ?, ?, 'processed', ?, ?)`,
+    )
+    .run(id, `card:${id}`, JSON.stringify({ card }), now, now);
+  return Number(inserted.lastInsertRowid);
+}
+
+export function cardsSince(
+  db: DatabaseSync,
+  revision: number,
+): Array<{ card: string; revision: number }> {
+  return db
+    .prepare(
+      `SELECT revision, payload_json FROM events
+       WHERE direction = 'domain' AND kind = 'card' AND revision > ?
+       ORDER BY revision`,
+    )
+    .all(revision)
+    .map((item) => {
+      const record = row(item);
+      const payload: unknown = JSON.parse(text(record, 'payload_json'));
+      return {
+        card: isRecord(payload) && typeof payload['card'] === 'string' ? payload['card'] : '',
+        revision: integer(record, 'revision'),
+      };
+    });
+}
+
+// One generation of a ticket, current or retired, for reading.
+export function loadGeneration(
+  db: DatabaseSync,
+  ticket: TicketId,
+  generation: number,
+): FactorySnapshot | null {
+  const found = db
+    .prepare('SELECT id FROM ticket_executions WHERE ticket_id = ? AND generation = ?')
+    .get(ticket, generation);
+  return found === undefined
+    ? null
+    : loadExecutionRow(db, executionId(text(row(found), 'id')), false);
+}
+
+// The change cursor: the newest events.revision, or 0 before any event.
+export function latestRevision(db: DatabaseSync): number {
+  return integer(
+    row(db.prepare('SELECT coalesce(max(revision), 0) AS revision FROM events').get()),
+    'revision',
+  );
+}
+
+// The Herdr tab a ticket's panes open in.
+export function ticketTab(snapshot: FactorySnapshot): { key: string; label: string } {
+  return { key: ticketKeyOf(snapshot), label: snapshot.ticket.displayRef };
+}
+
+// The API names a ticket by its factory directory's name, `<slug>-<hash8>`.
+export function ticketKeyOf(snapshot: FactorySnapshot): string {
+  return keyOfFactoryDir(snapshot.execution.factoryDir);
+}
+
+export function loadCurrentByFactoryKey(db: DatabaseSync, key: string): FactorySnapshot | null {
+  const found = db
+    .prepare('SELECT id, factory_dir FROM ticket_executions WHERE is_current = 1')
+    .all()
+    .map(row)
+    .find((record) => keyOfFactoryDir(text(record, 'factory_dir')) === key);
+  return found === undefined ? null : loadExecutionRow(db, executionId(text(found, 'id')));
 }
 
 export function loadCurrentByTicketKey(db: DatabaseSync, key: string): FactorySnapshot | null {
@@ -456,6 +549,7 @@ function hydrate(
   };
   const executionRecord: ExecutionRecord = {
     factoryDir: text(executionRow, 'factory_dir'),
+    factoryVersion: nullableText(executionRow, 'factory_version'),
     generation: integer(executionRow, 'generation'),
     id: execution,
     inputFetchedAt: nullableText(executionRow, 'input_fetched_at') ?? '',
@@ -626,7 +720,12 @@ function loadReplies(db: DatabaseSync, execution: ExecutionId): Array<ReplyRecor
     .all(execution)
     .map((item) => {
       const record = row(item);
+      const client = nullableText(record, 'actor');
       return {
+        actor:
+          client === null
+            ? null
+            : { client, onBehalfOf: nullableText(record, 'actor_on_behalf_of') },
         answer: text(record, 'answer'),
         answerHash: text(record, 'answer_hash'),
         id: replyId(text(record, 'id')),
@@ -783,6 +882,24 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       runId: null,
     };
   }
+  if (kind === 'update_ticket_source' && typeof payload['comment'] === 'string') {
+    const issueStatus = payload['issueStatus'];
+    const update = payload['update'];
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      comment: payload['comment'],
+      issueStatus:
+        issueStatus === 'clear' || issueStatus === 'in_progress' || issueStatus === 'in_review'
+          ? issueStatus
+          : null,
+      kind,
+      runId: null,
+      update:
+        update === 'cancelled' || update === 'handoff' || update === 'paused' ? update : 'started',
+    };
+  }
   throw new FactoryDatabaseError(`unsupported action ${kind}`);
 }
 
@@ -810,6 +927,12 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ slug: action.slug });
     case 'notify_attention':
       return jsonText({ message: action.message });
+    case 'update_ticket_source':
+      return jsonText({
+        comment: action.comment,
+        issueStatus: action.issueStatus,
+        update: action.update,
+      });
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -825,7 +948,11 @@ function insertTicket(db: DatabaseSync, snapshot: FactorySnapshot, now: string):
   db.prepare(
     `INSERT INTO tickets
       (id, title, source_kind, source_ref, source_payload, source_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       title = excluded.title, source_kind = excluded.source_kind, source_ref = excluded.source_ref,
+       source_payload = excluded.source_payload, source_hash = excluded.source_hash,
+       updated_at = excluded.updated_at`,
   ).run(
     snapshot.ticket.id,
     snapshot.ticket.title,
@@ -851,8 +978,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
        retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
-       message, message_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       message, message_at, created_at, updated_at, factory_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -879,7 +1006,42 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     now,
     now,
     now,
+    execution.factoryVersion,
   );
+}
+
+// Opens a new interval in status_history when an execution or a task enters a
+// different stage or status, closing the one it leaves.
+function recordStatus(
+  db: DatabaseSync,
+  input: {
+    executionId: string;
+    now: string;
+    stage: string | null;
+    status: string;
+    taskId: string | null;
+  },
+): void {
+  const open = db
+    .prepare(
+      `SELECT id, stage, status FROM status_history
+       WHERE execution_id = ? AND task_id IS ? AND ended_at IS NULL
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(input.executionId, input.taskId);
+  if (open !== undefined && open['stage'] === input.stage && open['status'] === input.status) {
+    return;
+  }
+  if (open !== undefined) {
+    db.prepare('UPDATE status_history SET ended_at = ? WHERE id = ?').run(
+      input.now,
+      Number(open['id']),
+    );
+  }
+  db.prepare(
+    `INSERT INTO status_history (execution_id, task_id, stage, status, started_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(input.executionId, input.taskId, input.stage, input.status, input.now);
 }
 
 function updateExecution(
@@ -1115,8 +1277,9 @@ function updateAttention(db: DatabaseSync, attention: AttentionRecord, now: stri
 function insertReply(db: DatabaseSync, reply: ReplyRecord, now: string): void {
   db.prepare(
     `INSERT INTO attention_replies
-      (id, request_id, version, answer, answer_hash, idempotency_key, is_current, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, request_id, version, answer, answer_hash, idempotency_key, is_current, created_at,
+       actor, actor_on_behalf_of)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     reply.id,
     reply.requestId,
@@ -1126,6 +1289,8 @@ function insertReply(db: DatabaseSync, reply: ReplyRecord, now: string): void {
     reply.idempotencyKey,
     reply.isCurrent ? 1 : 0,
     now,
+    reply.actor?.client ?? null,
+    reply.actor?.onBehalfOf ?? null,
   );
 }
 
@@ -1238,6 +1403,13 @@ function persist(
   } else if (!same(before.execution, after.execution)) {
     updateExecution(db, before.execution, after.execution, now);
   }
+  recordStatus(db, {
+    executionId: after.execution.id,
+    now,
+    stage: after.execution.stage,
+    status: after.execution.status,
+    taskId: null,
+  });
 
   for (const task of after.tasks) {
     const previous = before?.tasks.find((item) => item.taskId === task.taskId) ?? null;
@@ -1257,6 +1429,13 @@ function persist(
         task.taskId,
       );
     }
+    recordStatus(db, {
+      executionId: after.execution.id,
+      now,
+      stage: task.stage,
+      status: task.status,
+      taskId: task.taskId,
+    });
   }
   for (const session of after.sessions) {
     const previous = before?.sessions.find((item) => item.id === session.id) ?? null;
@@ -1321,12 +1500,18 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'reply':
     case 'retry':
     case 'complete':
+    case 'pull_request_closed':
+    case 'cancel':
       return loadCurrentByTicketKey(db, event.ticketId);
+    case 'rerun':
+      // Only a repeated rerun gets here; it answers with the new generation.
+      return loadCurrentByTicketKey(db, event.start.ticket.id);
     case 'runtime_terminal':
     case 'validation_finished':
     case 'run_started':
     case 'launch_failed':
     case 'reconciled':
+    case 'stop':
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
@@ -1363,6 +1548,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'run_started':
     case 'launch_failed':
     case 'reconciled':
+    case 'stop':
       return event.runId;
     case 'start':
     case 'reply':
@@ -1372,6 +1558,9 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'input_ready':
     case 'input_failed':
     case 'complete':
+    case 'pull_request_closed':
+    case 'cancel':
+    case 'rerun':
       return null;
     default: {
       const _exhaustive: never = event;
@@ -1383,6 +1572,7 @@ function eventRunId(event: ControllerEvent): string | null {
 function insertInputEvent(
   db: DatabaseSync,
   input: {
+    actor: Actor | null;
     dedupeKey: string;
     executionId: ExecutionId | null;
     failed: boolean;
@@ -1392,26 +1582,34 @@ function insertInputEvent(
     runId: string | null;
     source: ApplySource;
   },
-): void {
-  db.prepare(
-    `INSERT INTO events
-      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json, processing_status, processed_at)
-     VALUES (?, ?, ?, 'input', ?, ?, ?, '{}', ?, ?)`,
-  ).run(
-    input.id,
-    input.executionId,
-    input.runId,
-    input.source,
-    input.kind,
-    input.dedupeKey,
-    input.failed ? 'failed' : 'processed',
-    input.now,
-  );
+): number {
+  const inserted = db
+    .prepare(
+      `INSERT INTO events
+      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json, processing_status,
+       processed_at, actor, actor_on_behalf_of)
+     VALUES (?, ?, ?, 'input', ?, ?, ?, '{}', ?, ?, ?, ?)`,
+    )
+    .run(
+      input.id,
+      input.executionId,
+      input.runId,
+      input.source,
+      input.kind,
+      input.dedupeKey,
+      input.failed ? 'failed' : 'processed',
+      input.now,
+      input.actor?.client ?? null,
+      input.actor?.onBehalfOf ?? null,
+    );
+  return Number(inserted.lastInsertRowid);
 }
 
 export function applyControllerEvent(
   db: DatabaseSync,
   input: {
+    // The API client behind a command; null for the runtime, validators, and Pi.
+    actor?: Actor | null;
     dedupeKey: string;
     event: ControllerEvent;
     ids: IdSource;
@@ -1421,16 +1619,26 @@ export function applyControllerEvent(
   },
 ): ApplyResult {
   return immediateTransaction(db, () => {
-    const duplicate = db.prepare('SELECT 1 FROM events WHERE dedupe_key = ?').get(input.dedupeKey);
+    const duplicate = db
+      .prepare('SELECT revision FROM events WHERE dedupe_key = ?')
+      .get(input.dedupeKey);
+    if (input.event.kind === 'rerun' && duplicate === undefined) {
+      return applyRerun(db, { ...input, event: input.event });
+    }
     const current = snapshotForEvent(db, input.event);
     if (duplicate !== undefined) {
       if (current === null) {
         return {
           armRunId: null,
           response: { kind: 'rejected', message: 'Duplicate event has no execution.' },
+          revision: null,
         };
       }
-      return { armRunId: null, response: describeExisting(current) };
+      return {
+        armRunId: null,
+        response: describeExisting(current),
+        revision: integer(row(duplicate), 'revision'),
+      };
     }
     input.prepare?.(db);
     const reduction = reduce({
@@ -1442,8 +1650,10 @@ export function applyControllerEvent(
     if (reduction.changed && reduction.snapshot !== null) {
       persist(db, current, reduction.snapshot, reduction.usage, input.now);
     }
+    let revision: number | null = null;
     if (reduction.response.kind === 'status') {
-      insertInputEvent(db, {
+      revision = insertInputEvent(db, {
+        actor: input.actor ?? null,
         dedupeKey: input.dedupeKey,
         executionId: reduction.snapshot?.execution.id ?? current?.execution.id ?? null,
         failed: false,
@@ -1454,8 +1664,105 @@ export function applyControllerEvent(
         source: input.source,
       });
     }
-    return { armRunId: reduction.armRunId, response: reduction.response };
+    return { armRunId: reduction.armRunId, response: reduction.response, revision };
   });
+}
+
+// Statuses a ticket can be rerun from: it finished, or it failed for good.
+const RERUNNABLE = new Set(['complete', 'cancelled', 'failed']);
+
+// Quiesces what is left of a generation, then retires it. The schema's
+// retire_execution_requires_quiescence trigger checks the result.
+function retireExecution(db: DatabaseSync, execution: string, now: string): void {
+  db.prepare(
+    `UPDATE actions SET status = 'cancelled', lease_owner = NULL, lease_token = NULL,
+       lease_expires_at = NULL, completed_at = ?, updated_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'leased')`,
+  ).run(now, now, execution);
+  db.prepare(
+    `UPDATE agent_runs SET status = 'terminal', terminal_kind = 'cancelled', ended_at = ?
+     WHERE execution_id = ? AND status IN ('prepared', 'starting', 'running')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE tasks SET status = 'cancelled', stage = NULL, updated_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'active', 'blocked')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE agent_sessions SET status = 'abandoned', updated_at = ?
+     WHERE execution_id = ? AND status IN ('prepared', 'open')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE attention_requests SET status = 'cancelled', cancelled_at = ?
+     WHERE execution_id = ? AND status IN ('open', 'answered', 'resuming')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE validation_runs SET status = 'error', completed_at = ?
+     WHERE execution_id = ? AND status IN ('pending', 'running')`,
+  ).run(now, execution);
+  db.prepare(
+    `UPDATE events SET processing_status = 'ignored', processed_at = ?
+     WHERE execution_id = ? AND processing_status = 'pending'`,
+  ).run(now, execution);
+  db.prepare('UPDATE ticket_executions SET is_current = 0, updated_at = ? WHERE id = ?').run(
+    now,
+    execution,
+  );
+}
+
+// A rerun retires the current generation and starts generation N+1, all in
+// the caller's transaction (ADR-001's rerun guardrail).
+function applyRerun(
+  db: DatabaseSync,
+  input: {
+    actor?: Actor | null;
+    dedupeKey: string;
+    event: Extract<ControllerEvent, { kind: 'rerun' }>;
+    ids: IdSource;
+    now: string;
+    source: ApplySource;
+  },
+): ApplyResult {
+  const current = loadExecutionRow(db, input.event.previous);
+  if (current === null) {
+    return {
+      armRunId: null,
+      response: { kind: 'rejected', message: 'That generation is no longer current.' },
+      revision: null,
+    };
+  }
+  if (!RERUNNABLE.has(current.execution.status)) {
+    return {
+      armRunId: null,
+      response: {
+        kind: 'rejected',
+        message: `${current.ticket.displayRef} is ${current.execution.stage}/${current.execution.status}; only a complete, cancelled, or failed ticket can be rerun.`,
+      },
+      revision: null,
+    };
+  }
+  retireExecution(db, current.execution.id, input.now);
+  const reduction = reduce({
+    event: input.event.start,
+    ids: input.ids,
+    now: input.now,
+    snapshot: null,
+  });
+  if (!reduction.changed || reduction.snapshot === null) {
+    throw new FactoryDatabaseError('a rerun did not create a generation');
+  }
+  persist(db, null, reduction.snapshot, reduction.usage, input.now);
+  const revision = insertInputEvent(db, {
+    actor: input.actor ?? null,
+    dedupeKey: input.dedupeKey,
+    executionId: reduction.snapshot.execution.id,
+    failed: false,
+    id: input.ids.event(),
+    kind: 'rerun',
+    now: input.now,
+    runId: null,
+    source: input.source,
+  });
+  return { armRunId: reduction.armRunId, response: reduction.response, revision };
 }
 
 export type ActiveRun = {
@@ -1600,6 +1907,16 @@ export function requeueOrphanedValidations(
           now,
           text(record, 'execution_id'),
         );
+        const failed = db
+          .prepare('SELECT stage FROM ticket_executions WHERE id = ?')
+          .get(text(record, 'execution_id'));
+        recordStatus(db, {
+          executionId: text(record, 'execution_id'),
+          now,
+          stage: failed === undefined ? null : String(failed['stage']),
+          status: 'failed',
+          taskId: null,
+        });
         continue;
       }
       db.prepare(
@@ -1612,9 +1929,12 @@ export function requeueOrphanedValidations(
   });
 }
 
+// `owner` names the process holding the lease: the factory server's instance
+// id, or the Pi-hosted controller's fixed name.
 export function claimNextAction(
   db: DatabaseSync,
   now: string,
+  owner = 'factory-controller',
 ): { action: ActionRecord; executionId: ExecutionId } | null {
   return immediateTransaction(db, () => {
     const found = db
@@ -1631,10 +1951,10 @@ export function claimNextAction(
     const claimed = db
       .prepare(
         `UPDATE actions
-         SET status = 'leased', lease_owner = 'factory-controller', lease_token = ?, lease_expires_at = ?, updated_at = ?
+         SET status = 'leased', lease_owner = ?, lease_token = ?, lease_expires_at = ?, updated_at = ?
          WHERE id = ? AND status = 'pending'`,
       )
-      .run(randomUUID(), expires, now, id);
+      .run(owner, randomUUID(), expires, now, id);
     if (claimed.changes !== 1) {
       return null;
     }
@@ -1647,6 +1967,17 @@ export function claimNextAction(
       executionId: executionId(text(record, 'execution_id')),
     };
   });
+}
+
+// Tracker updates a previous server leased and never finished go back to
+// pending. Their comment marker keeps a second attempt from posting twice.
+export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): void {
+  db.prepare(
+    `UPDATE actions
+     SET status = 'pending', lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+         updated_at = ?
+     WHERE kind = 'update_ticket_source' AND status = 'leased'`,
+  ).run(now);
 }
 
 export function finishLeasedAction(
