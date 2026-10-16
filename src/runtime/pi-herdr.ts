@@ -213,6 +213,15 @@ export function handshakeExtensionPath(): string {
   return fileURLToPath(new URL('./child-handshake.ts', import.meta.url));
 }
 
+// Pi leaves the terminal as its TUI set it when the handshake exits it
+// mid-turn: mouse reporting, focus events, the kitty keyboard. A tab's
+// root shell outlives the run, so the script puts the terminal back and drops
+// any mouse reports already queued; otherwise they reach the shell as typed
+// text and garble the next command run there.
+const TERMINAL_RESET = `printf '\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1004l\\033[?1006l\\033[?1015l\\033[?2004l\\033[<u\\033[>4;0m\\033[?25h' 2>/dev/null > /dev/tty
+stty sane 2>/dev/null < /dev/tty
+while IFS= read -r -s -t 0.1 -n 4096 _ 2>/dev/null < /dev/tty; do :; done`;
+
 export function renderLaunchScript(input: {
   handshakePath: string;
   model: string;
@@ -232,6 +241,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 ${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
+${TERMINAL_RESET}
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
 `;

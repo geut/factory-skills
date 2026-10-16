@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -151,6 +152,49 @@ test('herdr launch uses the generic argv pane contract', () => {
     'pane-1',
     '🔎 owner/repo#3',
   ]);
+});
+
+// Pi exits mid-turn with mouse reporting on. In a pty, the script turns it
+// off before it stamps the exit code, so the shell that ran it gets no mouse
+// reports as input.
+test('the launch script restores the terminal before it stamps the exit code', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'factory-launch-'));
+  try {
+    const pi = path.join(dir, 'pi');
+    writeFileSync(pi, "#!/bin/sh\nprintf '\\033[?1000h\\033[?1006h'\nexit 3\n");
+    chmodSync(pi, 0o755);
+    const sessionFile = path.join(dir, 'session.jsonl');
+    const launch = path.join(dir, 'run.sh');
+    writeFileSync(
+      launch,
+      renderLaunchScript({
+        handshakePath: '/pkg/child-handshake.ts',
+        model: 'work-model',
+        piBin: pi,
+        promptFile: path.join(dir, 'prompt.txt'),
+        runId: 'run-1',
+        sessionFile,
+        thinking: 'medium',
+        tools: 'read',
+      }),
+    );
+    chmodSync(launch, 0o755);
+    // Without a terminal the reset is skipped quietly.
+    const plain = spawnSync(launch, { encoding: 'utf8' });
+    assert.equal(plain.status, 3);
+    assert.equal(plain.stderr, '');
+    assert.equal(readFileSync(`${sessionFile}.exitcode`, 'utf8'), '3 run-1\n');
+    if (process.platform === 'linux' && spawnSync('script', ['--version']).status === 0) {
+      const tty = spawnSync('script', ['-qec', launch, '/dev/null'], { encoding: 'utf8' });
+      assert.equal(tty.status, 3);
+      const on = tty.stdout.indexOf('\u001b[?1000h');
+      const off = tty.stdout.indexOf('\u001b[?1000l');
+      assert.ok(on >= 0 && off > on, JSON.stringify(tty.stdout));
+      assert.ok(tty.stdout.includes('\u001b[?1006l'));
+    }
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
 });
 
 test('pane id comes from the nested herdr plugin pane payload', () => {
