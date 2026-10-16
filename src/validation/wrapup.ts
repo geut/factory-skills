@@ -22,13 +22,16 @@ export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
 // for operational state.
 
 // Controller-owned or transient parts of the factory root: the server writes
-// `runtime/` (Herdr tabs, the handshake) and `local.token` while wrap-up runs.
+// `runtime/` (Herdr tabs, the handshake) and `local.token`, and another
+// ticket's start may move a forgotten run's files to `archive/`, while
+// wrap-up runs.
 const factoryInternal = new Set([
   'db',
   'sessions',
   'worktrees',
   'runtime',
   'local.token',
+  'archive',
   'node_modules',
   '.git',
 ]);

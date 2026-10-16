@@ -192,6 +192,69 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   assert.equal(work.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
 });
 
+// The Herdr tabs check: the database was reset, but the ticket directory and
+// worktree of the earlier run stayed. The new run read the old plan and found
+// the old hello.md in its worktree, and spent most of its time untangling them.
+test('a forgotten run’s ticket directory, worktree, and branch move to the archive', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const firstDb = openStateDatabase(factoryRoot, { create: true });
+  const first = createFactoryService({
+    codeRoot,
+    db: firstDb,
+    factoryRoot,
+    github,
+    runtime: new FakeRuntime(),
+  });
+  await first.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  const key = path.basename(directory);
+  writeFileSync(path.join(directory, 'plan.md'), '# Old plan\n');
+  const oldWorktree = path.join(factoryRoot, 'worktrees', key);
+  git(codeRoot, ['worktree', 'add', '-b', `factory/${key}`, oldWorktree, 'HEAD']);
+  writeFileSync(path.join(oldWorktree, 'hello.md'), '# HELLO\n');
+  git(oldWorktree, ['add', 'hello.md']);
+  git(oldWorktree, ['commit', '-m', 'old work']);
+  writeFileSync(path.join(oldWorktree, 'notes.md'), 'uncommitted\n');
+  firstDb.close();
+  rmSync(path.join(factoryRoot, 'db'), { force: true, recursive: true });
+
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  const archive = path.join(factoryRoot, 'archive');
+  const [stamp] = readdirSync(archive);
+  assert.ok(stamp !== undefined);
+  assert.equal(
+    readFileSync(path.join(archive, stamp, 'tickets', key, 'plan.md'), 'utf8'),
+    '# Old plan\n',
+  );
+  assert.deepEqual(readdirSync(directory), []);
+
+  writePlanFiles(directory, '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'Planned.', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  // The new worktree starts clean from HEAD on a fresh branch.
+  assert.equal(runtime.launches.find((launch) => launch.stage === 'work')?.cwd, oldWorktree);
+  assert.equal(existsSync(path.join(oldWorktree, 'hello.md')), false);
+  assert.equal(existsSync(path.join(oldWorktree, 'notes.md')), false);
+  // The old one keeps its changes in the archive, on its renamed branch.
+  const [later] = readdirSync(archive).sort().reverse();
+  const archived = [stamp, later].map((item) => path.join(archive, item ?? '', 'worktrees', key));
+  const kept = archived.find((item) => existsSync(path.join(item, 'notes.md')));
+  assert.ok(kept, 'expected the old worktree in the archive');
+  assert.equal(readFileSync(path.join(kept, 'hello.md'), 'utf8'), '# HELLO\n');
+  const branches = spawnSync('git', ['branch', '--list', `factory/${key}*`], {
+    cwd: codeRoot,
+    encoding: 'utf8',
+  }).stdout;
+  assert.match(branches, new RegExp(`factory/${key}-archived-`));
+});
+
 test('caller_ping is durable and reply resumes that session', async () => {
   const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');

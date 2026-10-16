@@ -34,6 +34,7 @@ import { stages, stageTools } from '../stages/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
+import { archiveStamp } from './leftovers.ts';
 import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
@@ -269,9 +270,14 @@ async function worktree(
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
   const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
+  // Only a retry reuses a worktree already at the path.
+  const retry = snapshot.actions.some(
+    (item) => item.kind === 'prepare_worktree' && item.id !== action.id,
+  );
   const prepared = prepareWorktree({
     codeRoot: snapshot.execution.policy.codeRoot,
     factoryRoot,
+    leftoverStamp: retry ? null : archiveStamp(input.now()),
     slug: action.slug,
   });
   const setup = snapshot.execution.policy.worktreeSetup;

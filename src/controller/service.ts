@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
+import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
@@ -572,6 +573,15 @@ export function createFactoryService(input: {
         reason: resolved.reason ?? 'invalid_ref',
       };
     }
+    // The database knows no run of this ticket, so files at its directory
+    // are a forgotten run's.
+    if (loadCurrentByTicketKey(db, resolved.ticket.id) === null) {
+      archiveLeftoverDir({
+        dir: resolved.ticket.factoryDir,
+        factoryRoot: input.factoryRoot,
+        stamp: archiveStamp(now()),
+      });
+    }
     mkdirSync(resolved.ticket.factoryDir, { recursive: true });
     const applied = apply(
       { factoryVersion: factoryVersion(), kind: 'start', policy, ticket: resolved.ticket },
@@ -762,6 +772,12 @@ export function createFactoryService(input: {
     }
     const generation = snapshot.execution.generation + 1;
     const factoryDir = generationDir(ticketDirOf(snapshot.execution.factoryDir), generation);
+    // No earlier generation wrote here; files at it are a forgotten run's.
+    archiveLeftoverDir({
+      dir: factoryDir,
+      factoryRoot: input.factoryRoot,
+      stamp: archiveStamp(now()),
+    });
     mkdirSync(factoryDir, { recursive: true });
     const applied = apply(
       {
