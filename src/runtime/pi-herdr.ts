@@ -536,14 +536,22 @@ function nested(value: unknown, keys: Array<string>): unknown {
   return current;
 }
 
-function readTabs(file: string | null): Record<string, { rootPaneId: string; tabId: string }> {
+// What the runtime knows about a ticket's tab. `busy` is what the factory last
+// ran in its root shell.
+type TicketTabState = {
+  busy: { kind: 'handoff' } | { kind: 'run'; runId: string; sessionFile: string } | null;
+  rootPaneId: string;
+  tabId: string;
+};
+
+function readTabs(file: string | null): Record<string, TicketTabState> {
   if (file === null) {
     return {};
   }
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
     return typeof parsed === 'object' && parsed !== null
-      ? (parsed as Record<string, { rootPaneId: string; tabId: string }>)
+      ? (parsed as Record<string, TicketTabState>)
       : {};
   } catch {
     return {};
@@ -573,9 +581,7 @@ export function createPiHerdrRuntime(options?: {
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
   const tabsFile = options?.tabsFile ?? null;
-  const tabs = new Map<string, { rootPaneId: string; tabId: string }>(
-    Object.entries(readTabs(tabsFile)),
-  );
+  const tabs = new Map<string, TicketTabState>(Object.entries(readTabs(tabsFile)));
 
   function saveTabs(): void {
     if (tabsFile === null) {
@@ -601,11 +607,11 @@ export function createPiHerdrRuntime(options?: {
     }
   }
 
-  // The pane a ticket's panes split from: its tab's root pane, created the
-  // first time. A tab that cannot be made falls back to the host's pane.
-  async function splitTarget(tab: TicketTab | null | undefined, cwd: string): Promise<string> {
+  // A ticket's tab root pane, created the first time. Null when there is no
+  // tab, or one cannot be made: the pane then splits from the host's pane.
+  async function tabRoot(tab: TicketTab | null | undefined, cwd: string): Promise<string | null> {
     if (tab === null || tab === undefined) {
-      return targetPaneId;
+      return null;
     }
     const known = tabs.get(tab.key);
     if (known !== undefined && (await run(['pane', 'get', known.rootPaneId])).code === 0) {
@@ -623,21 +629,97 @@ export function createPiHerdrRuntime(options?: {
       '--no-focus',
     ]);
     if (created.code !== 0) {
-      return targetPaneId;
+      return null;
     }
     try {
       const parsed: unknown = JSON.parse(created.stdout);
       const tabId = nested(parsed, ['result', 'tab', 'tab_id']);
       const rootPaneId = nested(parsed, ['result', 'root_pane', 'pane_id']);
       if (typeof tabId !== 'string' || typeof rootPaneId !== 'string') {
-        return targetPaneId;
+        return null;
       }
-      tabs.set(tab.key, { rootPaneId, tabId });
+      tabs.set(tab.key, { busy: null, rootPaneId, tabId });
       saveTabs();
       return rootPaneId;
     } catch {
-      return targetPaneId;
+      return null;
     }
+  }
+
+  // The tab's root is a shell. It is free until the factory runs something in
+  // it, and again once that run's launch script has written its exit code.
+  // A handoff pane keeps it until the ticket finishes.
+  function rootIsFree(key: string): boolean {
+    const busy = tabs.get(key)?.busy ?? null;
+    if (busy === null) {
+      return true;
+    }
+    if (busy.kind === 'handoff') {
+      return false;
+    }
+    const stamped = readOptional(`${busy.sessionFile}.exitcode`)?.trim().split(/\s+/)[1];
+    return stamped === busy.runId;
+  }
+
+  // Where a ticket's next pane goes: into its tab's free root shell, or split
+  // beside a pane that is in use.
+  async function place(
+    tab: TicketTab | null | undefined,
+    cwd: string,
+  ): Promise<{ kind: 'shell'; paneId: string } | { kind: 'split'; target: string }> {
+    const root = await tabRoot(tab, cwd);
+    if (root === null || tab === null || tab === undefined) {
+      return { kind: 'split', target: targetPaneId };
+    }
+    return rootIsFree(tab.key) ? { kind: 'shell', paneId: root } : { kind: 'split', target: root };
+  }
+
+  // Opens `script` as a pane for `tab`: run in the free root shell, or as a
+  // split. Returns the pane id.
+  async function openIn(
+    tab: TicketTab | null | undefined,
+    cwd: string,
+    script: string,
+    busy: { kind: 'handoff' } | { kind: 'run'; runId: string; sessionFile: string },
+  ): Promise<string> {
+    const where = await place(tab, cwd);
+    if (where.kind === 'shell' && tab !== null && tab !== undefined) {
+      // A split gets its cwd from herdr; a command in the shell changes to it.
+      const ran = await run([
+        'pane',
+        'run',
+        where.paneId,
+        `cd ${shellQuote(cwd)} && ${shellQuote(script)}`,
+      ]);
+      if (ran.code !== 0) {
+        throw new Error(ran.stderr.trim() || `herdr pane run failed for ${where.paneId}`);
+      }
+      const known = tabs.get(tab.key);
+      if (known !== undefined) {
+        tabs.set(tab.key, { ...known, busy });
+        saveTabs();
+      }
+      return where.paneId;
+    }
+    const opened = await run(
+      herdrPaneArgs({
+        cwd,
+        launchScript: script,
+        targetPaneId: where.kind === 'split' ? where.target : targetPaneId,
+      }),
+    );
+    if (opened.code !== 0) {
+      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
+    }
+    const paneId = parsePaneId(opened.stdout);
+    if (paneId === null) {
+      throw new Error('herdr did not return a pane id');
+    }
+    return paneId;
+  }
+
+  function isTabRoot(paneId: string): boolean {
+    return [...tabs.values()].some((tab) => tab.rootPaneId === paneId);
   }
 
   async function closeTab(key: string): Promise<void> {
@@ -723,23 +805,16 @@ export function createPiHerdrRuntime(options?: {
       }),
       { mode: 0o755 },
     );
-    const opened = await run(
-      herdrPaneArgs({
-        cwd: spec.cwd,
-        launchScript: scriptFile,
-        targetPaneId: await splitTarget(spec.tab, spec.cwd),
-      }),
-    );
-    if (opened.code !== 0) {
-      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
-    }
-    const paneId = parsePaneId(opened.stdout);
-    if (paneId === null) {
-      throw new Error('herdr did not return a pane id');
-    }
+    const paneId = await openIn(spec.tab, spec.cwd, scriptFile, {
+      kind: 'run',
+      runId: spec.runId,
+      sessionFile: spec.sessionFile,
+    });
     const renamed = await run(herdrRenameArgs(paneId, spec.paneName));
     if (renamed.code !== 0) {
-      await run(['pane', 'close', paneId]);
+      if (!isTabRoot(paneId)) {
+        await run(['pane', 'close', paneId]);
+      }
       throw new Error(renamed.stderr.trim() || `herdr pane rename failed for ${paneId}`);
     }
     await reportMetadata(paneId, spec);
@@ -770,7 +845,8 @@ export function createPiHerdrRuntime(options?: {
         sessionFile: spec.sessionFile,
       };
     }
-    if (previous !== null) {
+    // A finished run's root shell stays: the next run uses it again.
+    if (previous !== null && !isTabRoot(previous)) {
       try {
         await run(['pane', 'close', previous]);
       } catch {
@@ -789,20 +865,7 @@ export function createPiHerdrRuntime(options?: {
       renderPaneScript({ cwd: spec.cwd, freshBin, piBin, target: spec.target }),
       { mode: 0o755 },
     );
-    const opened = await run(
-      herdrPaneArgs({
-        cwd: spec.cwd,
-        launchScript: spec.scriptFile,
-        targetPaneId: await splitTarget(spec.tab, spec.cwd),
-      }),
-    );
-    if (opened.code !== 0) {
-      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
-    }
-    const paneId = parsePaneId(opened.stdout);
-    if (paneId === null) {
-      throw new Error('herdr did not return a pane id');
-    }
+    const paneId = await openIn(spec.tab, spec.cwd, spec.scriptFile, { kind: 'handoff' });
     const renamed = await run(herdrRenameArgs(paneId, spec.name));
     if (renamed.code !== 0) {
       throw new Error(renamed.stderr.trim() || `herdr pane rename failed for ${paneId}`);
