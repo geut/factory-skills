@@ -188,6 +188,8 @@ function parsePolicy(raw: string): Policy {
       work: { commands: parseCommands(validation['work']['commands']) },
       wrapup: { generated: parseGenerated(validation['wrapup']) },
     },
+    // Executions started before worktree setup existed have none.
+    worktreeSetup: parseCommands(value['worktreeSetup'] ?? []),
   };
 }
 

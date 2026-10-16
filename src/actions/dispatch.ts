@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { recordPullRequest } from '../controller/facts.ts';
+import { factoryRootOf } from '../controller/keys.ts';
 import { attentionCard } from '../controller/run-card.ts';
 import {
   claimNextAction,
@@ -33,7 +34,7 @@ import { stages, stageTools } from '../stages/index.ts';
 import { recordValidation } from '../validation/record.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
-import { prepareWorktree } from './worktree.ts';
+import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
@@ -243,24 +244,36 @@ async function launch(
   }
 }
 
-function worktree(
+async function worktree(
   input: { db: DatabaseSync; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'prepare_worktree' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
-  const factoryRoot = path.dirname(path.dirname(snapshot.execution.factoryDir));
+  const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
   const prepared = prepareWorktree({
     codeRoot: snapshot.execution.policy.codeRoot,
     factoryRoot,
     slug: action.slug,
   });
-  if (prepared.kind === 'failed') {
+  const setup = snapshot.execution.policy.worktreeSetup;
+  if (prepared.kind === 'ready' && setup.length > 0) {
+    // An install can outlast the default lease; hold it for the commands' timeouts.
+    extendActionLease(
+      input.db,
+      action.id,
+      input.now(),
+      setup.reduce((sum, command) => sum + command.timeoutMs, 0) + 30_000,
+    );
+  }
+  const ready = prepared.kind === 'ready' ? await setUpWorktree(setup, prepared.path) : prepared;
+  if (prepared.kind === 'failed' || ready.kind === 'failed') {
+    const message = ready.kind === 'failed' ? ready.message : 'worktree preparation failed';
     applyActionEvent(
       input,
-      { actionId: action.id, kind: 'worktree_failed', message: prepared.message },
+      { actionId: action.id, kind: 'worktree_failed', message },
       `worktree-failed:${action.id}`,
     );
-    return Promise.resolve(null);
+    return null;
   }
   applyActionEvent(
     input,
@@ -274,7 +287,7 @@ function worktree(
     },
     `worktree-ready:${action.id}`,
   );
-  return Promise.resolve(null);
+  return null;
 }
 
 function validatorFor(snapshot: FactorySnapshot, runId: RunId) {

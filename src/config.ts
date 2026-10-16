@@ -4,6 +4,8 @@ import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+// Installing dependencies takes longer than a check.
+export const DEFAULT_SETUP_TIMEOUT_MS = 600_000;
 export const DEFAULT_SERVER = { host: '127.0.0.1', port: 7731 };
 export const INTERNAL_LABELS = ['investigation'] as const;
 export type InternalLabel = (typeof INTERNAL_LABELS)[number];
@@ -68,6 +70,8 @@ export type FactoryConfig = {
   stages: Record<string, StageSettings>;
   tracker: TrackerConfig | null;
   validation: Validation;
+  // Commands that prepare each new worktree, such as installing dependencies.
+  worktree: { setup: Array<WorkCommand> };
 };
 
 // `wrapup.generated` lists path prefixes or `*` globs of generated artifacts
@@ -130,9 +134,9 @@ function readLabelMap(value: unknown): FactoryConfig['labels'] | null {
   return { map };
 }
 
-function readTimeout(value: unknown): number | null {
+function readTimeout(value: unknown, fallback = DEFAULT_COMMAND_TIMEOUT_MS): number | null {
   if (value === undefined) {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
+    return fallback;
   }
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     return null;
@@ -140,28 +144,18 @@ function readTimeout(value: unknown): number | null {
   return value;
 }
 
-function readCommands(value: unknown): Array<WorkCommand> | null {
-  if (value === undefined) {
-    return [];
-  }
-  if (!isRecord(value)) {
-    return null;
-  }
-  const work = value['work'] ?? {};
-  if (!isRecord(work)) {
-    return null;
-  }
-  const commands = work['commands'] ?? [];
-  if (!Array.isArray(commands)) {
+// A list of { name, argv, timeoutMs? } commands; null when any is malformed.
+function commandList(value: unknown, fallbackTimeout: number): Array<WorkCommand> | null {
+  if (!Array.isArray(value)) {
     return null;
   }
   const parsed: Array<WorkCommand> = [];
-  for (const command of commands) {
+  for (const command of value) {
     if (!isRecord(command)) {
       return null;
     }
     const name = readString(command, 'name');
-    const timeoutMs = readTimeout(command['timeoutMs']);
+    const timeoutMs = readTimeout(command['timeoutMs'], fallbackTimeout);
     const argvValue = command['argv'];
     if (
       name === null ||
@@ -175,6 +169,32 @@ function readCommands(value: unknown): Array<WorkCommand> | null {
     parsed.push({ argv: argvValue, name, timeoutMs });
   }
   return parsed;
+}
+
+function readCommands(value: unknown): Array<WorkCommand> | null {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const work = value['work'] ?? {};
+  if (!isRecord(work)) {
+    return null;
+  }
+  return commandList(work['commands'] ?? [], DEFAULT_COMMAND_TIMEOUT_MS);
+}
+
+// `worktree.setup` runs once in each new worktree, before its first agent.
+function readWorktree(value: unknown): FactoryConfig['worktree'] | null {
+  if (value === undefined) {
+    return { setup: [] };
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const setup = commandList(value['setup'] ?? [], DEFAULT_SETUP_TIMEOUT_MS);
+  return setup === null ? null : { setup };
 }
 
 function readGenerated(value: unknown): Array<string> | null {
@@ -281,6 +301,15 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     return { kind: 'error', message: codeHost };
   }
 
+  const worktree = readWorktree(value['worktree']);
+  if (worktree === null) {
+    return {
+      kind: 'error',
+      message:
+        'FACTORY.json worktree.setup must be commands with a name, an argv array, and an optional timeoutMs.',
+    };
+  }
+
   const server = readServer(value['server']);
   if (server === null) {
     return {
@@ -305,6 +334,7 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       stages: settings.stages,
       tracker,
       validation: { work: { commands }, wrapup: { generated } },
+      worktree,
     },
     kind: 'ok',
   };

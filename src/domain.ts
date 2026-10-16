@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { InternalLabel, Limits, Validation } from './config.ts';
+import type { InternalLabel, Limits, Validation, WorkCommand } from './config.ts';
 import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
@@ -180,6 +180,8 @@ export type Policy = {
   // Optional stages' settings, by stage name; a stage absent here is off.
   stages: Record<string, StageSettings>;
   validation: Validation;
+  // Commands run once in each new worktree; `worktree.setup` in FACTORY.json.
+  worktreeSetup: Array<WorkCommand>;
 };
 
 export type UsageTotals = {

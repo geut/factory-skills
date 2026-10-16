@@ -4,6 +4,7 @@ import {
   allowsEmptyDiff,
   DEFAULT_COMMAND_TIMEOUT_MS,
   DEFAULT_SERVER,
+  DEFAULT_SETUP_TIMEOUT_MS,
   parseFactoryConfig,
   pullRequestsAllowed,
 } from './config.ts';
@@ -120,5 +121,28 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
     { codeHost: { kind: 'github', owner: 'a', repo: 'b', webhookSecretEnv: 'lower case' } },
   ]) {
     assert.equal(parseFactoryConfig({ models, ...bad }).kind, 'error', JSON.stringify(bad));
+  }
+});
+
+test('worktree setup takes commands with a ten-minute default timeout', () => {
+  const parsed = parseFactoryConfig({
+    models,
+    worktree: { setup: [{ argv: ['pnpm', 'install', '--frozen-lockfile'], name: 'install' }] },
+  });
+  assert.equal(parsed.kind, 'ok');
+  if (parsed.kind !== 'ok') {
+    return;
+  }
+  assert.deepEqual(parsed.config.worktree.setup, [
+    {
+      argv: ['pnpm', 'install', '--frozen-lockfile'],
+      name: 'install',
+      timeoutMs: DEFAULT_SETUP_TIMEOUT_MS,
+    },
+  ]);
+  const none = parseFactoryConfig({ models });
+  assert.deepEqual(none.kind === 'ok' ? none.config.worktree.setup : null, []);
+  for (const worktree of [{ setup: [{ argv: [], name: 'x' }] }, { setup: 'pnpm install' }, 'x']) {
+    assert.equal(parseFactoryConfig({ models, worktree }).kind, 'error', JSON.stringify(worktree));
   }
 });

@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createRouter } from '../src/api/router.ts';
@@ -283,6 +284,7 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     pullRequests: false,
     stages: {},
     validation: { work: { commands: [] }, wrapup: { generated: [] } },
+    worktreeSetup: [],
   };
   applyControllerEvent(db, {
     dedupeKey: `command:start:${canonical}`,
@@ -2033,6 +2035,13 @@ test('rerunning a cancelled ticket starts generation 2 on a new branch, and gene
     .map((item) => String(item['worktree_branch']));
   assert.match(branches[0] ?? '', /^factory\/proj-123-[0-9a-f]{8}$/);
   assert.match(branches[1] ?? '', /^factory\/proj-123-[0-9a-f]{8}-r2$/);
+  const worktrees = db
+    .prepare('SELECT worktree_path FROM ticket_executions ORDER BY generation')
+    .all()
+    .map((item) => String(item['worktree_path']));
+  // Every generation's worktree sits in the factory root's worktrees directory.
+  assert.equal(path.dirname(worktrees[1] ?? ''), path.dirname(worktrees[0] ?? ''));
+  assert.equal(path.basename(path.dirname(worktrees[1] ?? '')), 'worktrees');
   db.close();
 
   assert.match(
@@ -2048,4 +2057,56 @@ test('the work prompt lists every check work validation runs', async () => {
   assert.match(prompt, /- the worktree has a change/);
   assert.match(prompt, /- nothing is committed: HEAD stays at the base commit/);
   assert.doesNotMatch(prompt, /git diff --check/);
+});
+
+// A ticket whose FACTORY.json sets up each worktree, up to its planner finishing.
+async function plannedWithSetup(setup: Array<{ argv: Array<string>; name: string }>) {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, worktree: { setup } })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files written', usage: sampleUsage() });
+  return { codeRoot, runtime, service };
+}
+
+test('worktree setup runs in the new worktree before its first agent', async () => {
+  const { runtime } = await plannedWithSetup([
+    { argv: ['sh', '-c', 'echo installed > .setup-done'], name: 'install' },
+  ]);
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  assert.equal(readFileSync(path.join(work?.cwd ?? '', '.setup-done'), 'utf8'), 'installed\n');
+});
+
+test('a failing worktree setup stops the ticket with its output, and retry reuses the worktree', async () => {
+  const flag = path.join(mkdtempSync(path.join(tmpdir(), 'factory-setup-')), 'ok');
+  const { runtime, service } = await plannedWithSetup([
+    {
+      argv: ['sh', '-c', `test -f '${flag}' || { echo registry unreachable; exit 3; }`],
+      name: 'install',
+    },
+  ]);
+  // A failed setup fails the worktree step, which takes a retry.
+  await waitFor(() => service.status('proj-123').includes('next: /factory retry'));
+  const paused = service.status('proj-123');
+  assert.match(paused, /Worktree setup install .* exited with code 3/);
+  assert.match(paused, /registry unreachable/);
+  assert.equal(
+    runtime.launches.some((launch) => launch.stage === 'work'),
+    false,
+  );
+
+  writeFileSync(flag, '');
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
 });

@@ -200,6 +200,15 @@ Child sessions follow the named skill, return only the versioned template in tha
 | run          | One pane launch. A resume or retry creates a new run. |
 | factory root | Untracked `.factory/` in the code repository.         |
 
+## Worktree setup
+
+Each ticket works in its own git worktree, which starts without installed dependencies. `worktree.setup` lists commands the controller runs once in each new worktree, in order, before its first agent, so agents, validation, and QA start from a ready tree. Each command takes a `name`, an `argv`, and an optional `timeoutMs` (10 minutes by default).
+
+- Use a command that reuses a cache, so each ticket links dependencies instead of downloading them: `pnpm install --frozen-lockfile --prefer-offline` (pnpm's global store makes it mostly hard links), `npm ci --prefer-offline`, `uv sync --frozen`, `bundle install --local`, or `cargo fetch --locked`.
+- Each worktree gets its own dependencies, matching its branch's lockfile, so a ticket that changes them cannot affect another ticket or your checkout.
+- A command that fails, times out, or cannot start stops the ticket with its output, as a failed worktree step. `/factory retry` runs the setup again in the same worktree.
+- An execution keeps the setup it started with; a change to `FACTORY.json` applies to tickets started after it.
+
 ## Tracker and code host
 
 The factory reads issues through a **tracker** and pull requests through a **code host**, configured in `FACTORY.json` as `tracker` and `codeHost`. Each is an adapter behind a fixed interface; GitHub is the only one so far, and it works through the `gh` CLI. An operation an adapter cannot do fails with "not supported", and asking for one in `FACTORY.json` stops the server at startup. The old `github` and `keys` blocks are refused with a message saying what replaced them.
@@ -245,6 +254,11 @@ The factory reads issues through a **tracker** and pull requests through a **cod
       "enabled": true,
       "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }]
     }
+  },
+  "worktree": {
+    "setup": [
+      { "name": "install", "argv": ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"] }
+    ]
   },
   "validation": {
     "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] },

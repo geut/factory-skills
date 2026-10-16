@@ -73,6 +73,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         pullRequests: false,
         stages: {},
         validation: { work: { commands: [] }, wrapup: { generated: [] } },
+        worktreeSetup: [],
       },
       retry: null,
       stage: 'plan',

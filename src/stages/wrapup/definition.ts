@@ -1,4 +1,4 @@
-import path from 'node:path';
+import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
 import { runOutput } from '../output.ts';
@@ -104,7 +104,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       codeRoot: execution.policy.codeRoot,
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
-      factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+      factoryRoot: factoryRootOf(execution.factoryDir),
       minorFindings: minorFindings(snapshot),
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,

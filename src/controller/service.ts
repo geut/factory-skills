@@ -542,6 +542,7 @@ export function createFactoryService(input: {
       pullRequests: pullRequestsAllowed(config.config),
       stages: config.config.stages,
       validation: config.config.validation,
+      worktreeSetup: config.config.worktree.setup,
     };
   }
 

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
+import { factoryRootOf } from '../controller/keys.ts';
 import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
@@ -509,7 +510,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         branch: execution.worktreeBranch,
         codeRoot: execution.policy.codeRoot,
         commands: execution.policy.validation.work.commands,
-        factoryRoot: path.dirname(path.dirname(execution.factoryDir)),
+        factoryRoot: factoryRootOf(execution.factoryDir),
         findPullRequest: deps.findPullRequest,
         generated: execution.policy.validation.wrapup.generated,
         output: outputOf(run.resultJson),

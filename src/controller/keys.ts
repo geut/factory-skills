@@ -24,3 +24,8 @@ export function worktreeSlugFor(factoryDir: string, generation: number): string 
   const key = keyOfFactoryDir(factoryDir);
   return generation <= 1 ? key : `${key}-r${generation}`;
 }
+
+// The factory root a generation's directory sits in: `<root>/tickets/<key>[/r<N>]`.
+export function factoryRootOf(factoryDir: string): string {
+  return path.dirname(path.dirname(ticketDirOf(factoryDir)));
+}
