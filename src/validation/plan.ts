@@ -37,6 +37,23 @@ function titleOf(markdown: string, fallback: string): string {
 
 const taskFilePattern = /^(\d+)-task-.+\.md$/;
 
+// A dependency must name another task file; one that does not would fail the
+// task graph when the plan is stored.
+function dependencyFailures(tasks: Array<PlannedTask>): Array<string> {
+  const ids = new Set<string>(tasks.map((task) => task.taskId));
+  const failures: Array<string> = [];
+  for (const task of tasks) {
+    for (const dep of task.blockedBy) {
+      if (dep === task.taskId) {
+        failures.push(`${task.taskFile} is blocked by itself.`);
+      } else if (!ids.has(dep)) {
+        failures.push(`${task.taskFile} is blocked by ${dep}, which is not a task file number.`);
+      }
+    }
+  }
+  return failures;
+}
+
 export const PLAN_VALIDATOR_VERSION = 'plan.v3';
 
 // `requireCriteria`: QA is enabled, so every task needs acceptance criteria.
@@ -83,6 +100,13 @@ function inspectPlanDir(input: {
     );
   }
 
+  // `Blocked by: 1` names task 01: a dependency is the task with that number.
+  const byNumber = new Map(
+    filenames.map((name) => {
+      const id = taskFilePattern.exec(name)?.[1] ?? '';
+      return [Number(id), id];
+    }),
+  );
   const tasks: Array<PlannedTask> = [];
   for (const filename of filenames) {
     const id = taskFilePattern.exec(filename)?.[1] ?? String(tasks.length + 1);
@@ -101,7 +125,7 @@ function inspectPlanDir(input: {
     }
     const deps = blockedBy(text) ?? [];
     tasks.push({
-      blockedBy: deps.map((dep) => taskId(dep)),
+      blockedBy: deps.map((dep) => taskId(byNumber.get(Number(dep)) ?? dep)),
       ordinal: Number(id),
       skips: qa === 'none' ? ['qa'] : [],
       specHash: sha256(text),
@@ -110,6 +134,7 @@ function inspectPlanDir(input: {
       title: titleOf(text, `Task ${id}`),
     });
   }
+  failures.push(...dependencyFailures(tasks));
   if (failures.length > 0) {
     return failedReport(
       PLAN_VALIDATOR_VERSION,
