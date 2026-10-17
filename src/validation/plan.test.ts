@@ -51,6 +51,47 @@ test('plan validation accepts plan.md plus at least one task file', async () => 
   }
 });
 
+test('a dependency is the task with that number, with or without leading zeros', async () => {
+  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  try {
+    writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), '# Store\n\nBlocked by: none\n');
+    writeFileSync(path.join(factoryDir, '02-task-restore.md'), '# Restore\n\nBlocked by: 1\n');
+    writeFileSync(path.join(factoryDir, '03-task-show.md'), '# Show\n\nBlocked by: 001, 02\n');
+    const report = await validate(factoryDir);
+    assert.equal(report.status, 'passed');
+    if (report.status !== 'passed') {
+      return;
+    }
+    assert.deepEqual(
+      report.detail.tasks.map((task) => task.blockedBy),
+      [[], ['01'], ['01', '02']],
+    );
+  } finally {
+    rmSync(factoryDir, { force: true, recursive: true });
+  }
+});
+
+test('a dependency on a missing task or on itself is a correction', async () => {
+  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  try {
+    writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), '# Store\n\nBlocked by: 01\n');
+    writeFileSync(path.join(factoryDir, '02-task-restore.md'), '# Restore\n\nBlocked by: 7\n');
+    const report = await validate(factoryDir);
+    assert.equal(report.status, 'failed');
+    if (report.status !== 'failed') {
+      return;
+    }
+    assert.deepEqual(report.failures, [
+      '01-task-store.md is blocked by itself.',
+      '02-task-restore.md is blocked by 7, which is not a task file number.',
+    ]);
+  } finally {
+    rmSync(factoryDir, { force: true, recursive: true });
+  }
+});
+
 test('an unreadable ticket directory is a validator error, not a correction', async () => {
   const report = await validate(path.join(tmpdir(), 'factory-plan-missing', 'nowhere'));
   assert.equal(report.status, 'error');

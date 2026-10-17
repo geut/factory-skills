@@ -77,7 +77,7 @@ Number files in dependency order. Keep one task per file.
 Status: pending
 Type: bug | feature | performance | refactor | investigation
 QA: e2e | none
-Blocked by: none | <task numbers>
+Blocked by: none | <task file numbers, comma-separated, such as 01, 02>
 
 ## User story
 
@@ -96,6 +96,8 @@ What belongs in this task and what explicitly does not.
 - [ ] Observable, testable behavior.
 
 One behavior per criterion. Phrase it as something a user can see in the running product when it is one: QA writes an end-to-end test for each observable criterion and lists the rest in its ledger.
+
+`Blocked by:` names other task files by their number. A number that matches no task file, or the task's own, fails plan validation.
 
 `QA:` says whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the running product: a page, an HTTP response, a CLI's output. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. Without the line, QA runs. A `none` task still lists its acceptance criteria.
 
