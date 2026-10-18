@@ -81,7 +81,7 @@ dist/factory serve
 - One server owns a factory root. It holds a lease row in SQLite with its URL and a heartbeat, and a second server refuses to start while that lease is live. A lease whose process is gone, or whose heartbeat is older than 15 s, is taken over.
 - Each ticket gets its own Herdr tab, named after it, in the server pane's workspace. Every agent, and each handoff pane, opens in its own pane in that tab, and the pane closes when its Pi exits. The tab's starting shell closes once the first pane is open, and a resumed agent's pane opens before the finished one closes, so the tab stays while the ticket runs. The tab closes when the ticket finishes. The panes of each tab are remembered in `.factory/runtime/tabs.json`, so a restarted server keeps using them. A tab that cannot be made falls back to splitting the server's pane.
 - On SIGINT or SIGTERM it stops dispatching, releases the lease, and exits. Agent panes keep running, and the next start adopts them with `recover()`.
-- It upgrades a schema 3 database in place the first time it opens it.
+- It upgrades a schema 3 database in place the first time it opens it. It first copies the database to `.factory/db/state.schema-<N>.sqlite`, where N is the old schema version, and does not upgrade if the copy fails. An upgraded database refuses older controllers. To go back to one, stop every factory server and Pi session, replace `state.sqlite` with the copy, and delete `state.sqlite-wal` and `state.sqlite-shm`. Anything recorded after the upgrade is lost.
 
 ### API
 

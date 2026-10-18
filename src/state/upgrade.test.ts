@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +9,7 @@ import {
   openStateDatabase,
   SCHEMA_VERSION,
   stateDatabasePath,
+  upgradeBackupPath,
 } from './database.ts';
 
 const roots: Array<string> = [];
@@ -122,4 +123,53 @@ test('a schema 3 database opened read-only is refused and left as it was', () =>
   const db = new DatabaseSync(stateDatabasePath(root));
   assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 3);
   db.close();
+});
+
+test('an upgrade first copies the database as it was, and the copy keeps its tickets', () => {
+  const root = oldRoot(3);
+  openStateDatabase(root).close();
+  const backup = upgradeBackupPath(stateDatabasePath(root), 3);
+  const db = new DatabaseSync(backup, { readOnly: true });
+  assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 3);
+  assert.equal(db.prepare('SELECT schema_version FROM schema_meta').get()?.['schema_version'], 3);
+  assert.equal(
+    db.prepare("SELECT stage FROM ticket_executions WHERE id = 'e1'").get()?.['stage'],
+    'review',
+  );
+  db.close();
+  assert.deepEqual(
+    readdirSync(path.dirname(backup)).filter((name) => name.includes('schema-')),
+    ['state.schema-3.sqlite'],
+  );
+});
+
+test('a database that needs no upgrade is not copied', () => {
+  const root = freshRoot();
+  openStateDatabase(root).close();
+  assert.deepEqual(
+    readdirSync(path.dirname(stateDatabasePath(root))).filter((name) => name.includes('schema-')),
+    [],
+  );
+});
+
+test('a copy that fails stops the upgrade and leaves the database as it was', () => {
+  const root = oldRoot(3);
+  const backup = upgradeBackupPath(stateDatabasePath(root), 3);
+  // A directory in the way makes the rename into place fail.
+  mkdirSync(path.join(backup, 'in-the-way'), { recursive: true });
+  assert.throws(
+    () => openStateDatabase(root),
+    (error: unknown) =>
+      error instanceof Error &&
+      /could not back up .* before upgrading it from schema 3 to \d+; the database was not upgraded/.test(
+        error.message,
+      ),
+  );
+  const db = new DatabaseSync(stateDatabasePath(root));
+  assert.equal(db.prepare('PRAGMA user_version').get()?.['user_version'], 3);
+  db.close();
+  assert.deepEqual(
+    readdirSync(path.dirname(backup)).filter((name) => name.endsWith('.partial')),
+    [],
+  );
 });

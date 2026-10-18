@@ -2,7 +2,7 @@
 
 This directory is the persistence boundary for the deterministic factory controller. The SQLite database at `<factory-root>/db/state.sqlite` is authoritative. Only code in this package reads it: the factory server, which writes it, and the Pi extension, which reads it to show status. The views below are internal, so they can change with the schema; other clients, such as the dashboard, use the server's API ([ADR-003](../../docs/adr/0003-a-factory-server-owns-the-controller.md)). The controller does not write a JSON state file.
 
-The schema is version 6. A read-write open upgrades a schema 3 database in place with the forward-only steps in [`upgrades.ts`](upgrades.ts). A read-only open of an older database fails until something opens it read-write once. Databases older than schema 3, and legacy databases with the old `meta` table, are rejected with a message telling the operator to back them up or remove them.
+The schema is version 6. A read-write open upgrades a schema 3 database in place with the forward-only steps in [`upgrades.ts`](upgrades.ts). Before the upgrade it copies the database with `VACUUM INTO` to `db/state.schema-<N>.sqlite`, N being the version it upgrades from, and a failed copy stops the upgrade. Restoring that copy, with every controller stopped and the `-wal` and `-shm` files removed, is how an older controller gets its database back. A read-only open of an older database fails until something opens it read-write once. Databases older than schema 3, and legacy databases with the old `meta` table, are rejected with a message telling the operator to back them up or remove them.
 
 ## Model
 
