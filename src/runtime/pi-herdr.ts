@@ -95,6 +95,44 @@ function terminalToolCall(
   return found;
 }
 
+const MODEL_ERROR_LIMIT = 500;
+
+// The error of this run's last model request, when that request failed: pi
+// exits non-zero after its own retries, and the exit code alone says nothing.
+function lastModelError(sessionText: string, runId: string): string | null {
+  const at = sessionText.indexOf(promptMarker(runId));
+  if (at < 0) {
+    return null;
+  }
+  let found: string | null = null;
+  for (const line of sessionText.slice(at).split('\n')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = isRecord(parsed) && isRecord(parsed['message']) ? parsed['message'] : null;
+    if (message === null || message['role'] !== 'assistant') {
+      continue;
+    }
+    const error = message['errorMessage'];
+    found =
+      message['stopReason'] === 'error' && typeof error === 'string' && error.length > 0
+        ? error
+        : null;
+  }
+  if (found === null) {
+    return null;
+  }
+  return found.length > MODEL_ERROR_LIMIT ? `${found.slice(0, MODEL_ERROR_LIMIT)}…` : found;
+}
+
+function crashMessage(code: number, sessionText: string, runId: string): string {
+  const error = lastModelError(sessionText, runId);
+  return `child crashed with exit code ${code}${error === null ? '' : `: ${error}`}`;
+}
+
 export function promptMarker(runId: string): string {
   return `Factory run ${runId}`;
 }
@@ -157,7 +195,7 @@ export function classifySidecar(input: SidecarInput): ClassifiedChild {
     }
     if (resumedScript) {
       if (code !== 0) {
-        return { kind: 'crashed', message: `child crashed with exit code ${code}` };
+        return { kind: 'crashed', message: crashMessage(code, sessionText, input.runId) };
       }
       const call = terminalCallAfterMarker(sessionText, input.runId);
       if (call?.kind === 'caller_ping') {
@@ -171,7 +209,7 @@ export function classifySidecar(input: SidecarInput): ClassifiedChild {
     if (input.withinStartupWindow && input.sessionEntryCount === 0) {
       return { kind: 'launch_failed', message: `launch failed with exit code ${code}` };
     }
-    return { kind: 'crashed', message: `child crashed with exit code ${code}` };
+    return { kind: 'crashed', message: crashMessage(code, sessionText, input.runId) };
   }
   if (input.trigger === 'event') {
     return { kind: 'pane_killed' };
