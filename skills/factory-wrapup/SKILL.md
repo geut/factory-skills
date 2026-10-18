@@ -1,6 +1,6 @@
 ---
 name: factory-wrapup
-description: Prepare an approved ticket for human submission by updating durable knowledge, summarizing scope and verification, teaching material flows with progressive visuals, and providing the merge handoff. Use only after review approval. Unless codeHost.pullRequests is false, push the committed branch and create or update the pull request. It never commits or merges.
+description: Prepare an approved ticket for human submission by updating durable knowledge, summarizing scope and verification, teaching material flows with progressive visuals, and providing the merge handoff. Use only after review approval. Unless codeHost.pullRequests is false, commit the approved work, push the ticket branch, and create or update the pull request. It never merges.
 ---
 
 # Factory Wrap-up
@@ -31,20 +31,28 @@ Read [references/panes-handoff.md](references/panes-handoff.md) for the two huma
 
 Read `codeHost.pullRequests` in `.factory/FACTORY.json`; the controller also passes it in your prompt. It is on unless it is `false`. When it is false, skip this section and use the merge commands below. Do not push.
 
-When it is true, inspect the worktree:
+When it is true, `codeHost.pullRequests` is the project policy that authorizes you to commit, push, and create or update the pull request. Write the handoff's `## Files` first, then inspect the worktree:
 
 ```sh
 git -C "<worktree>" status --porcelain
 ```
 
-If that prints anything, the branch is not ready. Print the commit commands from the next section and do not push or open a pull request.
+If that prints anything, commit the approved work on the ticket branch. Stage exactly the paths in `## Files`, by name. Never use `git add -A`, `git add .`, or a glob. Use a conventional message that references the ticket:
 
-If it prints nothing, push the committed ticket branch and create or update the pull request. Do not commit, merge, or delete the worktree.
+```sh
+git -C "<worktree>" add -- <every path in ## Files>
+git -C "<worktree>" commit -m "feat: <summary> (#<issue>)"
+git -C "<worktree>" status --porcelain
+```
+
+The last command must print nothing. Then push the ticket branch and create or update the pull request:
 
 ```sh
 git -C "<worktree>" push -u origin "<ticket-branch>"
 gh pr list --head "<ticket-branch>" --state open --json number,url
 ```
+
+Never amend, rebase, reset, or force-push, never make a merge commit, and never switch to or change the base branch. Existing commits stay as they are. A later change, such as a validation correction or feedback on the pull request from a reviewer or another agent, goes in a new commit on top, staged the same way, then pushed.
 
 When that list is non-empty, update the open pull request instead of creating another:
 
@@ -66,11 +74,13 @@ EOF
 
 When the prompt lists QA screenshots, add a `## Screenshots` section to the pull request summary that names each one by task and criterion with its path. GitHub takes images only through its web upload, so the handoff also tells the human which files to drop into the pull request.
 
-If push or `gh` fails, report the command and its error. Do not claim a pull request exists. Put the pull request URL in the Merge commands section of the handoff.
+Put the pull request URL in the Merge commands section of the handoff. The controller checks that the pull request is for the ticket branch and that its head is your local HEAD.
+
+If the commit, the push, or `gh` fails, report the exact command and its error, do not claim a pull request exists, and print the remaining commands from the next section instead. Never leave part of the work committed and the rest uncommitted.
 
 ## Prepare merge commands
 
-Inspect the actual code root, worktree path, ticket branch, base branch, and changed files. When `codeHost.pullRequests` is false, or the worktree has uncommitted changes, print commands with those exact values and do not execute them. Because the factory does not commit, include this sequence when the worktree has uncommitted changes:
+Inspect the actual code root, worktree path, ticket branch, base branch, and changed files. When `codeHost.pullRequests` is false, or committing failed, print commands with those exact values and do not execute them. Include this sequence when the worktree has uncommitted changes:
 
 ```sh
 git -C "<worktree>" status --short
@@ -94,7 +104,7 @@ git -C "<code-root>" branch -d "<ticket-branch>"
 
 Do not show cleanup unless the ticket is committed and the user can first verify the merge.
 
-In a controller run, let the controller record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to `wrapup` / `ready_for_handoff`. Only the human completion action moves it to `done` / `complete`. In a direct invocation, report the result without inventing operational state edits; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not commit, merge, or clean up the worktree. Push and open or update a pull request only in the section above, and only when `codeHost.pullRequests` is on. The human owns the merge.
+In a controller run, let the controller record wrap-up usage, show the final usage table, open the Pi summary and Fresh diff panes, and transition the ticket to `wrapup` / `ready_for_handoff`. Only the human completion action moves it to `done` / `complete`. In a direct invocation, report the result without inventing operational state edits; the current Pi session already provides the summary surface, so open only the Fresh diff pane. Do not merge or clean up the worktree. Commit, push, and open or update a pull request only in the section above, and only when `codeHost.pullRequests` is on. The human owns the merge.
 
 ## Output
 

@@ -15,7 +15,7 @@ import {
   type Validator,
 } from './report.ts';
 
-export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v1';
+export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v2';
 
 // Validates the wrap-up handoff against the repository, not the agent's
 // claims. The headings are checked for completeness; the prose is not parsed
@@ -267,6 +267,54 @@ function check(
   };
 }
 
+// With codeHost.pullRequests on, wrap-up commits the approved work. Its
+// commits must sit on top of the commit it started from, on the ticket
+// branch, with no merge, and hold only paths ## Files names.
+function commitFailures(input: {
+  branch: string;
+  codeRoot: string;
+  from: string;
+  head: string;
+  listed: Set<string>;
+  worktree: string;
+}): Array<string> {
+  if (git(input.worktree, ['merge-base', '--is-ancestor', input.from, input.head]).code !== 0) {
+    return [
+      `HEAD ${input.head} does not contain ${input.from}, the commit wrap-up started from. Do not amend, rebase, or reset commits made before wrap-up.`,
+    ];
+  }
+  const failures: Array<string> = [];
+  const branchHead = refSha(input.codeRoot, `refs/heads/${input.branch}`);
+  if (branchHead !== null && branchHead !== input.head) {
+    failures.push(
+      `The commits are not on ${input.branch}: the branch is at ${branchHead}, HEAD is ${input.head}.`,
+    );
+  }
+  const range = `${input.from}..${input.head}`;
+  const merges = gitOk(input.worktree, ['rev-list', '--merges', range]).trim();
+  if (merges.length > 0) {
+    failures.push(
+      `Wrap-up made a merge commit (${merges.split('\n').join(', ')}); commit the approved work directly on ${input.branch}.`,
+    );
+  }
+  const committed = gitOk(input.worktree, [
+    'diff',
+    '--name-only',
+    '--no-renames',
+    '-z',
+    input.from,
+    input.head,
+  ])
+    .split('\0')
+    .filter((name) => name.length > 0);
+  for (const file of committed) {
+    if (!input.listed.has(file)) {
+      failures.push(`The commit includes ${file}, which ## Files does not list.`);
+    }
+  }
+  return failures;
+}
+
 // The code host's view of the pull request at a URL.
 export type PullRequestLookup = (url: string) => PullRequestInfo | { missing: true };
 
@@ -414,10 +462,29 @@ export function validateWrapup(input: {
   );
 
   const gitFailures: Array<string> = [];
-  if (current.head !== input.baseline.head) {
+  const committed = current.head !== input.baseline.head;
+  if (committed && !input.pullRequests) {
     gitFailures.push(
       `A commit was made: HEAD moved from ${input.baseline.head} to ${current.head}.`,
     );
+  } else if (committed) {
+    try {
+      gitFailures.push(
+        ...commitFailures({
+          branch: input.branch,
+          codeRoot: input.codeRoot,
+          from: input.baseline.head,
+          head: current.head,
+          listed,
+          worktree: input.worktree,
+        }),
+      );
+    } catch (error: unknown) {
+      return errorReport(
+        WRAPUP_VALIDATOR_VERSION,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
   if (!branchExists) {
     gitFailures.push(`The branch ${input.branch} was deleted.`);
@@ -427,7 +494,16 @@ export function validateWrapup(input: {
       `The base branch ${input.baseBranch ?? ''} moved; nothing may merge during wrap-up.`,
     );
   }
-  checks.push(check('no commit or merge', 'policy', gitFailures, `HEAD is ${current.head}`));
+  checks.push(
+    input.pullRequests
+      ? check(
+          'ticket commits',
+          'policy',
+          gitFailures,
+          committed ? `committed on ${input.branch} at ${current.head}` : `HEAD is ${current.head}`,
+        )
+      : check('no commit or merge', 'policy', gitFailures, `HEAD is ${current.head}`),
+  );
 
   const pushed = changed(input.baseline.remotes, current.remotes).length > 0;
   const policy: Array<string> = [];
@@ -441,6 +517,11 @@ export function validateWrapup(input: {
       );
     }
   } else if (dirty) {
+    if (committed) {
+      policy.push(
+        'Wrap-up committed part of the work and left the rest uncommitted; commit every path in ## Files, or none.',
+      );
+    }
     if (pushed) {
       policy.push('The branch was pushed while the worktree has uncommitted changes.');
     }
@@ -466,6 +547,10 @@ export function validateWrapup(input: {
       policy.push(`No pull request exists at ${url}.`);
     } else if (found.headBranch !== input.branch) {
       policy.push(`${url} is for ${found.headBranch}, not ${input.branch}.`);
+    } else if (found.headSha !== current.head) {
+      policy.push(
+        `${url} has head ${found.headSha ?? 'unknown'}, not the local HEAD ${current.head}; push ${input.branch}.`,
+      );
     }
   }
   checks.push(

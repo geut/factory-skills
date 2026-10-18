@@ -335,6 +335,7 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
     author: 'dpaez',
     closedAt: null,
     headBranch: branch,
+    headSha: git(value.worktree, ['rev-parse', 'HEAD']),
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
@@ -372,6 +373,147 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   });
   assert.equal(broken.status, 'error');
   assert.equal(broken.summary, 'gh: network unreachable');
+});
+
+const url = 'https://github.com/geut/demo/pull/7';
+
+// The pull request on the code host whose branch is at `headSha`.
+function openPullRequest(headSha: string | null): PullRequestLookup {
+  return () => ({
+    author: 'dpaez',
+    closedAt: null,
+    headBranch: branch,
+    headSha,
+    mergedAt: null,
+    number: 7,
+    openedAt: '2026-10-15T10:00:00Z',
+    state: 'open',
+    url,
+  });
+}
+
+function commit(value: Fixture, paths: Array<string>, message = 'feat: persist the filter (#1)') {
+  git(value.worktree, ['add', '--', ...paths]);
+  git(value.worktree, ['-c', 'commit.gpgsign=false', 'commit', '-m', message]);
+  return git(value.worktree, ['rev-parse', 'HEAD']);
+}
+
+test('with pull requests on, wrap-up commits the approved work, pushes it, and opens the pull request', async () => {
+  const value = fixture();
+  addRemote(value);
+  const baseline = value.baseline();
+  const head = commit(value, ['src/filter.ts', 'src/store.ts']);
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  const outcome = await validate(value, baseline, handoff(value, { merge: url }), {
+    findPullRequest: openPullRequest(head),
+    pullRequests: true,
+  });
+  assert.equal(outcome.status, 'passed', failures(outcome));
+  if (outcome.status === 'passed') {
+    assert.equal(outcome.detail.pullRequest?.headSha, head);
+    assert.deepEqual(
+      outcome.checks.filter((item) => item.name === 'ticket commits').map((item) => item.details),
+      [`committed on ${branch} at ${head}`],
+    );
+  }
+});
+
+test('with pull requests on, the commit holds only paths ## Files lists', async () => {
+  const value = fixture();
+  addRemote(value);
+  const baseline = value.baseline();
+  writeFileSync(path.join(value.worktree, 'src/extra.ts'), 'export const extra = 1;\n');
+  const head = commit(value, ['src/filter.ts', 'src/store.ts', 'src/extra.ts']);
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  const text = failures(
+    await validate(value, baseline, handoff(value, { merge: url }), {
+      findPullRequest: openPullRequest(head),
+      pullRequests: true,
+    }),
+  );
+  assert.match(text, /The commit includes src\/extra\.ts, which ## Files does not list/);
+  assert.match(text, /Wrap-up changed product code: src\/extra\.ts/);
+});
+
+test('with pull requests on, a commit that was not pushed fails', async () => {
+  const value = fixture();
+  addRemote(value);
+  const baseline = value.baseline();
+  const head = commit(value, ['src/filter.ts', 'src/store.ts']);
+  assert.match(
+    failures(
+      await validate(value, baseline, handoff(value, { merge: url }), {
+        findPullRequest: openPullRequest(value.baseSha),
+        pullRequests: true,
+      }),
+    ),
+    new RegExp(`has head ${value.baseSha}, not the local HEAD ${head}; push`),
+  );
+});
+
+test('with pull requests on, committing part of the work fails', async () => {
+  const value = fixture();
+  const baseline = value.baseline();
+  commit(value, ['src/filter.ts']);
+  assert.match(
+    failures(await validate(value, baseline, handoff(value), { pullRequests: true })),
+    /committed part of the work and left the rest uncommitted/,
+  );
+});
+
+test('with pull requests on, rewriting a commit made before wrap-up fails', async () => {
+  const value = fixture();
+  addRemote(value);
+  // A human committed part of the work before wrap-up.
+  commit(value, ['src/filter.ts'], 'wip');
+  const baseline = value.baseline();
+  git(value.worktree, ['add', '--', 'src/store.ts']);
+  git(value.worktree, ['-c', 'commit.gpgsign=false', 'commit', '--amend', '-m', 'everything']);
+  const head = git(value.worktree, ['rev-parse', 'HEAD']);
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  assert.match(
+    failures(
+      await validate(value, baseline, handoff(value, { merge: url }), {
+        findPullRequest: openPullRequest(head),
+        pullRequests: true,
+      }),
+    ),
+    /does not contain .*, the commit wrap-up started from/,
+  );
+});
+
+test('with pull requests on, a merge commit fails', async () => {
+  const value = fixture();
+  addRemote(value);
+  const baseline = value.baseline();
+  git(value.codeRoot, ['switch', '-c', 'side']);
+  writeFileSync(path.join(value.codeRoot, 'side.md'), 'side\n');
+  git(value.codeRoot, ['add', 'side.md']);
+  git(value.codeRoot, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'side']);
+  git(value.codeRoot, ['switch', 'main']);
+  commit(value, ['src/filter.ts', 'src/store.ts']);
+  git(value.worktree, [
+    '-c',
+    'commit.gpgsign=false',
+    'merge',
+    '--no-ff',
+    '-m',
+    'merge side',
+    'side',
+  ]);
+  const head = git(value.worktree, ['rev-parse', 'HEAD']);
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  assert.match(
+    failures(
+      await validate(
+        value,
+        baseline,
+        handoff(value, { files: ['side.md', 'src/filter.ts', 'src/store.ts'], merge: url }),
+        { findPullRequest: openPullRequest(head), pullRequests: true },
+      ),
+    ),
+    /Wrap-up made a merge commit/,
+  );
 });
 
 test('Files paths come from backticks or the first word of a list item', () => {

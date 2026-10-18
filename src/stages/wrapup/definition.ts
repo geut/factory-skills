@@ -195,7 +195,10 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
         input.usage,
         '',
-        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code, commit, merge, or push unless codeHost.pullRequests allows it.',
+        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code or merge.',
+        input.pullRequests
+          ? 'codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD.'
+          : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
       ].join('\n'),
   },
   runBaseline: (prepared) => prepared.baseline,
