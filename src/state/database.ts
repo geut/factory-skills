@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { getAsset, isSea } from 'node:sea';
 import { DatabaseSync } from 'node:sqlite';
@@ -38,6 +39,12 @@ export function stateDatabasePath(factoryRoot: string): string {
     throw new FactoryDatabaseError('factoryRoot must be an absolute path');
   }
   return path.join(factoryRoot, STATE_DATABASE_RELATIVE_PATH);
+}
+
+// The copy of a schema `version` database taken just before it was upgraded,
+// next to the database: `db/state.schema-6.sqlite`.
+export function upgradeBackupPath(databasePath: string, version: number): string {
+  return path.join(path.dirname(databasePath), `state.schema-${version}.sqlite`);
 }
 
 function isRow(value: unknown): value is Record<string, unknown> {
@@ -215,6 +222,7 @@ export function openStateDatabase(
     } catch (compatibilityError: unknown) {
       if (compatibilityError instanceof UpgradableFactoryDatabaseError && !readOnly) {
         configureConnection(db, false);
+        backUpBeforeUpgrade(db, databasePath);
         upgrade(db);
       } else {
         compatible = false;
@@ -250,6 +258,30 @@ export function openStateDatabase(
   } catch (error: unknown) {
     db.close();
     throw error;
+  }
+}
+
+// Upgrades only go forward, so the database is copied first: restoring the copy
+// is how an older controller gets its database back. VACUUM INTO writes a
+// consistent snapshot but cannot run inside the upgrade's transaction. The copy
+// goes to a temporary file and is renamed into place, so a failed copy never
+// replaces a good one, and a failed copy stops the upgrade.
+function backUpBeforeUpgrade(db: DatabaseSync, databasePath: string): void {
+  const from = schemaVersion(db);
+  if (from === null || from >= SCHEMA_VERSION) {
+    return;
+  }
+  const backup = upgradeBackupPath(databasePath, from);
+  const partial = `${backup}.${randomUUID()}.partial`;
+  try {
+    db.prepare('VACUUM INTO ?').run(partial);
+    renameSync(partial, backup);
+  } catch (error: unknown) {
+    rmSync(partial, { force: true });
+    throw new FactoryDatabaseError(
+      `could not back up ${databasePath} to ${backup} before upgrading it from schema ${from} to ${SCHEMA_VERSION}; the database was not upgraded`,
+      { cause: error },
+    );
   }
 }
 
