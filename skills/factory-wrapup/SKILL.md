@@ -37,7 +37,7 @@ When it is true, `codeHost.pullRequests` is the project policy that authorizes y
 git -C "<worktree>" status --porcelain
 ```
 
-If that prints anything, commit the approved work in one commit on the ticket branch. Stage exactly the paths in `## Files`, by name. Never use `git add -A`, `git add .`, or a glob. Use a conventional message that references the ticket:
+If that prints anything, commit the approved work on the ticket branch. Stage exactly the paths in `## Files`, by name. Never use `git add -A`, `git add .`, or a glob. Use a conventional message that references the ticket:
 
 ```sh
 git -C "<worktree>" add -- <every path in ## Files>
@@ -52,7 +52,7 @@ git -C "<worktree>" push -u origin "<ticket-branch>"
 gh pr list --head "<ticket-branch>" --state open --json number,url
 ```
 
-Never amend, rebase, reset, or force-push, never make a merge commit, and never switch to or change the base branch. Commits made before wrap-up stay as they are. A correction that needs another change adds another commit.
+Never amend, rebase, reset, or force-push, never make a merge commit, and never switch to or change the base branch. Existing commits stay as they are. A later change, such as a validation correction or feedback on the pull request from a reviewer or another agent, goes in a new commit on top, staged the same way, then pushed.
 
 When that list is non-empty, update the open pull request instead of creating another:
 
