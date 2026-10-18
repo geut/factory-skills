@@ -6,7 +6,6 @@ import { childInstructions, childToolList } from '../prompt.ts';
 export type WorkPrepared = {
   adrPath: string | null;
   contextPath: string | null;
-  taskType: string | null;
 };
 
 export type WorkInput = {
@@ -66,7 +65,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
       planPath: execution.planPath ?? '',
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
-      taskType: prepared.taskType,
+      taskType: task.taskType,
       title: task.title,
       worktree: execution.worktreePath,
       worktreeBranch: execution.worktreeBranch ?? '',

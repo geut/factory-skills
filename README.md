@@ -18,7 +18,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory status <ticket>
 ```
 
-`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement.
+`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, and each task file's frontmatter (`type`, `qa`, `blocked_by`) is valid, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement.
 
 `caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
 
@@ -40,7 +40,7 @@ QA is an optional stage between work and review, on when `FACTORY.json` sets `st
 - a failing command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
 - a pass hands review the diff QA left, tests included, and wrap-up lists the screenshots for the pull request.
 
-With QA on, the plan must give every task at least one acceptance criterion. A task file can opt out with `QA: none` when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. Without the line, or with `QA: e2e`, QA runs.
+With QA on, the plan must give every task at least one acceptance criterion. A task file opts out with `qa: none` in its frontmatter when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. With `qa: e2e`, QA runs.
 
 After the last approval, the controller checks the wrap-up input in code: every task is done with an approving review, the plan and task files exist, the worktree is ready on its branch, and no other child runs. It records the worktree, refs, and factory files as a baseline, then launches the `factory-wrapup` agent on `models.work` in the worktree. A failed check pauses the ticket; `retry` checks again.
 

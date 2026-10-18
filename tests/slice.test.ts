@@ -96,11 +96,13 @@ function writePlanFiles(factoryDir: string, taskFile: string): void {
   );
   writeFileSync(
     path.join(factoryDir, taskFile),
-    `# Store the filter
+    `---
+type: feature
+qa: e2e
+blocked_by: []
+---
 
-Status: pending
-Type: feature
-Blocked by: none
+# Store the filter
 
 ## Acceptance criteria
 - [ ] The filter survives a reload.
@@ -192,7 +194,7 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   assert.equal(work.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
 });
 
-// The dashboard API check: the planner named task 01 as `Blocked by: 1`, the
+// The dashboard API check: the planner named task 01 as `blocked_by: [1]`, the
 // dependency pointed at no task, and accepting the plan failed a foreign key.
 test('a dependency named without its leading zero still reaches work', async () => {
   const { codeRoot, factoryRoot } = repo(true);
@@ -204,7 +206,7 @@ test('a dependency named without its leading zero still reaches work', async () 
   writePlanFiles(directory, '01-task-store-filter.md');
   writeFileSync(
     path.join(directory, '02-task-restore-filter.md'),
-    '# Restore the filter\n\nBlocked by: 1\n\n## Acceptance criteria\n- [ ] It comes back.\n',
+    '---\ntype: feature\nqa: e2e\nblocked_by: [1]\n---\n\n# Restore the filter\n\n## Acceptance criteria\n- [ ] It comes back.\n',
   );
   const planRun = runtime.launches[0]?.runId;
   if (planRun === undefined) {
@@ -821,7 +823,7 @@ async function reachReview(
   if (taskCount > 1) {
     writeFileSync(
       path.join(directory, '02-task-show-filter.md'),
-      '# Show the filter\n\nType: feature\nBlocked by: 01\n\n## Acceptance criteria\n- [ ] The filter is visible.\n',
+      '---\ntype: feature\nqa: e2e\nblocked_by: ["01"]\n---\n\n# Show the filter\n\n## Acceptance criteria\n- [ ] The filter is visible.\n',
     );
   }
   const planRun = runtime.launches[0]?.runId;

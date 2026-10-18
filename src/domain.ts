@@ -229,14 +229,19 @@ export type ResolvedTicket = {
   title: string;
 };
 
+// The kinds of change a task file's `type` names.
+export const taskTypes = ['bug', 'feature', 'performance', 'refactor', 'investigation'] as const;
+export type TaskType = (typeof taskTypes)[number];
+
 export type PlannedTask = {
   blockedBy: Array<TaskId>;
   ordinal: number;
-  // Optional per-task stages the task file turns off, such as `QA: none`.
+  // Optional per-task stages the task file turns off, such as `qa: none`.
   skips: Array<StageName>;
   specHash: string;
   taskFile: string;
   taskId: TaskId;
+  taskType: TaskType;
   title: string;
 };
 
@@ -444,6 +449,8 @@ export type TaskRecord = {
   summaries: Partial<Record<StageName, TaskSummary>>;
   taskFile: string;
   taskId: TaskId;
+  // Null for a task planned before schema 7 stored it.
+  taskType: TaskType | null;
   title: string;
 };
 

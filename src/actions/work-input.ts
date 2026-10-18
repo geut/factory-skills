@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 export type WorkInputInspection =
@@ -7,7 +7,6 @@ export type WorkInputInspection =
       adrPath: string | null;
       contextPath: string | null;
       kind: 'ready';
-      taskType: string | null;
     }
   | { failures: Array<string>; kind: 'failed' };
 
@@ -18,16 +17,6 @@ function inside(root: string, target: string): boolean {
 
 export function contained(factoryRoot: string, worktreePath: string, target: string): boolean {
   return inside(factoryRoot, target) || inside(worktreePath, target);
-}
-
-function taskType(file: string): string | null {
-  try {
-    const match = /^Type:\s*(.+)$/m.exec(readFileSync(file, 'utf8'));
-    const value = match?.[1]?.trim();
-    return value === undefined || value.length === 0 ? null : value;
-  } catch {
-    return null;
-  }
 }
 
 // The worktree exists and is on the ticket branch.
@@ -100,6 +89,5 @@ export function inspectWorkInput(input: {
     adrPath: existsSync(adrPath) ? adrPath : null,
     contextPath: existsSync(contextPath) ? contextPath : null,
     kind: 'ready',
-    taskType: taskType(taskFilePath),
   };
 }

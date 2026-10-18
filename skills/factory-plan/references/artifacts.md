@@ -69,15 +69,16 @@ Only unresolved items that could change the work.
 
 ## Task file
 
-Number files in dependency order. Keep one task per file.
+Name each file `<NN>-task-<slug>.md`, numbered in dependency order with no number used twice. Keep one task per file.
 
 ```markdown
-# <task title>
+---
+type: feature
+qa: e2e
+blocked_by: []
+---
 
-Status: pending
-Type: bug | feature | performance | refactor | investigation
-QA: e2e | none
-Blocked by: none | <task file numbers, comma-separated, such as 01, 02>
+# <task title>
 
 ## User story
 
@@ -97,9 +98,13 @@ What belongs in this task and what explicitly does not.
 
 One behavior per criterion. Phrase it as something a user can see in the running product when it is one: QA writes an end-to-end test for each observable criterion and lists the rest in its ledger.
 
-`Blocked by:` names other task files by their number. A number that matches no task file, or the task's own, fails plan validation.
+The frontmatter holds exactly these three fields, and all three are required:
 
-`QA:` says whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the running product: a page, an HTTP response, a CLI's output. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. Without the line, QA runs. A `none` task still lists its acceptance criteria.
+- `type`: one of `bug`, `feature`, `performance`, `refactor`, `investigation`.
+- `qa`: whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the running product: a page, an HTTP response, a CLI's output. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. A `none` task still lists its acceptance criteria.
+- `blocked_by`: the task files this one waits for, as a list of their numbers, such as `["01", "02"]`, or `[]` when it waits for none. A number that matches no task file, the task's own number, or tasks that wait on each other fail plan validation.
+
+Do not add other fields. The controller tracks each task's status in its own store, never in the file.
 
 ## Verification
 
@@ -110,7 +115,7 @@ Expected unit/integration seam and relevant end-to-end story. If E2E automation 
 Only evidence and constraints the worker would otherwise have to rediscover.
 ```
 
-Task status uses one lifecycle vocabulary:
+The controller moves each task through one lifecycle:
 
 ```text
 pending → active (work → qa → review) → done

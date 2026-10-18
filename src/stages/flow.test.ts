@@ -65,7 +65,7 @@ test('after a task, the next one whose dependencies are done, then wrap-up', () 
   assert.deepEqual(nextStep(snapshot, 'wrapup', null), { kind: 'handoff' });
 });
 
-test('a task whose file says QA: none goes from work straight to review', () => {
+test('a task whose file says qa: none goes from work straight to review', () => {
   const snapshot = blank();
   addTasks(snapshot, 2);
   snapshot.execution.policy.stages['qa'] = {
