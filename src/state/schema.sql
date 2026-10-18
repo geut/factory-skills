@@ -6,7 +6,7 @@ CREATE TABLE schema_meta (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 7);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 6);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -95,9 +95,6 @@ CREATE TABLE tasks (
   title           TEXT,
   task_file       TEXT NOT NULL CHECK (length(trim(task_file)) > 0),
   spec_hash       TEXT,
-  -- The task file's `type`, read once when the plan is accepted. Null for a
-  -- task planned before schema 7.
-  task_type       TEXT,
   status          TEXT NOT NULL CHECK (
     status IN ('pending', 'active', 'done', 'blocked', 'cancelled')
   ),
@@ -982,6 +979,6 @@ CREATE TABLE pull_request_commits (
 
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 7;
+PRAGMA user_version = 6;
 
 COMMIT;

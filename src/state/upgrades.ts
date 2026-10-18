@@ -112,8 +112,4 @@ CREATE TABLE pull_request_commits (
   PRIMARY KEY (execution_id, sha)
 ) STRICT;
 `,
-  // Schema 7: the task type plan validation reads from the task file.
-  6: `
-ALTER TABLE tasks ADD COLUMN task_type TEXT;
-`,
 };

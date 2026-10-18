@@ -119,7 +119,6 @@ export function addTasks(snapshot: FactorySnapshot, count = 6, longTitles = fals
       summaries: {},
       taskFile: `tickets/dpaez-factory-dashboard-11/${id}-task.md`,
       taskId: taskId(id),
-      taskType: 'feature',
       title: longTitles
         ? `${title}, with a much longer explanation of the acceptance criteria`
         : title,

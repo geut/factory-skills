@@ -1,78 +1,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import { z } from 'zod';
-import { taskId, taskTypes, type PlanValidationReport, type PlannedTask } from '../domain.ts';
+import { taskId, type PlanValidationReport, type PlannedTask } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { stageEnabled } from '../stages/flow.ts';
 import { acceptanceCriteria } from '../stages/qa/criteria.ts';
 import { errorReport, failedReport, passedReport, type Validator } from './report.ts';
-
-// A task file starts with YAML frontmatter holding what the planner decides
-// about the task. Status and stage are the controller's and live in its store.
-const frontmatterPattern = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n?---[ \t]*(?:\r?\n|$)/;
-
-// A dependency names another task file by its number (1, 01, "01") or its
-// filename. YAML reads an unquoted 01 as the number 1, so numbers compare by
-// value.
-const dependency = z.union([z.number().int().nonnegative(), z.string().trim().min(1)]);
-
-const frontmatterSchema = z.strictObject({
-  blocked_by: z.array(dependency),
-  qa: z.enum(['e2e', 'none']),
-  type: z.enum(taskTypes),
-});
-
-type Frontmatter = z.infer<typeof frontmatterSchema>;
-
-const fields = 'type, qa and blocked_by';
-
-function issueText(issue: z.core.$ZodIssue, data: object): string {
-  const key = issue.path.join('.');
-  if (issue.code === 'unrecognized_keys') {
-    return `has ${issue.keys.join(', ')} in its frontmatter, which holds only ${fields}`;
-  }
-  if (issue.path.length === 1 && !(key in data)) {
-    return `has no ${key} in its frontmatter`;
-  }
-  return `has an invalid ${key || 'frontmatter'}: ${issue.message}`;
-}
-
-function readFrontmatter(
-  filename: string,
-  text: string,
-):
-  | { body: string; frontmatter: Frontmatter; kind: 'parsed' }
-  | { failures: Array<string>; kind: 'failed' } {
-  const match = frontmatterPattern.exec(text);
-  if (match === null) {
-    return {
-      failures: [`${filename} has no frontmatter; start it with ---, then ${fields}, then ---.`],
-      kind: 'failed',
-    };
-  }
-  let data: unknown;
-  try {
-    data = parseYaml(match[1] ?? '');
-  } catch (error: unknown) {
-    const message = (error instanceof Error ? error.message : String(error))
-      .split('\n')[0]
-      ?.replace(/:$/, '');
-    return {
-      failures: [`${filename} has frontmatter that is not YAML: ${message}.`],
-      kind: 'failed',
-    };
-  }
-  const fieldsFound = typeof data === 'object' && data !== null ? data : {};
-  const result = frontmatterSchema.safeParse(fieldsFound);
-  if (!result.success) {
-    return {
-      failures: result.error.issues.map((issue) => `${filename} ${issueText(issue, fieldsFound)}.`),
-      kind: 'failed',
-    };
-  }
-  return { body: text.slice(match[0].length), frontmatter: result.data, kind: 'parsed' };
-}
+import { readTaskFile } from './task-file.ts';
 
 function titleOf(markdown: string, fallback: string): string {
   const match = /^#\s+(.+)$/m.exec(markdown);
@@ -194,12 +127,12 @@ function inspectPlanDir(input: {
     } catch {
       text = '';
     }
-    const parsed = readFrontmatter(filename, text);
+    const parsed = readTaskFile(filename, text);
     if (parsed.kind === 'failed') {
       failures.push(...parsed.failures);
       continue;
     }
-    const { blocked_by, qa, type } = parsed.frontmatter;
+    const { blocked_by, qa } = parsed.frontmatter;
     if (input.requireCriteria && qa === 'e2e' && acceptanceCriteria(parsed.body).length === 0) {
       failures.push(`${filename} lists no acceptance criteria; QA proves each one.`);
     }
@@ -223,7 +156,6 @@ function inspectPlanDir(input: {
       specHash: sha256(text),
       taskFile: filename,
       taskId: taskId(id),
-      taskType: type,
       title: titleOf(parsed.body, `Task ${id}`),
     });
   }

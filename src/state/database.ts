@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { OLDEST_UPGRADABLE_VERSION, upgrades } from './upgrades.ts';
 
 export const APPLICATION_ID = 0x46_41_43_54; // "FACT"
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 6;
 export const STATE_DATABASE_RELATIVE_PATH = path.join('db', 'state.sqlite');
 
 // The single executable carries schema.sql as an asset; source runs read it

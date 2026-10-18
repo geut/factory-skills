@@ -9,7 +9,6 @@ import {
   runId,
   sessionId,
   taskId,
-  taskTypes,
   ticketId,
   type ActionId,
   type ActionRecord,
@@ -615,7 +614,6 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
       )
       .all(execution, id);
     const stage = nullableText(record, 'stage');
-    const type = nullableText(record, 'task_type');
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
       ordinal: integer(record, 'ordinal'),
@@ -625,7 +623,6 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
       summaries: taskSummaries(text(record, 'summaries_json')),
       taskFile: text(record, 'task_file'),
       taskId: id,
-      taskType: type === null ? null : oneOf(type, taskTypes, 'task type'),
       title: nullableText(record, 'title') ?? id,
     };
   });
@@ -1096,9 +1093,9 @@ function updateExecution(
 function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, now: string): void {
   db.prepare(
     `INSERT INTO tasks
-      (execution_id, task_id, ordinal, title, task_file, spec_hash, task_type, status, stage,
-       summaries_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution,
     task.taskId,
@@ -1106,7 +1103,6 @@ function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, 
     task.title,
     task.taskFile,
     task.specHash,
-    task.taskType,
     task.status,
     task.stage,
     jsonText(task.summaries),

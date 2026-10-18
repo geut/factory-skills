@@ -1160,7 +1160,6 @@ function applyOutcome(
           ),
           taskFile: planned.taskFile,
           taskId: planned.taskId,
-          taskType: planned.taskType,
           title: planned.title,
         }));
         snapshot.execution.planPath = outcome.plan.path;

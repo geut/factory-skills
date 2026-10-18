@@ -69,7 +69,6 @@ test('plan validation accepts plan.md plus at least one task file', async () => 
     );
     assert.equal(passed.detail.tasks[0]?.taskId, '01');
     assert.equal(passed.detail.tasks[1]?.title, 'Restore');
-    assert.equal(passed.detail.tasks[1]?.taskType, 'bug');
     assert.deepEqual(passed.detail.tasks[1]?.blockedBy, ['01']);
   } finally {
     rmSync(factoryDir, { force: true, recursive: true });
@@ -145,13 +144,26 @@ test('frontmatter holds exactly type, qa and blocked_by', async () => {
       '05-task-sort.md': task('Sort', 'type: [feature'),
     }),
     [
-      '01-task-store.md has no frontmatter; start it with ---, then type, qa and blocked_by, then ---.',
+      '01-task-store.md uses the old Status, Type, QA and Blocked by lines. Delete them and start the file with this frontmatter instead:\n---\ntype: feature\nqa: e2e\nblocked_by: []\n---',
       '02-task-restore.md has no blocked_by in its frontmatter.',
       '03-task-show.md has status in its frontmatter, which holds only type, qa and blocked_by.',
       '04-task-list.md has an invalid blocked_by: Invalid input: expected array, received string.',
       '04-task-list.md has an invalid qa: Invalid option: expected one of "e2e"|"none".',
       '04-task-list.md has an invalid type: Invalid option: expected one of "bug"|"feature"|"performance"|"refactor"|"investigation".',
       '05-task-sort.md has frontmatter that is not YAML: Flow sequence in block collection must be sufficiently indented and end with a ] at line 1, column 15.',
+    ],
+  );
+});
+
+test('a task file in the old format is told the frontmatter its lines become', async () => {
+  assert.deepEqual(
+    await failures({
+      '01-task-store.md': '# Store\n\nStatus: pending\nType: Bug\nQA: maybe\nBlocked by: 1, 02\n',
+      '02-task-restore.md': '# Restore\n\nNothing to see.\n',
+    }),
+    [
+      '01-task-store.md uses the old Status, Type, QA and Blocked by lines. Delete them and start the file with this frontmatter instead:\n---\ntype: bug\nqa: e2e | none\nblocked_by: ["1", "02"]\n---',
+      '02-task-restore.md has no frontmatter; start it with ---, then type, qa and blocked_by, then ---.',
     ],
   );
 });

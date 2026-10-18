@@ -61,6 +61,7 @@ export function prepareWorkInput({
     input: {
       adrPath: inspection.adrPath,
       contextPath: inspection.contextPath,
+      taskType: inspection.taskType,
     },
     kind: 'ready',
   };

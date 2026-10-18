@@ -44,7 +44,10 @@ function fixture(): { factoryDir: string; factoryRoot: string; worktree: string 
   git(codeRoot, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
   git(codeRoot, ['worktree', 'add', '-b', 'factory/proj', worktree, 'HEAD']);
   writeFileSync(path.join(factoryDir, 'plan.md'), '# Plan\n');
-  writeFileSync(path.join(factoryDir, '01-task.md'), '# Task\n');
+  writeFileSync(
+    path.join(factoryDir, '01-task.md'),
+    '---\ntype: feature\nqa: e2e\nblocked_by: []\n---\n\n# Task\n',
+  );
   return { factoryDir, factoryRoot, worktree };
 }
 
@@ -64,10 +67,14 @@ function readyInput(paths: { factoryDir: string; factoryRoot: string; worktree: 
   };
 }
 
-test('valid work input is ready', () => {
+test('valid work input reports the task type', () => {
   const paths = fixture();
   const inspected = inspectWorkInput(readyInput(paths));
   assert.equal(inspected.kind, 'ready');
+  if (inspected.kind !== 'ready') {
+    return;
+  }
+  assert.equal(inspected.taskType, 'feature');
 });
 
 test('work input fails for missing files, dependencies, children, branch, and escaped paths', () => {

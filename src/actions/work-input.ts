@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { readTaskFile } from '../validation/task-file.ts';
 
 export type WorkInputInspection =
   | {
       adrPath: string | null;
       contextPath: string | null;
       kind: 'ready';
+      taskType: string | null;
     }
   | { failures: Array<string>; kind: 'failed' };
 
@@ -17,6 +19,17 @@ function inside(root: string, target: string): boolean {
 
 export function contained(factoryRoot: string, worktreePath: string, target: string): boolean {
   return inside(factoryRoot, target) || inside(worktreePath, target);
+}
+
+// The `type` plan validation accepted. A file it cannot read, such as one
+// planned before task files had frontmatter, has none.
+function taskType(file: string): string | null {
+  try {
+    const parsed = readTaskFile(path.basename(file), readFileSync(file, 'utf8'));
+    return parsed.kind === 'parsed' ? parsed.frontmatter.type : null;
+  } catch {
+    return null;
+  }
 }
 
 // The worktree exists and is on the ticket branch.
@@ -89,5 +102,6 @@ export function inspectWorkInput(input: {
     adrPath: existsSync(adrPath) ? adrPath : null,
     contextPath: existsSync(contextPath) ? contextPath : null,
     kind: 'ready',
+    taskType: taskType(taskFilePath),
   };
 }
