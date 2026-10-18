@@ -1376,7 +1376,7 @@ test('a valid handoff is ready for handoff, opens both panes, and complete finis
   const validation: unknown = db
     .prepare('SELECT status, validator_version FROM validation_runs WHERE run_id = ?')
     .get(wrapup.runId);
-  assert.deepEqual({ ...(validation ?? {}) }, { status: 'passed', validator_version: 'wrapup.v1' });
+  assert.deepEqual({ ...(validation ?? {}) }, { status: 'passed', validator_version: 'wrapup.v2' });
   const sessionRow: unknown = db
     .prepare("SELECT status FROM agent_sessions WHERE stage = 'wrapup'")
     .get();
@@ -1764,6 +1764,7 @@ function codeHostWith(
     author: 'dpaez',
     closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
     headBranch: branch,
+    headSha: null,
     mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
@@ -1857,6 +1858,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
     author: 'dpaez',
     closedAt: '2026-10-16T09:00:00Z',
     headBranch: branch,
+    headSha: null,
     mergedAt: '2026-10-16T09:00:00Z',
     number: 7,
     openedAt: null,
@@ -1870,6 +1872,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
       author: null,
       closedAt: null,
       headBranch: 'someone/else',
+      headSha: null,
       mergedAt: null,
       number: 9,
       openedAt: null,
