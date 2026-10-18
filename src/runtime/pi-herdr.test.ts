@@ -309,6 +309,48 @@ test('a reused launch script exit counts for the correction once its prompt is i
   );
 });
 
+// The dashboard API check: an expired model key failed every request, and the
+// ticket only said `child crashed with exit code 1`.
+function failedRequest(errorMessage: string): string {
+  return JSON.stringify({
+    message: { content: [], errorMessage, role: 'assistant', stopReason: 'error' },
+  });
+}
+
+test('a crash names the model error that ended this run', () => {
+  const expired = '401: {"code":"api_key_expired","message":"This API key has expired."}';
+  const base = {
+    exitCodeText: '1 run-2',
+    exitJson: null,
+    runId: 'run-2',
+    sessionEntryCount: 6,
+    trigger: 'sidecar' as const,
+    withinStartupWindow: false,
+  };
+  assert.deepEqual(
+    classifySidecar({
+      ...base,
+      sessionText: `${promptMarker('run-2')}\n${failedRequest('overloaded')}\n${failedRequest(expired)}\n`,
+    }),
+    { kind: 'crashed', message: `child crashed with exit code 1: ${expired}` },
+  );
+  assert.deepEqual(
+    classifySidecar({
+      ...base,
+      exitCodeText: '1 run-1',
+      sessionText: `${failedRequest('an earlier run')}\n${promptMarker('run-2')}\n`,
+    }),
+    { kind: 'crashed', message: 'child crashed with exit code 1' },
+  );
+  assert.deepEqual(
+    classifySidecar({
+      ...base,
+      sessionText: `${promptMarker('run-2')}\n${failedRequest('x'.repeat(2000))}\n`,
+    }),
+    { kind: 'crashed', message: `child crashed with exit code 1: ${'x'.repeat(500)}…` },
+  );
+});
+
 test('herdr process info treats a live foreground pid as the existing pane', () => {
   assert.deepEqual(herdrProcessInfoArgs('pane-old'), [
     'pane',
