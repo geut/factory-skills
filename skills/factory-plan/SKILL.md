@@ -46,7 +46,7 @@ Before finishing, verify that:
 
 - Every success condition maps to at least one task acceptance criterion.
 - Every task has a user story or observable outcome, explicit scope, and a verification approach.
-- Every task file has a `QA:` line: `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
+- Every task file starts with frontmatter holding `type`, `qa` and `blocked_by`. `qa` is `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - No task commits, pushes, or merges, and no criterion requires a commit. Work leaves its change uncommitted in the worktree and fails validation if HEAD moves; wrap-up hands off the commit.
@@ -58,4 +58,4 @@ Do not commit or publish anything.
 
 ## Output
 
-Write `plan.md` and one or more numbered task files, using [references/artifacts.md](references/artifacts.md). The plan is those files: the controller accepts it when `plan.md` exists and at least one task file is present, and it does not grade the chat text. Summarize the result in your reply using the `factory.plan.v3` template in [references/output.md](references/output.md) as a model; it is a suggestion, not a requirement. Then call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source. Do not edit the controller database.
+Write `plan.md` and one or more numbered task files, using [references/artifacts.md](references/artifacts.md). The plan is those files: the controller accepts it when `plan.md` exists, at least one task file is present, and every task file's frontmatter is valid with dependencies that name other task files and form no cycle. It does not grade the chat text. Summarize the result in your reply using the `factory.plan.v3` template in [references/output.md](references/output.md) as a model; it is a suggestion, not a requirement. Then call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not publish a second copy of a GitHub issue into `.factory/tickets` when GitHub is the ticket source. Do not edit the controller database.

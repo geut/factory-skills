@@ -96,11 +96,13 @@ function writePlanFiles(factoryDir: string, taskFile: string): void {
   );
   writeFileSync(
     path.join(factoryDir, taskFile),
-    `# Store the filter
+    `---
+type: feature
+qa: e2e
+blocked_by: []
+---
 
-Status: pending
-Type: feature
-Blocked by: none
+# Store the filter
 
 ## Acceptance criteria
 - [ ] The filter survives a reload.
@@ -190,6 +192,56 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   assert.ok(work, 'expected a work launch');
   assert.match(service.status('proj-123'), /stage: work/);
   assert.equal(work.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
+});
+
+// The dashboard API check: the planner named task 01 as `blocked_by: [1]`, the
+// dependency pointed at no task, and accepting the plan failed a foreign key.
+test('a dependency named without its leading zero still reaches work', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  const directory = ticketDir(factoryRoot);
+  writePlanFiles(directory, '01-task-store-filter.md');
+  writeFileSync(
+    path.join(directory, '02-task-restore-filter.md'),
+    '---\ntype: feature\nqa: e2e\nblocked_by: [1]\n---\n\n# Restore the filter\n\n## Acceptance criteria\n- [ ] It comes back.\n',
+  );
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'Plan written.', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  assert.match(service.status('proj-123'), /stage: work/);
+});
+
+// A validation whose result cannot be stored fails the ticket where retry can
+// pick it up, instead of leaving it active with nothing queued.
+test('a plan validation that throws fails the ticket, and retry validates again', async () => {
+  const { codeRoot, factoryRoot } = repo(true);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  db.exec(
+    "CREATE TRIGGER refuse_tasks BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'disk is full'); END",
+  );
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'Plan written.', usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('status: failed'));
+  assert.match(service.status('proj-123'), /disk is full/);
+
+  db.exec('DROP TRIGGER refuse_tasks');
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  await closeWhenIdle(db);
 });
 
 // The Herdr tabs check: the database was reset, but the ticket directory and
@@ -771,7 +823,7 @@ async function reachReview(
   if (taskCount > 1) {
     writeFileSync(
       path.join(directory, '02-task-show-filter.md'),
-      '# Show the filter\n\nType: feature\nBlocked by: 01\n\n## Acceptance criteria\n- [ ] The filter is visible.\n',
+      '---\ntype: feature\nqa: e2e\nblocked_by: ["01"]\n---\n\n# Show the filter\n\n## Acceptance criteria\n- [ ] The filter is visible.\n',
     );
   }
   const planRun = runtime.launches[0]?.runId;

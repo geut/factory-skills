@@ -44,7 +44,10 @@ function fixture(): { factoryDir: string; factoryRoot: string; worktree: string 
   git(codeRoot, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
   git(codeRoot, ['worktree', 'add', '-b', 'factory/proj', worktree, 'HEAD']);
   writeFileSync(path.join(factoryDir, 'plan.md'), '# Plan\n');
-  writeFileSync(path.join(factoryDir, '01-task.md'), '# Task\n\nType: feature\n');
+  writeFileSync(
+    path.join(factoryDir, '01-task.md'),
+    '---\ntype: feature\nqa: e2e\nblocked_by: []\n---\n\n# Task\n',
+  );
   return { factoryDir, factoryRoot, worktree };
 }
 

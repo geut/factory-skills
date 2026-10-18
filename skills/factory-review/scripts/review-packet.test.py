@@ -29,11 +29,13 @@ Grep-based anchor check against the README.
 The artifacts intro already mentions ADR-0001.
 """
 
-TASK = """# Document init Context generation
+TASK = """---
+type: feature
+qa: none
+blocked_by: []
+---
 
-Status: ready_for_review
-Type: feature
-Blocked by: none
+# Document init Context generation
 
 ## User story
 As a chan user, I want the README to explain Context generation.

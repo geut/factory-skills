@@ -32,6 +32,7 @@ import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
 import { recordValidation } from '../validation/record.ts';
+import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
 import { archiveStamp } from './leftovers.ts';
@@ -391,30 +392,40 @@ async function runValidation(
     extendActionLease(input.db, action.id, input.now(), leaseMs);
   }
   const executionId = snapshot.execution.id;
-  const report = await validator.validate({
-    deps: {
-      findPullRequest: input.findPullRequest,
-      usage: () => usageTable(input.db, executionId, { includeWrapup: true }),
-    },
-    run,
-    session,
-    snapshot,
-  });
-  // The pull request a passing wrap-up checked becomes the ticket's.
-  if (stage === 'wrapup' && report.status === 'passed') {
-    const pullRequest = (report.detail as WrapupValidationDetail).pullRequest;
-    if (pullRequest !== null) {
-      recordPullRequest(input.db, { ...pullRequest, executionId }, input.now());
+  const record = (report: Parameters<typeof recordValidation>[1]['report']): void => {
+    recordValidation(input, {
+      actionId: action.id,
+      executionId,
+      report,
+      resultHash: run.resultHash,
+      runId: run.id,
+      stage,
+    });
+  };
+  try {
+    const report = await validator.validate({
+      deps: {
+        findPullRequest: input.findPullRequest,
+        usage: () => usageTable(input.db, executionId, { includeWrapup: true }),
+      },
+      run,
+      session,
+      snapshot,
+    });
+    // The pull request a passing wrap-up checked becomes the ticket's.
+    if (stage === 'wrapup' && report.status === 'passed') {
+      const pullRequest = (report.detail as WrapupValidationDetail).pullRequest;
+      if (pullRequest !== null) {
+        recordPullRequest(input.db, { ...pullRequest, executionId }, input.now());
+      }
     }
+    record(report);
+  } catch (error: unknown) {
+    // A validator that throws, or a result the controller cannot store, is a
+    // validator error: it retries, then fails the ticket where retry finds it.
+    // Failing only the action would leave the ticket active with nothing queued.
+    record(errorReport(validator.version, messageOf(error)));
   }
-  recordValidation(input, {
-    actionId: action.id,
-    executionId,
-    report,
-    resultHash: run.resultHash,
-    runId: run.id,
-    stage,
-  });
   return null;
 }
 

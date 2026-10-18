@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { readTaskFile } from '../validation/task-file.ts';
 
 export type WorkInputInspection =
   | {
@@ -20,11 +21,12 @@ export function contained(factoryRoot: string, worktreePath: string, target: str
   return inside(factoryRoot, target) || inside(worktreePath, target);
 }
 
+// The `type` plan validation accepted. A file it cannot read, such as one
+// planned before task files had frontmatter, has none.
 function taskType(file: string): string | null {
   try {
-    const match = /^Type:\s*(.+)$/m.exec(readFileSync(file, 'utf8'));
-    const value = match?.[1]?.trim();
-    return value === undefined || value.length === 0 ? null : value;
+    const parsed = readTaskFile(path.basename(file), readFileSync(file, 'utf8'));
+    return parsed.kind === 'parsed' ? parsed.frontmatter.type : null;
   } catch {
     return null;
   }
