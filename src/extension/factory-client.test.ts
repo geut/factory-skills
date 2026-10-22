@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { initRepo } from '../../tests/git-repo.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import { FakeRuntime, sampleUsage } from '../runtime/fake.ts';
 import { type RunningServer, serve } from '../server/serve.ts';
@@ -23,6 +24,7 @@ afterEach(async () => {
 function repository(): { codeRoot: string; factoryRoot: string; pi: string } {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-pi-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   const factoryRoot = path.join(codeRoot, '.factory');
   mkdirSync(factoryRoot);
   writeFileSync(

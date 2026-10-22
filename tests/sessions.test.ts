@@ -7,6 +7,7 @@ import type { GithubIssue } from '../src/ports/github.ts';
 import { FakeRuntime } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
 import { runSessionsCommand } from '../src/server/sessions-cli.ts';
+import { initRepo } from './git-repo.ts';
 
 // Finding a stage's session: the file is named for its ticket and stage, the
 // API returns it on each run, and `factory sessions` lists it.
@@ -48,6 +49,7 @@ function sessionsCli(cwd: string, ...args: Array<string>) {
 test('a session is named for its ticket and stage, and the API and CLI point at it', async () => {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-sessions-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   mkdirSync(path.join(codeRoot, '.factory'));
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),

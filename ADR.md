@@ -519,7 +519,7 @@ These items are intentionally not resolved by this ADR:
 5. **Configuration schema:** the versioned `FACTORY.json` fields for models, budgets, limits, verification commands, source integration, and authorization.
 6. **Correction limits:** default automatic counts for malformed results, failed validation, and infrastructure retries.
 7. **Result wire format:** whether terminal tools carry canonical JSON directly or the controller extracts it from a session result; it must be versioned, deterministic, and hashable.
-8. **Worktree policy:** naming, base ref, adoption after restart, future-generation behavior, and cleanup authorization.
+8. **Worktree policy:** naming, adoption after restart, future-generation behavior, and cleanup authorization. The base ref is decided: a ticket's worktree is added before planning, at the freshly fetched tip of the remote's default branch (the code root's `HEAD` when there is no remote), and every stage runs in it; the code root's checkout is never moved.
 9. **Remaining command names:** exact status, pause/continue, cancel, and handoff-completion commands and their permissions.
 10. **Pull-request integration:** webhook versus bounded polling, provider-event persistence, comment-to-task mapping, accepted/rejected semantics, and authorization for commit, push, pull-request, merge, and ticket mutations.
 11. **Dashboard read contract:** the exact versioned view set, SBX Kit mount/permission details, and refresh behavior based on `events.revision`.

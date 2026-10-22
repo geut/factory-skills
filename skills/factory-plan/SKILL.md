@@ -9,7 +9,7 @@ Turn one ticket into the smallest plan that another agent can execute without re
 
 ## Start
 
-1. Derive the code root with `git rev-parse --show-toplevel`. Use `<code-root>/.factory` unless the request supplies a `--factory-root` or `FACTORY_ROOT` override.
+1. Find the factory root. A controller run names it in the prompt (`Factory root:`) and starts you in the ticket's worktree, a fresh checkout of the remote's default branch that has no `.factory/` of its own; read the code there. Otherwise use a `--factory-root` or `FACTORY_ROOT` override, or `<code-root>/.factory`, deriving the code root with `git rev-parse --show-toplevel`. Below, `.factory/` means the factory root.
 2. Read `.factory/FACTORY.json`. Obtain the ticket ID from the source or `ticketIdPattern`; if neither determines it, ask the user before creating artifacts.
 3. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions.
 4. When `github.cli` is true and the ticket is a GitHub issue, do not create `.factory/tickets/<ticket-id>/` as a copy of the issue. Keep acceptance criteria on the issue. A local execution note may point at the issue URL. When GitHub is not the source, create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).

@@ -1,3 +1,4 @@
+import { factoryRootOf } from '../../controller/keys.ts';
 import { defineStage, type LimitSpec } from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
 
@@ -47,6 +48,7 @@ export const plan = defineStage<PlanInput, 'plan'>({
         '',
         `Ticket: ${input.displayRef}`,
         `Title: ${input.title}`,
+        `Factory root: ${factoryRootOf(input.factoryDir)}`,
         `Write plan.md and numbered task files in ${input.factoryDir}.`,
         '',
         input.body,

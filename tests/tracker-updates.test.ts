@@ -7,6 +7,7 @@ import type { GithubClient, GithubIssue } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
 import { openStateDatabase } from '../src/state/database.ts';
+import { initRepo } from './git-repo.ts';
 
 // Tracker updates end to end: comments and status labels on the ticket's
 // issue, written through the outbox with a stand-in for gh.
@@ -43,6 +44,7 @@ type Tracked = {
 function repository(): string {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-updates-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   mkdirSync(path.join(codeRoot, '.factory'));
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),

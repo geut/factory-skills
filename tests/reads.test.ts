@@ -7,6 +7,7 @@ import { recordPullRequest } from '../src/controller/facts.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
 import { openStateDatabase } from '../src/state/database.ts';
+import { initRepo } from './git-repo.ts';
 
 // The read routes, end to end, against a server with a fake runtime.
 
@@ -27,6 +28,7 @@ type Factory = { base: string; codeRoot: string; runtime: FakeRuntime; token: st
 async function factory(): Promise<Factory> {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-reads-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   mkdirSync(path.join(codeRoot, '.factory'));
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),

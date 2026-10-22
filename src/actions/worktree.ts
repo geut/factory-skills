@@ -15,9 +15,14 @@ export type WorktreeReady = {
 
 export type WorktreeFailure = { kind: 'failed'; message: string };
 
+// A fetch that waits on a password or host-key prompt would hold the action
+// until its lease expires; it fails instead, and the ticket says why.
+const NETWORK_TIMEOUT_MS = 120_000;
+
 function git(
   codeRoot: string,
   args: Array<string>,
+  timeoutMs?: number,
 ): { code: number; stderr: string; stdout: string } {
   const result = spawnSync('git', args, {
     cwd: codeRoot,
@@ -28,9 +33,70 @@ function git(
       GIT_AUTHOR_NAME: process.env['GIT_AUTHOR_NAME'] ?? 'Factory',
       GIT_COMMITTER_EMAIL: process.env['GIT_COMMITTER_EMAIL'] ?? 'factory@example.com',
       GIT_COMMITTER_NAME: process.env['GIT_COMMITTER_NAME'] ?? 'Factory',
+      GIT_SSH_COMMAND: process.env['GIT_SSH_COMMAND'] ?? 'ssh -o BatchMode=yes',
+      GIT_TERMINAL_PROMPT: '0',
     },
+    ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
   });
-  return { code: result.status ?? 1, stderr: result.stderr, stdout: result.stdout.trim() };
+  const stderr = result.error === undefined ? result.stderr : result.error.message;
+  return { code: result.status ?? 1, stderr: stderr ?? '', stdout: (result.stdout ?? '').trim() };
+}
+
+type Base = { branch: string; sha: string };
+
+// The commit a new ticket starts from. With a remote, it is the tip of the
+// remote's default branch, fetched now: the code root's checkout may be behind
+// it, dirty, or on another branch, and the factory never moves it. A repository
+// without a remote starts from the code root's HEAD.
+export function resolveBase(codeRoot: string): Base | WorktreeFailure {
+  const remotes = git(codeRoot, ['remote']);
+  if (remotes.code !== 0) {
+    return { kind: 'failed', message: remotes.stderr.trim() || 'cannot list git remotes' };
+  }
+  const names = remotes.stdout.split('\n').filter((name) => name.length > 0);
+  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : undefined;
+  if (remote === undefined) {
+    if (names.length > 1) {
+      return {
+        kind: 'failed',
+        message: `Cannot choose a remote to start from among ${names.join(', ')}; name one origin.`,
+      };
+    }
+    const branch = git(codeRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (branch.code !== 0) {
+      return { kind: 'failed', message: branch.stderr.trim() || 'cannot read the current branch' };
+    }
+    const sha = git(codeRoot, ['rev-parse', 'HEAD']);
+    if (sha.code !== 0) {
+      return { kind: 'failed', message: sha.stderr.trim() || 'cannot read HEAD' };
+    }
+    return { branch: branch.stdout, sha: sha.stdout };
+  }
+  const head = git(codeRoot, ['ls-remote', '--symref', remote, 'HEAD'], NETWORK_TIMEOUT_MS);
+  const named = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(head.stdout)?.[1];
+  if (head.code !== 0 || named === undefined) {
+    return {
+      kind: 'failed',
+      message: `Cannot read the default branch of ${remote}: ${head.stderr.trim() || 'the remote names no HEAD branch'}`,
+    };
+  }
+  const ref = `refs/remotes/${remote}/${named}`;
+  const fetched = git(
+    codeRoot,
+    ['fetch', '--no-tags', remote, `+refs/heads/${named}:${ref}`],
+    NETWORK_TIMEOUT_MS,
+  );
+  if (fetched.code !== 0) {
+    return {
+      kind: 'failed',
+      message: `Cannot fetch ${remote}/${named}: ${fetched.stderr.trim() || 'git fetch failed'}`,
+    };
+  }
+  const sha = git(codeRoot, ['rev-parse', ref]);
+  if (sha.code !== 0) {
+    return { kind: 'failed', message: sha.stderr.trim() || `cannot read ${ref}` };
+  }
+  return { branch: named, sha: sha.stdout };
 }
 
 export function prepareWorktree(input: {
@@ -42,13 +108,9 @@ export function prepareWorktree(input: {
   leftoverStamp: string | null;
   slug: string;
 }): WorktreeReady | WorktreeFailure {
-  const base = git(input.codeRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  if (base.code !== 0) {
-    return { kind: 'failed', message: base.stderr.trim() || 'cannot read the current branch' };
-  }
-  const sha = git(input.codeRoot, ['rev-parse', 'HEAD']);
-  if (sha.code !== 0) {
-    return { kind: 'failed', message: sha.stderr.trim() || 'cannot read HEAD' };
+  const base = resolveBase(input.codeRoot);
+  if ('kind' in base) {
+    return base;
   }
   const branch = `factory/${input.slug}`;
   const worktreePath = path.join(input.factoryRoot, 'worktrees', input.slug);
@@ -71,7 +133,7 @@ export function prepareWorktree(input: {
   const reused = current !== null && current.code === 0 && current.stdout === branch;
   const added = reused
     ? { code: 0, stderr: '', stdout: '' }
-    : git(input.codeRoot, ['worktree', 'add', '-b', branch, worktreePath, 'HEAD']);
+    : git(input.codeRoot, ['worktree', 'add', '-b', branch, worktreePath, base.sha]);
   if (added.code !== 0) {
     const existing = git(input.codeRoot, ['worktree', 'add', worktreePath, branch]);
     if (existing.code !== 0) {
@@ -81,9 +143,15 @@ export function prepareWorktree(input: {
       };
     }
   }
+  // A new worktree sits on the base; one a retry reuses keeps the base its
+  // first attempt fetched, which a newer fetch must not replace.
+  const head = git(worktreePath, ['rev-parse', 'HEAD']);
+  if (head.code !== 0) {
+    return { kind: 'failed', message: head.stderr.trim() || 'cannot read the worktree HEAD' };
+  }
   return {
-    baseBranch: base.stdout,
-    baseSha: sha.stdout,
+    baseBranch: base.branch,
+    baseSha: head.stdout,
     branch,
     kind: 'ready',
     path: worktreePath,

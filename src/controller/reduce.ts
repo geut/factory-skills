@@ -22,7 +22,7 @@ import {
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
-import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
+import { nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
@@ -334,16 +334,42 @@ function newSession(
   };
 }
 
+// Every stage runs in the ticket's worktree, and a session resumes where it
+// was launched: a ticket started before plans ran in the worktree planned in
+// the code root.
 function sessionCwd(snapshot: FactorySnapshot, session: SessionRecord): string {
-  // The stages before the tasks run in the code root; the worktree exists
-  // only once the tasks are known.
-  if (
-    !flow.ticket.some((stage) => stage === session.stage) &&
-    snapshot.execution.worktreePath !== null
-  ) {
-    return snapshot.execution.worktreePath;
+  const runs = new Set(
+    snapshot.runs.filter((run) => run.sessionId === session.id).map((run) => run.id),
+  );
+  const launched = snapshot.actions.find(
+    (action) =>
+      action.kind === 'launch_run' &&
+      action.mode === 'launch' &&
+      action.runId !== null &&
+      runs.has(action.runId),
+  );
+  if (launched !== undefined && launched.kind === 'launch_run') {
+    return launched.cwd;
   }
-  return snapshot.execution.policy.codeRoot;
+  return snapshot.execution.worktreePath ?? snapshot.execution.policy.codeRoot;
+}
+
+function enqueueWorktree(snapshot: FactorySnapshot, ids: IdSource): void {
+  snapshot.actions.push({
+    attempts: 0,
+    attentionReplyId: null,
+    attentionRequestId: null,
+    id: ids.action(),
+    idempotencyKey: `worktree:${snapshot.execution.id}`,
+    kind: 'prepare_worktree',
+    lastError: null,
+    maxAttempts: 3,
+    retryOfActionId: null,
+    runId: null,
+    slug: worktreeSlugFor(snapshot.execution.factoryDir, snapshot.execution.generation),
+    status: 'pending',
+  });
+  snapshot.execution.worktreeStatus = 'preparing';
 }
 
 function taskById(snapshot: FactorySnapshot, id: TaskId): TaskRecord | null {
@@ -665,15 +691,6 @@ function reduceStart(
   if (snapshot !== null) {
     return unchanged(snapshot, repeatMessage(snapshot));
   }
-  const prompt = stages.plan.turn({
-    input: {
-      body: event.ticket.body,
-      displayRef: event.ticket.displayRef,
-      factoryDir: event.ticket.factoryDir,
-      title: event.ticket.title,
-    },
-    kind: 'initial',
-  });
   const executionId = ids.execution();
   const session = newSession(event.policy, 'plan', null, ids);
   const created: FactorySnapshot = {
@@ -725,16 +742,36 @@ function reduceStart(
       title: event.ticket.title,
     },
   };
-  const run = addRun(created, session, null, 'initial', 0, ids, prompt);
-  run.description = childDescription(event.ticket.title);
-  launchAction(created, run, prompt, 'launch', ids, event.policy.codeRoot);
+  // Plan reads the code the tasks will change, so the worktree comes first.
+  enqueueWorktree(created, ids);
   trackerUpdate(created, ids, {
     comment: 'The factory started working on this issue.',
     issueStatus: 'in_progress',
     key: 'started',
     update: 'started',
   });
-  return finish(created, `Planning queued for ${event.ticket.displayRef}.`);
+  return finish(created, `Preparing the worktree for ${event.ticket.displayRef}.`);
+}
+
+// Plan's first run, in the worktree the ticket starts from.
+function launchPlan(snapshot: FactorySnapshot, ids: IdSource): string {
+  const session = snapshot.sessions.find((item) => item.stage === 'plan') ?? null;
+  if (session === null || snapshot.runs.some((run) => run.sessionId === session.id)) {
+    return 'Planning already started.';
+  }
+  const prompt = stages.plan.turn({
+    input: {
+      body: snapshot.ticket.body,
+      displayRef: snapshot.ticket.displayRef,
+      factoryDir: snapshot.execution.factoryDir,
+      title: snapshot.ticket.title,
+    },
+    kind: 'initial',
+  });
+  const run = addRun(snapshot, session, null, 'initial', 0, ids, prompt);
+  run.description = childDescription(snapshot.ticket.title);
+  launchAction(snapshot, run, prompt, 'launch', ids, sessionCwd(snapshot, session));
+  return `Planning queued for ${snapshot.ticket.displayRef}.`;
 }
 
 function retryValidation(
@@ -910,21 +947,9 @@ function begin(
       const task = step.taskId === null ? null : taskById(snapshot, step.taskId);
       snapshot.execution.stage = step.stage;
       snapshot.execution.status = 'active';
+      // A ticket started before plans ran in the worktree gets it here.
       if (task !== null && snapshot.execution.worktreeStatus !== 'ready') {
-        snapshot.actions.push({
-          attempts: 0,
-          attentionReplyId: null,
-          attentionRequestId: null,
-          id: ids.action(),
-          idempotencyKey: `worktree:${snapshot.execution.id}`,
-          kind: 'prepare_worktree',
-          lastError: null,
-          maxAttempts: 3,
-          retryOfActionId: null,
-          runId: null,
-          slug: worktreeSlugFor(snapshot.execution.factoryDir, snapshot.execution.generation),
-          status: 'pending',
-        });
+        enqueueWorktree(snapshot, ids);
         return 'Preparing the worktree.';
       }
       if (isInputStage(step.stage)) {
@@ -1398,6 +1423,9 @@ export function reduce(input: {
       snapshot.execution.worktreeBaseBranch = event.baseBranch;
       snapshot.execution.worktreeBaseSha = event.baseSha;
       snapshot.execution.worktreeStatus = 'ready';
+      if (snapshot.execution.planPath === null) {
+        return finish(snapshot, launchPlan(snapshot, ids));
+      }
       const step = nextStep(snapshot, 'plan', null);
       if (step.kind !== 'stage' || step.taskId === null) {
         return reject(existing, 'Plan has no runnable task.');
