@@ -13,7 +13,9 @@ const tracker = {
 };
 
 const issue = {
+  author: null,
   body: 'Keep the catalog filter.',
+  createdAt: null,
   host: 'github.com',
   labels: ['factory'],
   nodeId: 'I_7',
@@ -21,6 +23,7 @@ const issue = {
   owner: 'geut',
   repo: 'factory-skills',
   title: 'Remember the filter',
+  updatedAt: null,
   url: 'https://github.com/geut/factory-skills/issues/7',
 };
 

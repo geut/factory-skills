@@ -100,15 +100,16 @@ Reads need a `read` token.
 | Route                        | Returns                                                                                                                           |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /v1/tickets`            | Each ticket's current execution: stage, status, progress, whether it needs a person, and who started it.                          |
-| `GET /v1/tickets/{key}`      | The same, plus tasks with dependencies and review state, questions with their replies, and usage.                                 |
+| `GET /v1/tickets/{key}`      | The same, plus the source it started from, tasks with dependencies and review state, questions with their replies, and usage.     |
 | `GET /v1/tickets/{key}/runs` | The ticket's runs, oldest first.                                                                                                  |
 | `GET /v1/runs/{id}`          | One run: purpose, round, outcome, model setup, latest validation and its checks, review findings, usage, and its latest activity. |
 | `GET /v1/agents`             | Runs that are starting or running.                                                                                                |
 
 - `/v1/tickets` filters by `status=open|finished|all` (default `open`), `stage`, `state` (the execution status), `needsUser=true|false`, and `ref`. Filters combine with AND; repeat one for OR, as in `?stage=review&stage=qa&needsUser=true`.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
+- A ticket's `source` is the issue or brief as fetched when that execution started, so `?execution=n` shows what generation n was asked. A brief has no tracker author or url; `startedBy` says who started it.
 - A run's activity is the agent's latest assistant message in that run, read from its Pi session file.
-- `GET /v1/backlog` lists open tracker issues that match `tracker.backlog` (labels and milestone on GitHub) and are not tickets yet. Each one says whether another issue blocks it and whether it is an umbrella with sub-issues. The list is cached for about a minute; `?refresh=true` asks the tracker again. A started issue drops out at once.
+- `GET /v1/backlog` lists open tracker issues that match `tracker.backlog` (labels and milestone on GitHub) and are not tickets yet. Each one carries its description, author, and created and updated times, and says whether another issue blocks it and whether it is an umbrella with sub-issues. The list is cached for about a minute; `?refresh=true` asks the tracker again. A started issue drops out at once.
 
 ### Events
 

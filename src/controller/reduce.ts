@@ -703,12 +703,18 @@ function reduceStart(
       id: executionId,
       inputFetchedAt: event.ticket.fetchedAt,
       inputHash: event.ticket.contentHash,
+      // The source as fetched for this generation; GET /v1/tickets/{key}
+      // serves it as `source`.
       inputJson: JSON.stringify({
+        author: event.ticket.sourceAuthor,
         body: event.ticket.body,
         commandRef: event.ticket.commandRef,
+        createdAt: event.ticket.sourceCreatedAt,
         displayRef: event.ticket.displayRef,
         labels: event.ticket.labels,
         title: event.ticket.title,
+        updatedAt: event.ticket.sourceUpdatedAt,
+        url: event.ticket.sourceUrl,
       }),
       message: null,
       planPath: null,

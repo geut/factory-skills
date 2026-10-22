@@ -13,9 +13,12 @@ const IssueLink = z
 
 const BacklogIssue = z
   .object({
+    author: z.string().nullable().meta({ description: 'The tracker login of whoever opened it.' }),
     blocked: z.boolean().meta({ description: 'Another issue blocks it.' }),
     blockedBy: z.array(IssueLink),
+    body: z.string().meta({ description: 'Its description, as markdown the tracker holds.' }),
     children: z.array(IssueLink).meta({ description: 'Its sub-issues; start those instead.' }),
+    createdAt: z.string().nullable(),
     displayRef: z
       .string()
       .meta({ description: 'The ref to start it with, such as owner/repo#42.' }),
@@ -23,6 +26,7 @@ const BacklogIssue = z
     labels: z.array(z.string()),
     title: z.string(),
     umbrella: z.boolean().meta({ description: 'It has sub-issues, so it cannot be started.' }),
+    updatedAt: z.string().nullable(),
     url: z.string(),
   })
   .meta({ id: 'BacklogIssue' });

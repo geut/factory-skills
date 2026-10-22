@@ -25,7 +25,9 @@ afterEach(async () => {
 });
 
 const issue: GithubIssue = {
+  author: null,
   body: '',
+  createdAt: null,
   host: 'github.com',
   labels: [],
   nodeId: 'I_7',
@@ -33,6 +35,7 @@ const issue: GithubIssue = {
   owner: 'geut',
   repo: 'factory-skills',
   title: 'Remember the filter',
+  updatedAt: null,
   url: 'https://github.com/geut/factory-skills/issues/7',
 };
 

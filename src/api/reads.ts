@@ -163,8 +163,28 @@ const Usage = z
   })
   .meta({ id: 'Usage' });
 
+const TicketSource = z
+  .object({
+    author: z.string().nullable().meta({
+      description: 'The tracker login of whoever opened the issue; null for a written brief.',
+    }),
+    body: z.string().meta({ description: 'The issue description or the brief, as markdown.' }),
+    createdAt: z.string().nullable(),
+    displayRef: z.string(),
+    fetchedAt: z.string().meta({ description: 'When the factory read the source.' }),
+    labels: z.array(z.string()),
+    title: z.string(),
+    updatedAt: z.string().nullable(),
+    url: z.string().nullable(),
+  })
+  .meta({ id: 'TicketSource' });
+
 const TicketDetail = TicketSummary.extend({
   attention: z.array(Attention),
+  source: TicketSource.nullable().meta({
+    description:
+      'The issue or brief this execution started from, as fetched then. Null for an execution recorded before the factory kept it.',
+  }),
   tasks: z.array(Task),
   usage: Usage,
 }).meta({ id: 'TicketDetail' });
@@ -405,6 +425,36 @@ function usageFrom(
   };
 }
 
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+// Each execution keeps its source as fetched when it started; author, times,
+// and url arrived later, so older executions read null for them.
+function sourceOf(snapshot: FactorySnapshot): z.infer<typeof TicketSource> | null {
+  const input: unknown = JSON.parse(snapshot.execution.inputJson);
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const value = input as Record<string, unknown>;
+  if (typeof value['body'] !== 'string') {
+    return null;
+  }
+  return {
+    author: textOrNull(value['author']),
+    body: value['body'],
+    createdAt: textOrNull(value['createdAt']),
+    displayRef: textOrNull(value['displayRef']) ?? snapshot.ticket.displayRef,
+    fetchedAt: snapshot.execution.inputFetchedAt,
+    labels: Array.isArray(value['labels'])
+      ? value['labels'].filter((label): label is string => typeof label === 'string')
+      : [],
+    title: textOrNull(value['title']) ?? snapshot.ticket.title,
+    updatedAt: textOrNull(value['updatedAt']),
+    url: textOrNull(value['url']),
+  };
+}
+
 function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof TicketDetail> {
   const replyTimes = new Map(
     db
@@ -433,6 +483,7 @@ function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof T
       runId: item.runId,
       status: item.status,
     })),
+    source: sourceOf(snapshot),
     tasks: snapshot.tasks.map((task) => ({
       blockedBy: task.blockedBy,
       id: task.taskId,

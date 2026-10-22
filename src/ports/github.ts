@@ -20,7 +20,9 @@ export type RelatedIssue = {
 };
 
 export type GithubIssue = {
+  author: string | null;
   body: string;
+  createdAt: string | null;
   host: string;
   labels: Array<string>;
   nodeId: string;
@@ -28,6 +30,7 @@ export type GithubIssue = {
   owner: string;
   repo: string;
   title: string;
+  updatedAt: string | null;
   url: string;
 };
 
@@ -83,6 +86,7 @@ function relatedIssues(path: string): Array<RelatedIssue> {
             body: typeof item['body'] === 'string' ? item['body'] : '',
             number: item['number'],
             title: typeof item['title'] === 'string' ? item['title'] : '',
+            updatedAt: textOrNull(item['updatedAt']),
             url: typeof item['html_url'] === 'string' ? item['html_url'] : null,
           },
         ]
@@ -135,7 +139,7 @@ export function githubCliClient(): GithubClient {
         '--repo',
         `${input.owner}/${input.repo}`,
         '--json',
-        'id,number,title,body,url,labels',
+        'id,number,title,body,url,labels,author,createdAt,updatedAt',
       ]);
       if (
         !isRecord(payload) ||
@@ -152,7 +156,9 @@ export function githubCliClient(): GithubClient {
           )
         : [];
       return {
+        author: authorOf(payload['author']),
         body: typeof payload['body'] === 'string' ? payload['body'] : '',
+        createdAt: textOrNull(payload['createdAt']),
         host: input.host,
         labels,
         nodeId: payload['id'],
@@ -161,6 +167,7 @@ export function githubCliClient(): GithubClient {
         repo: input.repo,
         title:
           typeof payload['title'] === 'string' ? payload['title'] : `Issue ${payload['number']}`,
+        updatedAt: textOrNull(payload['updatedAt']),
         url: typeof payload['url'] === 'string' ? payload['url'] : '',
       };
     },
@@ -193,7 +200,7 @@ export function githubCliClient(): GithubClient {
         ...input.labels.flatMap((label) => ['--label', label]),
         ...(input.milestone === null ? [] : ['--milestone', input.milestone]),
         '--json',
-        'id,number,title,body,url,labels',
+        'id,number,title,body,url,labels,author,createdAt,updatedAt',
       ]);
       if (!Array.isArray(payload)) {
         return [];
@@ -213,7 +220,9 @@ export function githubCliClient(): GithubClient {
           : [];
         return [
           {
+            author: authorOf(item['author']),
             body: typeof item['body'] === 'string' ? item['body'] : '',
+            createdAt: textOrNull(item['createdAt']),
             host: input.host,
             labels,
             nodeId: item['id'],
@@ -221,6 +230,7 @@ export function githubCliClient(): GithubClient {
             owner: input.owner,
             repo: input.repo,
             title: typeof item['title'] === 'string' ? item['title'] : '',
+            updatedAt: textOrNull(item['updatedAt']),
             url: typeof item['url'] === 'string' ? item['url'] : '',
           },
         ];
@@ -286,18 +296,30 @@ function linkOf(owner: string, repo: string, related: RelatedIssue): IssueLink {
   return { displayRef, title: related.title, url: related.url };
 }
 
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+// gh reports the author as `{ login, name, ... }`.
+function authorOf(value: unknown): string | null {
+  return isRecord(value) ? textOrNull(value['login']) : null;
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'GitHub request failed';
 }
 
 function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
   return {
+    author: issue.author,
     body: issue.body,
+    createdAt: issue.createdAt,
     displayRef: `${issue.owner}/${issue.repo}#${issue.number}`,
     id: `github:${issue.host}:${issue.nodeId}`,
     labels: issue.labels,
     ref,
     title: issue.title,
+    updatedAt: issue.updatedAt,
     url: issue.url,
   };
 }

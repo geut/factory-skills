@@ -337,12 +337,15 @@ async function updateTicketSource(
     return null;
   }
   const issue: TrackerIssue = {
+    author: null,
     body: snapshot.ticket.body,
+    createdAt: null,
     displayRef: snapshot.ticket.displayRef,
     id: snapshot.ticket.id,
     labels: snapshot.ticket.labels,
     ref: snapshot.ticket.commandRef,
     title: snapshot.ticket.title,
+    updatedAt: null,
     url: snapshot.ticket.sourceRef,
   };
   // The marker makes a retried comment a no-op, even after a crash.

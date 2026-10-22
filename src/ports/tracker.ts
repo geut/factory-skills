@@ -14,7 +14,11 @@ export type BacklogQuery = { labels: Array<string>; milestone: string | null };
 
 // An issue as the factory sees it, whatever the tracker.
 export type TrackerIssue = {
+  // The tracker login of whoever opened it; null when the tracker does not say.
+  author: string | null;
   body: string;
+  // ISO times as the tracker reports them; null when it does not.
+  createdAt: string | null;
   // `owner/repo#42` on GitHub, `ENG-42` on Linear: how people name it.
   displayRef: string;
   // Stable across renames and moves, such as `github:github.com:I_kw...`.
@@ -23,6 +27,7 @@ export type TrackerIssue = {
   // The ref as the user gave it.
   ref: string;
   title: string;
+  updatedAt: string | null;
   url: string;
 };
 

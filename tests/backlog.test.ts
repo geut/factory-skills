@@ -24,7 +24,9 @@ afterEach(async () => {
 
 function issue(number: number, title: string): GithubIssue {
   return {
+    author: null,
     body: '',
+    createdAt: null,
     host: 'github.com',
     labels: ['factory'],
     nodeId: `I_${number}`,
@@ -32,6 +34,7 @@ function issue(number: number, title: string): GithubIssue {
     owner: 'geut',
     repo: 'factory-skills',
     title,
+    updatedAt: null,
     url: `https://github.com/geut/factory-skills/issues/${number}`,
   };
 }
@@ -99,10 +102,14 @@ async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
 
 type Backlog = {
   items: Array<{
+    author: string | null;
     blocked: boolean;
     blockedBy: Array<{ displayRef: string }>;
+    body: string;
+    createdAt: string | null;
     displayRef: string;
     umbrella: boolean;
+    updatedAt: string | null;
   }>;
 };
 
@@ -146,6 +153,25 @@ test('the backlog lists matching issues, flags blocked ones and umbrellas, and d
   assert.equal(f.listed.length, 1);
   await backlog(f, '?refresh=true');
   assert.equal(f.listed.length, 2);
+});
+
+test('a backlog issue carries its description, author, and times', async () => {
+  const f = await factory({
+    listIssues: () => [
+      {
+        ...issue(7, 'Remember the filter'),
+        author: 'octocat',
+        body: 'Keep the catalog filter.',
+        createdAt: '2026-10-01T00:00:00Z',
+        updatedAt: '2026-10-02T00:00:00Z',
+      },
+    ],
+  });
+  const [item] = (await backlog(f)).items;
+  assert.deepEqual(
+    [item?.body, item?.author, item?.createdAt, item?.updatedAt],
+    ['Keep the catalog filter.', 'octocat', '2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z'],
+  );
 });
 
 test('a tracker that fails answers tracker_unavailable', async () => {
