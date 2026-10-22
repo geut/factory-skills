@@ -37,8 +37,12 @@ function pendingPlanValidation() {
     fetchedAt: now(),
     id: ticket.id,
     labels: [],
+    sourceAuthor: null,
+    sourceCreatedAt: null,
     sourceKind: 'text' as const,
     sourceRef: ticket.sourceRef,
+    sourceUpdatedAt: null,
+    sourceUrl: null,
     title: ticket.title,
   };
   send({ kind: 'start', policy: execution.policy, ticket: resolved }, 'start');

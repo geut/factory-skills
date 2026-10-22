@@ -47,8 +47,12 @@ function trackedTicket(
     fetchedAt,
     id,
     labels: issue.labels,
+    sourceAuthor: issue.author,
+    sourceCreatedAt: issue.createdAt,
     sourceKind: kind,
     sourceRef: issue.url.length > 0 ? issue.url : issue.displayRef,
+    sourceUpdatedAt: issue.updatedAt,
+    sourceUrl: issue.url.length > 0 ? issue.url : null,
     title: issue.title,
   };
 }
@@ -75,8 +79,12 @@ function localTicket(input: {
     fetchedAt: input.fetchedAt,
     id,
     labels: [],
+    sourceAuthor: null,
+    sourceCreatedAt: null,
     sourceKind: input.sourceKind,
     sourceRef: input.sourceRef,
+    sourceUpdatedAt: null,
+    sourceUrl: null,
     title: input.title,
   };
 }

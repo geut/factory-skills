@@ -27,7 +27,9 @@ afterEach(async () => {
 });
 
 const issue = {
+  author: null,
   body: 'Keep the catalog filter.',
+  createdAt: null,
   host: 'github.com',
   labels: [],
   nodeId: 'I_1',
@@ -35,6 +37,7 @@ const issue = {
   owner: 'geut',
   repo: 'factory-skills',
   title: 'Remember the filter',
+  updatedAt: null,
   url: 'https://github.com/geut/factory-skills/issues/7',
 };
 
@@ -310,4 +313,80 @@ test('a rerun adds a generation, and earlier ones stay readable', async () => {
   assert.deepEqual([first.execution, first.status], [1, 'cancelled']);
   const runs = await read<{ items: Array<unknown> }>(`/v1/tickets/${ticket}/runs?execution=1`);
   assert.equal(runs.items.length, 1);
+});
+
+test('a ticket shows the source each generation started from', async () => {
+  let tracked = {
+    ...issue,
+    author: 'octocat',
+    createdAt: '2026-10-01T00:00:00Z',
+    labels: ['factory'],
+    updatedAt: '2026-10-02T00:00:00Z',
+  };
+  const f = await factory({ fetchIssue: () => tracked });
+  const response = await post(f, '/v1/tickets', { ref: 'geut/factory-skills#7' });
+  assert.equal(response.status, 202);
+  const { ticket } = (await response.json()) as { ticket: string };
+  await until(() => f.runtime.launches.length === 1);
+
+  tracked = {
+    ...tracked,
+    body: 'Keep the filter across reloads.',
+    updatedAt: '2026-10-05T00:00:00Z',
+  };
+  await post(f, `/v1/tickets/${ticket}/cancel`);
+  assert.equal((await post(f, `/v1/tickets/${ticket}/reruns`)).status, 202);
+  await until(() => f.runtime.launches.length === 2);
+
+  type Source = {
+    author: string | null;
+    body: string;
+    createdAt: string | null;
+    displayRef: string;
+    fetchedAt: string;
+    labels: Array<string>;
+    title: string;
+    updatedAt: string | null;
+    url: string | null;
+  };
+  const source = async (query: string): Promise<Source> =>
+    (
+      (await (
+        await fetch(`${f.base}/v1/tickets/${ticket}${query}`, {
+          headers: { authorization: `Bearer ${f.token}` },
+        })
+      ).json()) as { source: Source }
+    ).source;
+  const first = await source('?execution=1');
+  assert.deepEqual(
+    { ...first, fetchedAt: typeof first.fetchedAt },
+    {
+      author: 'octocat',
+      body: 'Keep the catalog filter.',
+      createdAt: '2026-10-01T00:00:00Z',
+      displayRef: 'geut/factory-skills#7',
+      fetchedAt: 'string',
+      labels: ['factory'],
+      title: 'Remember the filter',
+      updatedAt: '2026-10-02T00:00:00Z',
+      url: 'https://github.com/geut/factory-skills/issues/7',
+    },
+  );
+  const second = await source('');
+  assert.equal(second.body, 'Keep the filter across reloads.');
+  assert.equal(second.updatedAt, '2026-10-05T00:00:00Z');
+});
+
+test('a written brief is its own source, with no tracker author or url', async () => {
+  const f = await factory();
+  const { ticket } = await started(f);
+  const detail = (await (
+    await fetch(`${f.base}/v1/tickets/${ticket}`, {
+      headers: { authorization: `Bearer ${f.token}` },
+    })
+  ).json()) as { source: { author: string | null; body: string; url: string | null } };
+  assert.deepEqual(
+    [detail.source.author, detail.source.body, detail.source.url],
+    [null, '# Remember the filter\n', null],
+  );
 });

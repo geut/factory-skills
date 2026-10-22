@@ -2199,6 +2199,17 @@
               "$ref": "#/components/schemas/Attention"
             }
           },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TicketSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The issue or brief this execution started from, as fetched then. Null for an execution recorded before the factory kept it."
+          },
           "tasks": {
             "type": "array",
             "items": {
@@ -2228,6 +2239,7 @@
           "trackerWarnings",
           "updatedAt",
           "attention",
+          "source",
           "tasks",
           "usage"
         ],
@@ -2317,6 +2329,68 @@
           "createdAt",
           "current",
           "version"
+        ],
+        "additionalProperties": false
+      },
+      "TicketSource": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "description": "The tracker login of whoever opened the issue; null for a written brief.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "description": "The issue description or the brief, as markdown."
+          },
+          "createdAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayRef": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "description": "When the factory read the source."
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "author",
+          "body",
+          "createdAt",
+          "displayRef",
+          "fetchedAt",
+          "labels",
+          "title",
+          "updatedAt",
+          "url"
         ],
         "additionalProperties": false
       },
@@ -2999,6 +3073,13 @@
       "BacklogIssue": {
         "type": "object",
         "properties": {
+          "author": {
+            "description": "The tracker login of whoever opened it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "blocked": {
             "type": "boolean",
             "description": "Another issue blocks it."
@@ -3009,12 +3090,22 @@
               "$ref": "#/components/schemas/IssueLink"
             }
           },
+          "body": {
+            "type": "string",
+            "description": "Its description, as markdown the tracker holds."
+          },
           "children": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/IssueLink"
             },
             "description": "Its sub-issues; start those instead."
+          },
+          "createdAt": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "displayRef": {
             "type": "string",
@@ -3036,19 +3127,29 @@
             "type": "boolean",
             "description": "It has sub-issues, so it cannot be started."
           },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "url": {
             "type": "string"
           }
         },
         "required": [
+          "author",
           "blocked",
           "blockedBy",
+          "body",
           "children",
+          "createdAt",
           "displayRef",
           "id",
           "labels",
           "title",
           "umbrella",
+          "updatedAt",
           "url"
         ],
         "additionalProperties": false

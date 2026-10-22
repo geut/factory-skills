@@ -223,9 +223,15 @@ export type ResolvedTicket = {
   fetchedAt: string;
   id: TicketId;
   labels: Array<string>;
+  // The tracker's author and times for the issue; null for a written brief.
+  sourceAuthor: string | null;
+  sourceCreatedAt: string | null;
   // `file`, `text`, or the tracker's kind, such as `github`.
   sourceKind: string;
   sourceRef: string;
+  sourceUpdatedAt: string | null;
+  // The issue's web page; null for a written brief.
+  sourceUrl: string | null;
   title: string;
 };
 

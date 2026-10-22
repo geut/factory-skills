@@ -125,12 +125,16 @@ function committed(applied: ApplyResult, displayRef: string, refusal: CommandRef
 
 // An open tracker issue that is not a ticket yet, with what stands in its way.
 export type BacklogItem = {
+  author: string | null;
   blockedBy: Array<IssueLink>;
+  body: string;
   children: Array<IssueLink>;
+  createdAt: string | null;
   displayRef: string;
   id: string;
   labels: Array<string>;
   title: string;
+  updatedAt: string | null;
   url: string;
 };
 
@@ -341,12 +345,16 @@ export function createFactoryService(input: {
       const tracker = createGithubTracker(config.config.tracker, github);
       try {
         const items = tracker.listBacklog(config.config.tracker.backlog).map((issue) => ({
+          author: issue.author,
           blockedBy: tracker.capabilities.has('blockedBy') ? tracker.blockedBy(issue) : [],
+          body: issue.body,
           children: tracker.children(issue),
+          createdAt: issue.createdAt,
           displayRef: issue.displayRef,
           id: issue.id,
           labels: issue.labels,
           title: issue.title,
+          updatedAt: issue.updatedAt,
           url: issue.url,
         }));
         backlogCache = { at: Date.now(), fetchedAt: now(), items };

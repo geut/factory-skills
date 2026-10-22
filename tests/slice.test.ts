@@ -367,8 +367,12 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     fetchedAt: '2026-10-06T00:00:00.000Z',
     id: canonical,
     labels: [],
+    sourceAuthor: null,
+    sourceCreatedAt: null,
     sourceKind: 'text',
     sourceRef: 'text:proj-123',
+    sourceUpdatedAt: null,
+    sourceUrl: null,
     title: 'Remember the filter',
   };
   const policy: Policy = {
@@ -419,7 +423,9 @@ test('github umbrella issues do not create an execution', async () => {
   const runtime = new FakeRuntime();
   const umbrella: GithubClient = {
     fetchIssue: () => ({
+      author: null,
       body: 'Coordinate the slices.',
+      createdAt: null,
       host: 'github.com',
       labels: [],
       nodeId: 'I_parent',
@@ -427,6 +433,7 @@ test('github umbrella issues do not create an execution', async () => {
       owner: 'geut',
       repo: 'factory-skills',
       title: 'Parent',
+      updatedAt: null,
       url: 'https://github.com/geut/factory-skills/issues/6',
     }),
     listSubIssues: () => [{ body: '', number: 7, title: 'Concrete slice', url: null }],
