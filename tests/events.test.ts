@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
+import { initRepo } from './git-repo.ts';
 
 // GET /v1/events end to end: what arrives, and how a client resumes.
 
@@ -29,6 +30,7 @@ type Factory = { base: string; runtime: FakeRuntime; token: string };
 async function factory(): Promise<Factory> {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-events-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   mkdirSync(path.join(codeRoot, '.factory'));
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),

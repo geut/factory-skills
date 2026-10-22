@@ -18,7 +18,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory status <ticket>
 ```
 
-`start` resolves the ticket, freezes the source, and launches the planning agent. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, and each task file's frontmatter (`type`, `qa`, `blocked_by`) is valid, the controller registers the task graph, adds a git worktree at `.factory/worktrees/<slug>`, and launches the first dependency-ready work agent. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement.
+`start` resolves the ticket, freezes the source, adds the ticket's git worktree at `.factory/worktrees/<slug>` (see [Worktree base](#worktree-base)), and launches the planning agent in it. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, and each task file's frontmatter (`type`, `qa`, `blocked_by`) is valid, the controller registers the task graph and launches the first dependency-ready work agent in the same worktree. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement.
 
 `caller_ping` stores the question and waits. `reply` resumes that same session. A failed resume keeps the answer; `retry` reuses it. Plan validation may resume the planner three times. Launch failures retry separately and do not spend that budget.
 
@@ -210,9 +210,19 @@ Child sessions follow the named skill, return only the versioned template in tha
 | run          | One pane launch. A resume or retry creates a new run. |
 | factory root | Untracked `.factory/` in the code repository.         |
 
+## Worktree base
+
+A ticket starts from the tip of its remote's default branch, not from your checkout. Before planning, the controller asks `origin` (or the only remote) for its default branch, fetches it into `refs/remotes/<remote>/<branch>`, and adds the worktree on a new `factory/<slug>` branch at that commit. Plan, work, QA, review, and wrap-up all run in that worktree, so the planner reads the code the workers change, and pull requests merged since your last `git pull` are included. Your checkout, its branch, and its local `main` never move.
+
+- A repository without a remote starts from the code root's `HEAD`, as before.
+- With several remotes and none named `origin`, the ticket stops and asks you to name one `origin`.
+- A remote that cannot be reached, or a fetch that fails, stops the ticket before planning with git's error, as a failed worktree step. `/factory retry` tries again. Git never prompts: a password or host-key question fails the fetch.
+- `.factory/` is untracked, so the worktree has none. Plan files still go to `.factory/tickets/<slug>/` in the code root, and the planner's prompt names the factory root. They stay there after the worktree is removed.
+- A ticket started before this change keeps planning in the code root and gets its worktree when its plan is accepted.
+
 ## Worktree setup
 
-Each ticket works in its own git worktree, which starts without installed dependencies. `worktree.setup` lists commands the controller runs once in each new worktree, in order, before its first agent, so agents, validation, and QA start from a ready tree. Each command takes a `name`, an `argv`, and an optional `timeoutMs` (10 minutes by default).
+Each ticket works in its own git worktree, which starts without installed dependencies. `worktree.setup` lists commands the controller runs once in each new worktree, in order, before its first agent (the planner), so agents, validation, and QA start from a ready tree. Each command takes a `name`, an `argv`, and an optional `timeoutMs` (10 minutes by default).
 
 - Use a command that reuses a cache, so each ticket links dependencies instead of downloading them: `pnpm install --frozen-lockfile --prefer-offline` (pnpm's global store makes it mostly hard links), `npm ci --prefer-offline`, `uv sync --frozen`, `bundle install --local`, or `cargo fetch --locked`.
 - Each worktree gets its own dependencies, matching its branch's lockfile, so a ticket that changes them cannot affect another ticket or your checkout.

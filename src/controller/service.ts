@@ -895,7 +895,7 @@ export function createFactoryService(input: {
     if (applied.response.kind === 'rejected') {
       return applied.response.message;
     }
-    if (!applied.response.message.startsWith('Planning queued')) {
+    if (!applied.response.message.startsWith('Preparing the worktree for')) {
       return applied.response.message;
     }
     const current = status(ref);

@@ -42,6 +42,23 @@ function pendingPlanValidation() {
     title: ticket.title,
   };
   send({ kind: 'start', policy: execution.policy, ticket: resolved }, 'start');
+  const worktree = loadCurrentByTicketKey(db, ticket.id)?.actions.find(
+    (item) => item.kind === 'prepare_worktree',
+  );
+  if (worktree === undefined) {
+    throw new Error('the worktree was not queued');
+  }
+  send(
+    {
+      actionId: worktree.id,
+      baseBranch: 'main',
+      baseSha: 'base-sha',
+      branch: 'factory/demo',
+      kind: 'worktree_ready',
+      worktreePath: path.join(root, 'worktrees/demo'),
+    },
+    'worktree',
+  );
   const launch = loadCurrentByTicketKey(db, ticket.id)?.actions.find(
     (item) => item.kind === 'launch_run',
   );

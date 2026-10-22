@@ -6,6 +6,7 @@ import { afterEach, test } from 'node:test';
 import type { GithubClient, GithubIssue } from '../src/ports/github.ts';
 import { FakeRuntime } from '../src/runtime/fake.ts';
 import { type RunningServer, serve } from '../src/server/serve.ts';
+import { initRepo } from './git-repo.ts';
 
 // GET /v1/backlog end to end, with a stand-in for gh.
 
@@ -42,6 +43,7 @@ type Factory = { base: string; listed: Array<Array<string>>; token: string };
 async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-backlog-'));
   roots.push(codeRoot);
+  initRepo(codeRoot);
   mkdirSync(path.join(codeRoot, '.factory'));
   writeFileSync(
     path.join(codeRoot, '.factory', 'FACTORY.json'),

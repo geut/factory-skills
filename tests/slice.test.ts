@@ -36,19 +36,10 @@ import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
+import { git, initRepo } from './git-repo.ts';
 
 const roots: Array<string> = [];
 const scratch = path.join(process.cwd(), '.scratch');
-const gitEnv = {
-  ...process.env,
-  GIT_AUTHOR_EMAIL: 'factory@example.com',
-  GIT_AUTHOR_NAME: 'Factory',
-  GIT_COMMITTER_EMAIL: 'factory@example.com',
-  GIT_COMMITTER_NAME: 'Factory',
-  GIT_CONFIG_COUNT: '1',
-  GIT_CONFIG_KEY_0: 'commit.gpgsign',
-  GIT_CONFIG_VALUE_0: 'false',
-};
 
 afterEach(() => {
   while (roots.length > 0) {
@@ -59,23 +50,11 @@ afterEach(() => {
   }
 });
 
-function git(cwd: string, args: Array<string>): void {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout);
-  }
-}
-
-function repo(withGit = false): { codeRoot: string; factoryRoot: string } {
+function repo(): { codeRoot: string; factoryRoot: string } {
   mkdirSync(scratch, { recursive: true });
   const codeRoot = mkdtempSync(path.join(scratch, 'factory-slice-'));
   roots.push(codeRoot);
-  if (withGit) {
-    git(codeRoot, ['init', '-b', 'main']);
-    writeFileSync(path.join(codeRoot, 'README.md'), '# demo\n');
-    git(codeRoot, ['add', 'README.md']);
-    git(codeRoot, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
-  }
+  initRepo(codeRoot);
   const factoryRoot = path.join(codeRoot, '.factory');
   mkdirSync(factoryRoot, { recursive: true });
   writeFileSync(
@@ -170,7 +149,7 @@ test('start is idempotent and invalid planning resumes the same session', async 
 });
 
 test('a valid plan registers tasks and launches the first work agent', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const runtime = new FakeRuntime();
   const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
@@ -197,7 +176,7 @@ test('a valid plan registers tasks and launches the first work agent', async () 
 // The dashboard API check: the planner named task 01 as `blocked_by: [1]`, the
 // dependency pointed at no task, and accepting the plan failed a foreign key.
 test('a dependency named without its leading zero still reaches work', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const runtime = new FakeRuntime();
   const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
@@ -220,7 +199,7 @@ test('a dependency named without its leading zero still reaches work', async () 
 // A validation whose result cannot be stored fails the ticket where retry can
 // pick it up, instead of leaving it active with nothing queued.
 test('a plan validation that throws fails the ticket, and retry validates again', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const runtime = new FakeRuntime();
   const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
@@ -248,7 +227,7 @@ test('a plan validation that throws fails the ticket, and retry validates again'
 // worktree of the earlier run stayed. The new run read the old plan and found
 // the old hello.md in its worktree, and spent most of its time untangling them.
 test('a forgotten run’s ticket directory, worktree, and branch move to the archive', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const firstDb = openStateDatabase(factoryRoot, { create: true });
   const first = createFactoryService({
@@ -262,8 +241,9 @@ test('a forgotten run’s ticket directory, worktree, and branch move to the arc
   const directory = ticketDir(factoryRoot);
   const key = path.basename(directory);
   writeFileSync(path.join(directory, 'plan.md'), '# Old plan\n');
+  // The forgotten run made its worktree before planning, and worked in it.
   const oldWorktree = path.join(factoryRoot, 'worktrees', key);
-  git(codeRoot, ['worktree', 'add', '-b', `factory/${key}`, oldWorktree, 'HEAD']);
+  assert.equal(existsSync(path.join(oldWorktree, '.git')), true);
   writeFileSync(path.join(oldWorktree, 'hello.md'), '# HELLO\n');
   git(oldWorktree, ['add', 'hello.md']);
   git(oldWorktree, ['commit', '-m', 'old work']);
@@ -474,7 +454,7 @@ async function reachWork(): Promise<{
   workCwd: string;
   workRunId: RunId;
 }> {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const runtime = new FakeRuntime();
   const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
@@ -525,7 +505,7 @@ test('passing work validation launches one read-only reviewer', async () => {
 });
 
 test('failed work validation resumes the same session and the limit pauses', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
@@ -598,7 +578,7 @@ test('failed work validation resumes the same session and the limit pauses', asy
 });
 
 test('at the work correction limit a reply resumes the worker with the answer', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
@@ -671,7 +651,7 @@ test('work caller_ping resumes that work session and a failed resume keeps the a
 });
 
 test('restart validates a finished worker once and reconciles one reviewer', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   const db = openStateDatabase(factoryRoot, { create: true });
   writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
   const runtime = new FakeRuntime();
@@ -728,7 +708,7 @@ test('restart validates a finished worker once and reconciles one reviewer', asy
 });
 
 test('two tickets can validate at the same time', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
@@ -797,7 +777,7 @@ async function reachReview(
   taskCount = 1,
   codeHost?: () => CodeHost,
 ): Promise<ReviewHarness> {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, ...config })}\n`,
@@ -1455,7 +1435,7 @@ test('a failed handoff resumes the same wrap-up session with no correction limit
 });
 
 test('two tickets wrap up at the same time', async () => {
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' } })}\n`,
@@ -1649,7 +1629,7 @@ test('QA corrects its own output, returns a failing product to work, then hands 
     ],
     enabled: true,
   };
-  const { codeRoot, factoryRoot } = repo(true);
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
@@ -2177,9 +2157,76 @@ test('the work prompt lists every check work validation runs', async () => {
   assert.doesNotMatch(prompt, /git diff --check/);
 });
 
-// A ticket whose FACTORY.json sets up each worktree, up to its planner finishing.
-async function plannedWithSetup(setup: Array<{ argv: Array<string>; name: string }>) {
-  const { codeRoot, factoryRoot } = repo(true);
+// A code root whose origin is one commit ahead of its local main.
+function behindOrigin(): { codeRoot: string; factoryRoot: string; tip: string } {
+  const { codeRoot, factoryRoot } = repo();
+  const remote = path.join(codeRoot, '..', `${path.basename(codeRoot)}-origin.git`);
+  roots.push(remote);
+  git(codeRoot, ['clone', '--bare', '--quiet', codeRoot, remote]);
+  git(codeRoot, ['remote', 'add', 'origin', remote]);
+  const other = path.join(codeRoot, '..', `${path.basename(codeRoot)}-other`);
+  roots.push(other);
+  git(codeRoot, ['clone', '--quiet', remote, other]);
+  writeFileSync(path.join(other, 'merged.md'), '# merged elsewhere\n');
+  git(other, ['add', 'merged.md']);
+  git(other, ['commit', '-m', 'merged elsewhere']);
+  git(other, ['push', '--quiet', 'origin', 'main']);
+  const tip = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: other, encoding: 'utf8' }).stdout;
+  return { codeRoot, factoryRoot, tip: tip.trim() };
+}
+
+function headOf(cwd: string, ref = 'HEAD'): string {
+  return spawnSync('git', ['rev-parse', ref], { cwd, encoding: 'utf8' }).stdout.trim();
+}
+
+test('a ticket plans and works from the remote tip, and the code root stays where it was', async () => {
+  const { codeRoot, factoryRoot, tip } = behindOrigin();
+  const localMain = headOf(codeRoot);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  assert.match(await service.command('start proj-123.md'), /Started proj-123\./);
+  const plan = runtime.launches.find((launch) => launch.stage === 'plan');
+  assert.ok(plan, 'expected a plan launch');
+  assert.equal(plan.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
+  assert.equal(headOf(plan.cwd), tip);
+  assert.equal(existsSync(path.join(plan.cwd, 'merged.md')), true);
+  assert.match(plan.prompt, new RegExp(`Factory root: ${factoryRoot}`));
+  // The person's checkout did not move.
+  assert.equal(headOf(codeRoot), localMain);
+  assert.equal(existsSync(path.join(codeRoot, 'merged.md')), false);
+
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  runtime.emit(plan.runId, { kind: 'subagent_done', output: 'Planned.', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  assert.equal(work?.cwd, plan.cwd);
+  // Work validation holds HEAD at the base it started from: the remote tip.
+  assert.match(work?.prompt ?? '', /HEAD stays at the base commit/);
+  assert.equal(headOf(work?.cwd ?? ''), tip);
+});
+
+test('an unreachable remote stops the ticket before planning, and retry tries again', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  const missing = path.join(codeRoot, '..', `${path.basename(codeRoot)}-gone.git`);
+  git(codeRoot, ['remote', 'add', 'origin', missing]);
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  await waitFor(() => service.status('proj-123').includes('next: /factory retry'));
+  assert.match(service.status('proj-123'), /Cannot read the default branch of origin/);
+  assert.equal(runtime.launches.length, 0);
+
+  roots.push(missing);
+  git(codeRoot, ['clone', '--bare', '--quiet', codeRoot, missing]);
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
+});
+
+// A started ticket whose FACTORY.json sets up each worktree.
+async function startedWithSetup(setup: Array<{ argv: Array<string>; name: string }>) {
+  const { codeRoot, factoryRoot } = repo();
   writeFileSync(
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, worktree: { setup } })}\n`,
@@ -2188,27 +2235,30 @@ async function plannedWithSetup(setup: Array<{ argv: Array<string>; name: string
   const runtime = new FakeRuntime();
   const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
   await service.command('start proj-123.md');
-  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
-  const planRun = runtime.launches[0]?.runId;
-  if (planRun === undefined) {
-    throw new Error('missing plan run');
-  }
-  runtime.emit(planRun, { kind: 'subagent_done', output: 'files written', usage: sampleUsage() });
-  return { codeRoot, runtime, service };
+  return { codeRoot, factoryRoot, runtime, service };
 }
 
 test('worktree setup runs in the new worktree before its first agent', async () => {
-  const { runtime } = await plannedWithSetup([
+  const { factoryRoot, runtime } = await startedWithSetup([
     { argv: ['sh', '-c', 'echo installed > .setup-done'], name: 'install' },
   ]);
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
+  const plan = runtime.launches.find((launch) => launch.stage === 'plan');
+  assert.equal(readFileSync(path.join(plan?.cwd ?? '', '.setup-done'), 'utf8'), 'installed\n');
+
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  runtime.emit(plan?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output: 'files written',
+    usage: sampleUsage(),
+  });
   await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
-  const work = runtime.launches.find((launch) => launch.stage === 'work');
-  assert.equal(readFileSync(path.join(work?.cwd ?? '', '.setup-done'), 'utf8'), 'installed\n');
+  assert.equal(runtime.launches.find((launch) => launch.stage === 'work')?.cwd, plan?.cwd);
 });
 
 test('a failing worktree setup stops the ticket with its output, and retry reuses the worktree', async () => {
   const flag = path.join(mkdtempSync(path.join(tmpdir(), 'factory-setup-')), 'ok');
-  const { runtime, service } = await plannedWithSetup([
+  const { runtime, service } = await startedWithSetup([
     {
       argv: ['sh', '-c', `test -f '${flag}' || { echo registry unreachable; exit 3; }`],
       name: 'install',
@@ -2219,12 +2269,9 @@ test('a failing worktree setup stops the ticket with its output, and retry reuse
   const paused = service.status('proj-123');
   assert.match(paused, /Worktree setup install .* exited with code 3/);
   assert.match(paused, /registry unreachable/);
-  assert.equal(
-    runtime.launches.some((launch) => launch.stage === 'work'),
-    false,
-  );
+  assert.equal(runtime.launches.length, 0);
 
   writeFileSync(flag, '');
   await service.command('retry proj-123');
-  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
 });
