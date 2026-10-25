@@ -7,7 +7,7 @@ After the controller records the wrap-up result and usage, open two named panes.
 - `<prefix> 📦` reopens the completed wrap-up Pi session for the human.
 - `<prefix> 🔀` shows Fresh's working-tree `Review Diff` from the ticket worktree.
 
-Resolve `pi`, `fresh`, the Pi session file, and launch scripts to absolute paths. Use the `pi-herdr-subagents` generic argv pane entrypoint so shell initialization cannot swallow a launch command. Each launch script must ignore `TSTP` and `exec` its target TUI. Open the wrap-up pane without focus, then the diff with focus. Capture each returned pane ID and rename it to the label above.
+Resolve `pi`, `fresh`, the Pi session file, and launch scripts to absolute paths. Use the `pi-herdr-subagents` generic argv pane entrypoint so shell initialization cannot swallow a launch command. Each launch script must ignore `TSTP`, export your current `PATH` (and `BASH_ENV` when it is set) as literal values, because a Herdr pane does not inherit them, and `exec` its target TUI. Open the wrap-up pane without focus, then the diff with focus. Capture each returned pane ID and rename it to the label above.
 
 For the wrap-up pane, run `pi --session <wrap-up-session-file>` with no prompt, task argument, or `--thinking`. The original child has completed; this new process displays the same transcript and remains available for inspection. Do not use `subagent_resume` or send automatic input, because either would spend another model turn. If the human later requests substantive code changes there, route them back through work and review.
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { runId, sessionId } from '../domain.ts';
 import {
   classifySidecar,
   createPiHerdrRuntime,
+  forwardedEnv,
   gateExitSidecar,
   herdrAgentPromptArgs,
   herdrMetadataArgs,
@@ -18,6 +20,7 @@ import {
   parsePaneId,
   promptMarker,
   renderLaunchScript,
+  renderPaneScript,
   usageFromSession,
 } from './pi-herdr.ts';
 
@@ -126,6 +129,7 @@ test('herdr launch uses the generic argv pane contract', () => {
     ],
   );
   const script = renderLaunchScript({
+    env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
     piBin: 'pi',
@@ -153,6 +157,77 @@ test('herdr launch uses the generic argv pane contract', () => {
     'pane-1',
     '🔎 owner/repo#3',
   ]);
+});
+
+test('panes take PATH and BASH_ENV from the server, and nothing else', () => {
+  assert.deepEqual(forwardedEnv({ BASH_ENV: '/etc/env.sh', HOME: '/home/a', PATH: '/bin' }), {
+    BASH_ENV: '/etc/env.sh',
+    PATH: '/bin',
+  });
+  assert.deepEqual(forwardedEnv({ BASH_ENV: '', PATH: '/bin' }), { PATH: '/bin' });
+  assert.deepEqual(forwardedEnv({}), {});
+});
+
+test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "factory-env-'$x "));
+  // Bash expands BASH_ENV's value before reading it, so its path stays plain.
+  const envFile = path.join(mkdtempSync(path.join(tmpdir(), 'factory-bash-env-')), 'env.sh');
+  writeFileSync(envFile, 'export FROM_BASH_ENV=loaded\n');
+  // Pi's bash tool runs non-interactive bash, which reads BASH_ENV.
+  const pi = path.join(directory, 'pi');
+  writeFileSync(
+    pi,
+    '#!/bin/bash\nprintf "%s|%s" "$PATH" "$FROM_BASH_ENV" > "$(dirname "$0")/seen"\n',
+    {
+      mode: 0o755,
+    },
+  );
+  const env = {
+    BASH_ENV: envFile,
+    PATH: `/opt/my tools/bin:/a'b$HOME:${process.env['PATH'] ?? ''}`,
+  };
+  const sessionFile = path.join(directory, 'session.jsonl');
+  const script = path.join(directory, 'run.sh');
+  writeFileSync(
+    script,
+    renderLaunchScript({
+      env,
+      handshakePath: '/pkg/child-handshake.ts',
+      model: 'work-model',
+      piBin: pi,
+      promptFile: '/tmp/prompt.txt',
+      replyRequired: false,
+      runId: 'run-1',
+      sessionFile,
+      thinking: 'medium',
+      tools: 'read,bash',
+    }),
+    { mode: 0o755 },
+  );
+  // Herdr's environment, without the server's PATH or BASH_ENV.
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded`);
+
+  const pane = renderPaneScript({
+    cwd: directory,
+    env,
+    freshBin: 'fresh',
+    piBin: pi,
+    target: { kind: 'session', sessionFile },
+  });
+  writeFileSync(path.join(directory, 'seen'), '');
+  writeFileSync(script, pane, { mode: 0o755 });
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded`);
+
+  const bare = renderPaneScript({
+    cwd: directory,
+    env: {},
+    freshBin: 'fresh',
+    piBin: pi,
+    target: { kind: 'session', sessionFile },
+  });
+  assert.doesNotMatch(bare, /export (PATH|BASH_ENV)=/);
 });
 
 test('pane id comes from the nested herdr plugin pane payload', () => {
@@ -382,6 +457,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
   const calls: Array<Array<string>> = [];
   let live = true;
   const runtime = createPiHerdrRuntime({
+    env: { HOME: '/home/agent', PATH: '/server/bin:/usr/bin' },
     run: async (args) => {
       calls.push(args);
       if (args[0] === 'pane' && args[1] === 'process-info') {
@@ -463,6 +539,11 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     true,
   );
   assert.match(readFileSync(`${spec.sessionFile}.sh`, 'utf8'), /-e '.*child-handshake\.ts'/);
+  assert.match(
+    readFileSync(`${spec.sessionFile}.sh`, 'utf8'),
+    /^export PATH='\/server\/bin:\/usr\/bin'$/m,
+  );
+  assert.doesNotMatch(readFileSync(`${spec.sessionFile}.sh`, 'utf8'), /HOME/);
 });
 
 test('observe deletes a stale done until the new prompt is in the session', async () => {
