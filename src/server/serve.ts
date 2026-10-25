@@ -275,6 +275,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const runtime =
     input.runtime?.({ handshakePath: handshake, piBin }) ??
     createPiHerdrRuntime({
+      env: input.env,
       handshakePath: handshake,
       piBin,
       socketPath,

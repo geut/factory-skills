@@ -251,7 +251,33 @@ export function handshakeExtensionPath(): string {
   return fileURLToPath(new URL('./child-handshake.ts', import.meta.url));
 }
 
+// The variables an agent's shell takes from the factory server. Herdr opens
+// panes with its own environment, and the agents' bash is non-interactive, so
+// a PATH that only ~/.bashrc extends would otherwise not reach them.
+const forwardedNames = ['PATH', 'BASH_ENV'] as const;
+
+export type ForwardedEnv = Partial<Record<(typeof forwardedNames)[number], string>>;
+
+export function forwardedEnv(env: NodeJS.ProcessEnv): ForwardedEnv {
+  const forwarded: ForwardedEnv = {};
+  for (const name of forwardedNames) {
+    const value = env[name];
+    if (value !== undefined && value.length > 0) {
+      forwarded[name] = value;
+    }
+  }
+  return forwarded;
+}
+
+function exportLines(env: ForwardedEnv): string {
+  return forwardedNames
+    .filter((name) => env[name] !== undefined)
+    .map((name) => `export ${name}=${shellQuote(env[name] ?? '')}\n`)
+    .join('');
+}
+
 export function renderLaunchScript(input: {
+  env: ForwardedEnv;
   handshakePath: string;
   model: string;
   piBin: string;
@@ -267,7 +293,7 @@ export function renderLaunchScript(input: {
   const runId = shellQuote(input.runId);
   return `#!/usr/bin/env bash
 trap '' TSTP
-export PI_SUBAGENT_SESSION=${session}
+${exportLines(input.env)}export PI_SUBAGENT_SESSION=${session}
 export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 ${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
@@ -281,6 +307,7 @@ exit "$code"
 // it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi.
 export function renderPaneScript(input: {
   cwd: string;
+  env: ForwardedEnv;
   freshBin: string;
   piBin: string;
   target: PaneSpec['target'];
@@ -291,7 +318,7 @@ export function renderPaneScript(input: {
       : `${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
   return `#!/usr/bin/env bash
 trap '' TSTP
-export FACTORY_CHILD=1
+${exportLines(input.env)}export FACTORY_CHILD=1
 cd ${shellQuote(input.cwd)} || exit 1
 exec ${command}
 `;
@@ -608,6 +635,8 @@ function noop(): void {
 }
 
 export function createPiHerdrRuntime(options?: {
+  // The server's environment; its PATH and BASH_ENV reach every pane.
+  env?: NodeJS.ProcessEnv;
   events?: PaneExitSource | null;
   freshBin?: string;
   // The child handshake extension Pi loads with -e; the source file by default.
@@ -621,6 +650,7 @@ export function createPiHerdrRuntime(options?: {
   targetPaneId?: string;
 }): FactorySubagentRuntime {
   const run = options?.run ?? defaultRunner;
+  const env = forwardedEnv(options?.env ?? process.env);
   const piBin = options?.piBin ?? 'pi';
   const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
@@ -818,6 +848,7 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
+        env,
         handshakePath,
         model: spec.model,
         piBin,
@@ -884,7 +915,7 @@ export function createPiHerdrRuntime(options?: {
     }
     writeFileSync(
       spec.scriptFile,
-      renderPaneScript({ cwd: spec.cwd, freshBin, piBin, target: spec.target }),
+      renderPaneScript({ cwd: spec.cwd, env, freshBin, piBin, target: spec.target }),
       { mode: 0o755 },
     );
     const paneId = await openIn(spec.tab, spec.cwd, spec.scriptFile);
