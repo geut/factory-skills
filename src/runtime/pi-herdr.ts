@@ -313,23 +313,27 @@ exit "$code"
 // it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi. The
 // pane outlives its ticket in the worktree, so FACTORY_WORKTREE names no
 // worktree: the stray sweep leaves it, and what the human starts there, alone.
+// The diff opens in Hunk when it is installed, else in Fresh.
 export function renderPaneScript(input: {
   cwd: string;
   env: ForwardedEnv;
   freshBin: string;
+  hunkBin: string;
   piBin: string;
   target: PaneSpec['target'];
 }): string {
+  const hunk = shellQuote(input.hunkBin);
   const command =
     input.target.kind === 'session'
       ? `${shellQuote(input.piBin)} --session ${shellQuote(input.target.sessionFile)}`
-      : `${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
+      : `command -v ${hunk} >/dev/null 2>&1 && exec ${hunk} patch ${shellQuote(input.target.file)} --agent-notes
+exec ${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
   return `#!/usr/bin/env bash
 trap '' TSTP
 ${exportLines(input.env)}export FACTORY_CHILD=1
 export FACTORY_WORKTREE=handoff
 cd ${shellQuote(input.cwd)} || exit 1
-exec ${command}
+${input.target.kind === 'session' ? `exec ${command}` : command}
 `;
 }
 
@@ -650,6 +654,7 @@ export function createPiHerdrRuntime(options?: {
   freshBin?: string;
   // The child handshake extension Pi loads with -e; the source file by default.
   handshakePath?: string;
+  hunkBin?: string;
   piBin?: string;
   pollMs?: number;
   run?: CommandRunner;
@@ -663,6 +668,7 @@ export function createPiHerdrRuntime(options?: {
   const piBin = options?.piBin ?? 'pi';
   const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
+  const hunkBin = options?.hunkBin ?? process.env['FACTORY_HUNK_BIN'] ?? 'hunk';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
   const tabsFile = options?.tabsFile ?? null;
   const tabs = new Map<string, TicketTabState>(Object.entries(readTabs(tabsFile)));
@@ -925,7 +931,7 @@ export function createPiHerdrRuntime(options?: {
     }
     writeFileSync(
       spec.scriptFile,
-      renderPaneScript({ cwd: spec.cwd, env, freshBin, piBin, target: spec.target }),
+      renderPaneScript({ cwd: spec.cwd, env, freshBin, hunkBin, piBin, target: spec.target }),
       { mode: 0o755 },
     );
     const paneId = await openIn(spec.tab, spec.cwd, spec.scriptFile);

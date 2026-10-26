@@ -44,7 +44,7 @@ export type ActiveWatch = {
 };
 
 // A human-facing pane that runs no model turn: the finished wrap-up session
-// reopened for reading, or the worktree diff in Fresh.
+// reopened for reading, or the ticket's diff in Hunk or Fresh.
 export type PaneSpec = {
   cwd: string;
   name: string;

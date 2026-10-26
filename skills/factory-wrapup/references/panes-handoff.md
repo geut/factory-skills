@@ -1,6 +1,6 @@
 # Handoff surfaces
 
-In a controller run, the controller opens both panes itself after validation passes: `📦 <ticket>` runs `pi --session <wrap-up-session-file>`, and `🔀 <ticket>` opens the ticket's diff, from the commit the worktree started at, so it includes what you committed, written to a file next to the session, in Fresh with `--no-restore`. Do not open them yourself. The rest of this page applies to a direct run.
+In a controller run, the controller opens both panes itself after validation passes: `📦 <ticket>` runs `pi --session <wrap-up-session-file>`, and `🔀 <ticket>` opens the ticket's diff, from the commit the worktree started at, so it includes what you committed, written to a file next to the session, in [Hunk](https://hunk.dev) (`hunk patch <file> --agent-notes`) when it is on PATH, else in Fresh with `--no-restore`. Do not open them yourself. The rest of this page applies to a direct run.
 
 After the controller records the wrap-up result and usage, open two named panes. `<prefix>` is the first 12 characters of the ticket id. Use a shorter id whole. Separate the prefix and emoji with a single space.
 
