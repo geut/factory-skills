@@ -72,7 +72,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },
         pullRequests: false,
         stages: {},
-        validation: { work: { commands: [] }, wrapup: { generated: [] } },
+        validation: { qa: { commands: [] }, work: { commands: [] }, wrapup: { generated: [] } },
         worktreeSetup: [],
       },
       retry: null,

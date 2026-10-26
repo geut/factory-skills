@@ -23,19 +23,26 @@ test('QA is off by default and needs a command to be on', () => {
     enabled: true,
   });
   assert.equal(parseFactoryConfig({ models, stages: { review: {} } }).kind, 'error');
-  const again = readQaSettings({ commands: [e2e], enabled: true, workCommands: ['lint'] });
-  assert.deepEqual(again.kind === 'ok' ? again.settings['workCommands'] : null, ['lint']);
-  assert.equal(readQaSettings({ commands: [e2e], workCommands: 'lint' }).kind, 'error');
-  const typo = parseFactoryConfig({
-    models,
-    stages: { qa: { commands: [e2e], enabled: true, workCommands: ['lnt'] } },
-    validation: { work: { commands: [{ argv: ['npm', 'run', 'lint'], name: 'lint' }] } },
-  });
-  assert.deepEqual(typo, {
-    kind: 'error',
-    message:
-      'FACTORY.json stages.qa.workCommands names lnt, which validation.work.commands does not list.',
-  });
+});
+
+// The commands QA validation runs for a FACTORY.json `validation`, or the config error.
+function qaCommands(validation: unknown) {
+  const parsed = parseFactoryConfig({ models, validation });
+  return parsed.kind === 'ok' ? parsed.config.validation.qa.commands : parsed.message;
+}
+
+test('QA validation runs validation.qa.commands, or the work commands when it lists none', () => {
+  const lint = { argv: ['npm', 'run', 'lint'], name: 'lint', timeoutMs: 120_000 };
+  const check = { argv: ['npm', 'run', 'check'], name: 'check', timeoutMs: 120_000 };
+  assert.deepEqual(qaCommands({ work: { commands: [lint, check] } }), [lint, check]);
+  assert.deepEqual(qaCommands({ qa: { commands: [lint] }, work: { commands: [lint, check] } }), [
+    lint,
+  ]);
+  assert.deepEqual(qaCommands({ qa: { commands: [] }, work: { commands: [lint] } }), []);
+  assert.equal(
+    qaCommands({ qa: { commands: [{ name: 'lint' }] } }),
+    'FACTORY.json validation.qa.commands must be objects with a name, an argv array, and an optional timeoutMs.',
+  );
 });
 
 test('criteria, test plan rows, and ledger lines are keyed AC1..ACn', () => {

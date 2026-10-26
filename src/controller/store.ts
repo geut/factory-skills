@@ -185,6 +185,14 @@ function parsePolicy(raw: string): Policy {
     pullRequests: value['pullRequests'] === true,
     stages: storedStageSettings(value['stages']),
     validation: {
+      // Executions started before validation.qa run the work commands again.
+      qa: {
+        commands: parseCommands(
+          isRecord(validation['qa'])
+            ? validation['qa']['commands']
+            : validation['work']['commands'],
+        ),
+      },
       work: { commands: parseCommands(validation['work']['commands']) },
       wrapup: { generated: parseGenerated(validation['wrapup']) },
     },

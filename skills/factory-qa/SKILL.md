@@ -78,7 +78,7 @@ Write both files in the QA directory the prompt names:
   - Mobile layouts are not covered.
   ```
 
-Every criterion must have a row in the test plan or a ledger line with a reason. A screenshot path must point at a file you captured. The controller checks both, then runs the commands in `FACTORY.json` `stages.qa.commands` in the worktree, then runs the work validation commands again (type check, lint, unit tests). Your test files must pass them: a failure in a file you changed comes back to you as a correction.
+Every criterion must have a row in the test plan or a ledger line with a reason. A screenshot path must point at a file you captured. The controller checks both, then runs the commands in `FACTORY.json` `stages.qa.commands` in the worktree, then the commands in `validation.qa.commands` (by default the work validation commands: type check, lint, unit tests). Your test files must pass them: a failure in a file you changed comes back to you as a correction.
 
 Leave the work uncommitted. Do not edit factory state, start another stage, commit, or push.
 
