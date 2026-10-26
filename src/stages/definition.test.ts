@@ -137,7 +137,7 @@ test('QA proves each criterion at the cheapest layer that runs the real code', (
       taskFile: '/01-task.md',
       taskId: '01',
       title: 'Filter',
-      workCommands: [],
+      validationCommands: [],
       workerSummary: '',
       worktree: '/wt',
     },
