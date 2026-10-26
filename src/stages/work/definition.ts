@@ -1,4 +1,5 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
+import { runsForTask } from '../flow.ts';
 import { workerSummary } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 
@@ -16,6 +17,8 @@ export type WorkInput = {
   dependencies: Array<{ status: string; taskId: string }>;
   displayRef: string;
   planPath: string;
+  // Whether QA runs for this task, and so owns its end-to-end tests.
+  qaRuns: boolean;
   taskFile: string;
   taskId: string;
   taskType: string | null;
@@ -69,6 +72,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
       })),
       displayRef: snapshot.ticket.displayRef,
       planPath: execution.planPath ?? '',
+      qaRuns: runsForTask(execution.policy, task, 'qa'),
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
       taskType: prepared.taskType,
@@ -112,6 +116,9 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         `Tools: ${childToolList(tools)}`,
         `Work only in ${input.worktree}.`,
         'Leave the work uncommitted.',
+        input.qaRuns
+          ? "QA runs for this task: write unit and component tests, keep the existing end-to-end suite passing, and add no end-to-end tests for this task's acceptance criteria."
+          : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',
         '- the worktree has a change (an investigation ticket may leave none)',

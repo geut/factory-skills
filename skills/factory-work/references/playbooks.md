@@ -18,7 +18,7 @@ Do not broaden a bug fix into unrelated cleanup.
 2. Identify the existing seam closest to that outcome.
 3. Sketch the minimal caller-facing contract.
 4. Build a thin vertical slice through the required layers.
-5. Prove it at the seam, then add E2E evidence where feasible.
+5. Prove it at the seam. When QA does not run for the task, add E2E evidence where feasible.
 
 Do not build generalized infrastructure for hypothetical future stories.
 

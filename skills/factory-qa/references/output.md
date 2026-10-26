@@ -9,7 +9,7 @@ One sentence: which criteria are proven and which are in the ledger.
 
 ## Tests
 
-- AC1: passed — tests/e2e/filter.spec.ts › AC1: filter applies
+- AC1: passed — tests/e2e/filter.spec.ts › filter applies
 - AC2: failed — the filter resets after a reload
 
 ## Gaps
