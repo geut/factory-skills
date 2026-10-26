@@ -38,28 +38,14 @@ export type RunFacts = {
   tokens: number;
 } & TokenCategories;
 
-// Token usage by category. The categories are disjoint, as Pi reports them
-// (input excludes cached input), so they add up to `tokens`. Null when the
-// usage was never recorded.
+// Token usage by category, null when the usage was never recorded. See
+// docs/stats-v1.md for how they relate to `tokens`.
 export type TokenCategories = {
   tokensCacheRead: number | null;
   tokensCacheWrite: number | null;
   tokensInput: number | null;
   tokensOutput: number | null;
 };
-
-// The token categories of a usage row whose columns are `<prefix>tokens_input`
-// and so on, or nulls when `<prefix>tokens_total` is null: no usage.
-function tokenCategories(row: Record<string, unknown>, prefix: string): TokenCategories {
-  const known = row[`${prefix}tokens_total`] !== null && row[`${prefix}tokens_total`] !== undefined;
-  const count = (column: string) => (known ? Number(row[`${prefix}${column}`] ?? 0) : null);
-  return {
-    tokensCacheRead: count('tokens_cache_read'),
-    tokensCacheWrite: count('tokens_cache_write'),
-    tokensInput: count('tokens_input'),
-    tokensOutput: count('tokens_output'),
-  };
-}
 
 export type TicketFacts = {
   agentMs: number;
@@ -128,6 +114,19 @@ export function setupOf(model: string, thinking: string): string {
   return thinking.length > 0 ? `${model} · ${thinking}` : model;
 }
 
+// The token categories of a usage row (`tokens_input` and so on), or nulls when
+// it has no `tokens_total`: no usage was recorded.
+function tokenCategories(row: Record<string, unknown>): TokenCategories {
+  const known = row['tokens_total'] !== null && row['tokens_total'] !== undefined;
+  const count = (column: string) => (known ? Number(row[column] ?? 0) : null);
+  return {
+    tokensCacheRead: count('tokens_cache_read'),
+    tokensCacheWrite: count('tokens_cache_write'),
+    tokensInput: count('tokens_input'),
+    tokensOutput: count('tokens_output'),
+  };
+}
+
 export function runFacts(db: DatabaseSync, executions: Array<string>): Array<RunFacts> {
   if (executions.length === 0) {
     return [];
@@ -137,8 +136,10 @@ export function runFacts(db: DatabaseSync, executions: Array<string>): Array<Run
     .prepare(
       `SELECT r.id, r.execution_id, r.purpose, r.origin, r.semantic_round, r.terminal_kind,
               r.started_at, r.ended_at, s.stage, s.task_id, s.model, s.thinking,
-              u.delta_tokens_input, u.delta_tokens_output, u.delta_tokens_cache_read,
-              u.delta_tokens_cache_write, u.delta_tokens_total, u.delta_cost_usd_micros,
+              u.delta_tokens_input AS tokens_input, u.delta_tokens_output AS tokens_output,
+              u.delta_tokens_cache_read AS tokens_cache_read,
+              u.delta_tokens_cache_write AS tokens_cache_write,
+              u.delta_tokens_total AS tokens_total, u.delta_cost_usd_micros,
               (SELECT v.status FROM validation_runs AS v WHERE v.run_id = r.id
                ORDER BY v.attempt DESC LIMIT 1) AS validation
        FROM agent_runs AS r
@@ -170,8 +171,8 @@ export function runFacts(db: DatabaseSync, executions: Array<string>): Array<Run
         stage: String(item['stage']),
         task: str(item['task_id']),
         thinking,
-        tokens: Number(item['delta_tokens_total'] ?? 0),
-        ...tokenCategories(item, 'delta_'),
+        tokens: Number(item['tokens_total'] ?? 0),
+        ...tokenCategories(item),
       };
     });
 }
@@ -364,7 +365,7 @@ export function ticketFacts(
       startedAt,
       startToHandoffMs,
       tokens: Number(row['tokens_total'] ?? 0),
-      ...tokenCategories(row, ''),
+      ...tokenCategories(row),
       waitingMs,
     };
   });

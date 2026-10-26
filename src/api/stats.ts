@@ -30,13 +30,18 @@ const nullableNumber = z.number().nullable();
 
 const nullableInt = z.int().nullable();
 
-// Tokens by category. They are disjoint (input excludes cached input) and add
-// up to `tokens`; null when no usage was recorded.
-const TokenCategories = {
-  tokensCacheRead: nullableInt,
-  tokensCacheWrite: nullableInt,
-  tokensInput: nullableInt.meta({ description: 'Input tokens, excluding cached input.' }),
-  tokensOutput: nullableInt,
+// The token categories beside `tokens`, as docs/stats-v1.md defines them.
+const tokenCategoryFields = {
+  tokensCacheRead: nullableInt.meta({
+    description: 'Cached input read, in tokens; null when usage is unknown.',
+  }),
+  tokensCacheWrite: nullableInt.meta({
+    description: 'Input written to the cache, in tokens; null when usage is unknown.',
+  }),
+  tokensInput: nullableInt.meta({
+    description: 'Input tokens, excluding cached input; null when usage is unknown.',
+  }),
+  tokensOutput: nullableInt.meta({ description: 'Output tokens; null when usage is unknown.' }),
 };
 
 const Interventions = z
@@ -111,7 +116,7 @@ const StageRow = z
     stage: z.string(),
     thinking: z.string(),
     tokens: z.int(),
-    ...TokenCategories,
+    ...tokenCategoryFields,
     tokensPerAcceptedOutput: nullableNumber,
   })
   .meta({ id: 'StatsStageRow' });
@@ -160,7 +165,7 @@ const TicketRow = z
     startedAt: z.string(),
     startToHandoffMs: nullableNumber,
     tokens: z.int(),
-    ...TokenCategories,
+    ...tokenCategoryFields,
     waitingMs: z.number(),
   })
   .meta({ id: 'StatsTicketRow' });

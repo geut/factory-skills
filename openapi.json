@@ -3539,7 +3539,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
           },
           "tokensCacheWrite": {
             "anyOf": [
@@ -3551,7 +3552,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
           },
           "tokensInput": {
             "anyOf": [
@@ -3564,7 +3566,7 @@
                 "type": "null"
               }
             ],
-            "description": "Input tokens, excluding cached input."
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
           },
           "tokensOutput": {
             "anyOf": [
@@ -3576,7 +3578,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Output tokens; null when usage is unknown."
           },
           "tokensPerAcceptedOutput": {
             "type": [
@@ -3888,7 +3891,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
           },
           "tokensCacheWrite": {
             "anyOf": [
@@ -3900,7 +3904,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
           },
           "tokensInput": {
             "anyOf": [
@@ -3913,7 +3918,7 @@
                 "type": "null"
               }
             ],
-            "description": "Input tokens, excluding cached input."
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
           },
           "tokensOutput": {
             "anyOf": [
@@ -3925,7 +3930,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Output tokens; null when usage is unknown."
           },
           "waitingMs": {
             "type": "number"
