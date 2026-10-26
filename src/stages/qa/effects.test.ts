@@ -100,19 +100,21 @@ function validate(
       snapshot.execution.policy.stages['qa'] = {
         commands: [input.e2e ?? command('e2e')],
         enabled: true,
-        ...(input.again === undefined ? {} : { workCommands: input.again }),
       };
-      snapshot.execution.policy.validation.work.commands = [
+      const work = [
         command('test'),
         input.typecheck ?? command('check'),
         input.lint ?? command('lint'),
       ];
+      snapshot.execution.policy.validation.work.commands = work;
+      snapshot.execution.policy.validation.qa.commands =
+        input.again === undefined ? work : work.filter((item) => input.again?.includes(item.name));
       finished.baseline = input.baseline === false ? null : baseline;
     }),
   );
 }
 
-test('QA runs the work commands again after its own, and hands on both groups of checks', async () => {
+test('QA runs validation.qa.commands after its own, and hands on both groups of checks', async () => {
   const report = await validate(worktree(), { again: ['check', 'lint'] });
   assert.equal(report.status, 'passed');
   assert.deepEqual(

@@ -38,7 +38,7 @@ QA is an optional stage between work and review, on when `FACTORY.json` sets `st
 
 - missing or incomplete QA output resumes the QA agent with the failures, up to `limits.qaCorrections` (default 2) per round;
 - a failing QA command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
-- after the QA commands, the controller runs the `validation.work.commands` again (all of them, or the names in `stages.qa.workCommands`), so code QA wrote meets work's bar. A failure whose output names a file QA changed this round resumes the QA agent as a correction, ahead of any other failure; any other failure returns the task to work;
+- after the QA commands, the controller runs `validation.qa.commands` (the `validation.work.commands` when it is not set; `[]` turns it off), so code QA wrote meets the project's bar. A failure whose output names a file QA changed this round resumes the QA agent as a correction, ahead of any other failure; any other failure returns the task to work;
 - a pass hands review the diff QA left, tests included, and the checks behind it: the work checks as they stand after QA and QA's own, grouped under Work and QA in the review prompt. Wrap-up lists the screenshots for the pull request.
 
 Every stage after work is given the worker's latest reply for the task, in every round. When a later round's reply is empty, the last reply with text stands in, marked as such.
@@ -278,8 +278,7 @@ The factory reads issues through a **tracker** and pull requests through a **cod
   "stages": {
     "qa": {
       "enabled": true,
-      "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }],
-      "workCommands": ["tests"]
+      "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }]
     }
   },
   "worktree": {
@@ -289,6 +288,7 @@ The factory reads issues through a **tracker** and pull requests through a **cod
   },
   "validation": {
     "work": { "commands": [{ "name": "tests", "argv": ["npm", "test"], "timeoutMs": 300000 }] },
+    "qa": { "commands": [{ "name": "lint", "argv": ["npm", "run", "lint"] }] },
     "wrapup": { "generated": ["docs/api/", "*.snap"] }
   }
 }

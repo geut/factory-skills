@@ -49,8 +49,8 @@ export type QaInput = {
   taskFile: string;
   taskId: string;
   title: string;
-  // The work commands QA validation runs again after the QA commands.
-  workCommands: Array<WorkCommand>;
+  // validation.qa.commands, which QA validation runs after the QA commands.
+  validationCommands: Array<WorkCommand>;
   workerSummary: string;
   worktree: string;
 };
@@ -67,13 +67,7 @@ export function changedFiles(diff: string): Array<string> {
   return [...files];
 }
 
-// `workCommands` names the validation.work commands QA validation runs again;
-// null runs all of them.
-export type QaSettings = {
-  commands: Array<WorkCommand>;
-  enabled: boolean;
-  workCommands: Array<string> | null;
-};
+export type QaSettings = { commands: Array<WorkCommand>; enabled: boolean };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -100,9 +94,8 @@ function readCommand(value: unknown): WorkCommand | null {
   return { argv, name, timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS };
 }
 
-// FACTORY.json `stages.qa`: `{ "enabled": true, "commands": [{ name, argv, timeoutMs? }],
-// "workCommands"?: ["check", "lint"] }`. QA is off unless enabled, and it needs
-// at least one command to run.
+// FACTORY.json `stages.qa`: `{ "enabled": true, "commands": [{ name, argv, timeoutMs? }] }`.
+// QA is off unless enabled, and it needs at least one command to run.
 export function readQaSettings(raw: unknown): SettingsResult {
   if (raw === undefined) {
     return { kind: 'ok', settings: { commands: [], enabled: false } };
@@ -110,7 +103,7 @@ export function readQaSettings(raw: unknown): SettingsResult {
   const invalid = {
     kind: 'error' as const,
     message:
-      'FACTORY.json stages.qa must be { "enabled": boolean, "commands": [{ "name", "argv", "timeoutMs"? }], "workCommands"?: ["name"] }.',
+      'FACTORY.json stages.qa must be { "enabled": boolean, "commands": [{ "name", "argv", "timeoutMs"? }] }.',
   };
   if (!isRecord(raw) || (raw['enabled'] !== undefined && typeof raw['enabled'] !== 'boolean')) {
     return invalid;
@@ -123,25 +116,13 @@ export function readQaSettings(raw: unknown): SettingsResult {
   if (commands.some((command) => command === null)) {
     return invalid;
   }
-  const workCommands = raw['workCommands'];
-  if (
-    workCommands !== undefined &&
-    (!Array.isArray(workCommands) ||
-      workCommands.some((name) => typeof name !== 'string' || name.trim().length === 0))
-  ) {
-    return invalid;
-  }
   const enabled = raw['enabled'] === true;
   if (enabled && commands.length === 0) {
     return { kind: 'error', message: 'FACTORY.json stages.qa needs at least one command.' };
   }
   return {
     kind: 'ok',
-    settings: {
-      commands: commands.filter((command) => command !== null),
-      enabled,
-      ...(workCommands === undefined ? {} : { workCommands }),
-    },
+    settings: { commands: commands.filter((command) => command !== null), enabled },
   };
 }
 
@@ -149,21 +130,12 @@ export function readQaSettings(raw: unknown): SettingsResult {
 export function qaSettings(policy: Policy): QaSettings {
   const read = readQaSettings(policy.stages['qa']);
   if (read.kind === 'error' || !Array.isArray(read.settings['commands'])) {
-    return { commands: [], enabled: false, workCommands: null };
+    return { commands: [], enabled: false };
   }
-  const names = read.settings['workCommands'];
   return {
     commands: read.settings['commands'] as Array<WorkCommand>,
     enabled: read.settings.enabled,
-    workCommands: Array.isArray(names) ? (names as Array<string>) : null,
   };
-}
-
-// The work commands QA validation runs again after its own.
-export function qaWorkCommands(policy: Policy): Array<WorkCommand> {
-  const names = qaSettings(policy).workCommands;
-  const all = policy.validation.work.commands;
-  return names === null ? all : all.filter((command) => names.includes(command.name));
 }
 
 // The FACTORY.json limits this stage reads.
@@ -252,7 +224,7 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
       title: task.title,
-      workCommands: qaWorkCommands(execution.policy),
+      validationCommands: execution.policy.validation.qa.commands,
       workerSummary: workerSummary(snapshot, task.taskId),
       worktree: execution.worktreePath,
     };
@@ -303,11 +275,11 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
         `Write ${input.dir}/ledger.md with a "- ACn: reason" line for every criterion the tests do not prove, and for any other gap.`,
         'The controller runs these commands in the worktree and fails QA when one fails:',
         ...input.commands.map((command) => `- ${command.name}: ${command.argv.join(' ')}`),
-        ...(input.workCommands.length === 0
+        ...(input.validationCommands.length === 0
           ? []
           : [
-              'Then it runs these work commands again, so your test files must pass them too; a failure in a file you changed comes back to you:',
-              ...input.workCommands.map(
+              'Then it runs these validation commands, so your test files must pass them too; a failure in a file you changed comes back to you:',
+              ...input.validationCommands.map(
                 (command) => `- ${command.name}: ${command.argv.join(' ')}`,
               ),
             ]),

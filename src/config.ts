@@ -75,8 +75,11 @@ export type FactoryConfig = {
 };
 
 // `wrapup.generated` lists path prefixes or `*` globs of generated artifacts
-// the wrap-up agent may refresh, such as `docs/api/` or `*.snap`.
+// the wrap-up agent may refresh, such as `docs/api/` or `*.snap`. `qa.commands`
+// run after QA's own commands so the tests QA wrote meet the project's bar;
+// without them, they are `work.commands`.
 export type Validation = {
+  qa: { commands: Array<WorkCommand> };
   work: { commands: Array<WorkCommand> };
   wrapup: { generated: Array<string> };
 };
@@ -171,18 +174,21 @@ function commandList(value: unknown, fallbackTimeout: number): Array<WorkCommand
   return parsed;
 }
 
-function readCommands(value: unknown): Array<WorkCommand> | null {
+// `validation.<stage>.commands`: undefined when not listed, null when malformed.
+function readCommands(value: unknown, stage: 'qa' | 'work'): Array<WorkCommand> | null | undefined {
   if (value === undefined) {
-    return [];
+    return undefined;
   }
   if (!isRecord(value)) {
     return null;
   }
-  const work = value['work'] ?? {};
-  if (!isRecord(work)) {
+  const commands = value[stage] ?? {};
+  if (!isRecord(commands)) {
     return null;
   }
-  return commandList(work['commands'] ?? [], DEFAULT_COMMAND_TIMEOUT_MS);
+  return commands['commands'] === undefined
+    ? undefined
+    : commandList(commands['commands'], DEFAULT_COMMAND_TIMEOUT_MS);
 }
 
 // `worktree.setup` runs once in each new worktree, before its first agent.
@@ -268,12 +274,21 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       message: 'FACTORY.json labels.map values must be internal labels such as investigation.',
     };
   }
-  const commands = readCommands(value['validation']);
-  if (commands === null) {
+  const workCommands = readCommands(value['validation'], 'work');
+  if (workCommands === null) {
     return {
       kind: 'error',
       message:
         'FACTORY.json validation.work.commands must be objects with a name, an argv array, and an optional timeoutMs.',
+    };
+  }
+  const commands = workCommands ?? [];
+  const qaCommands = readCommands(value['validation'], 'qa');
+  if (qaCommands === null) {
+    return {
+      kind: 'error',
+      message:
+        'FACTORY.json validation.qa.commands must be objects with a name, an argv array, and an optional timeoutMs.',
     };
   }
 
@@ -322,17 +337,6 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
   if (settings.kind === 'error') {
     return settings;
   }
-  // QA runs these work commands again, so each must be one of them.
-  const again = settings.stages['qa']?.['workCommands'];
-  const unlisted = Array.isArray(again)
-    ? again.filter((name) => !commands.some((command) => command.name === name))
-    : [];
-  if (unlisted.length > 0) {
-    return {
-      kind: 'error',
-      message: `FACTORY.json stages.qa.workCommands names ${unlisted.join(', ')}, which validation.work.commands does not list.`,
-    };
-  }
 
   return {
     config: {
@@ -344,7 +348,11 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       server,
       stages: settings.stages,
       tracker,
-      validation: { work: { commands }, wrapup: { generated } },
+      validation: {
+        qa: { commands: qaCommands ?? commands },
+        work: { commands },
+        wrapup: { generated },
+      },
       worktree,
     },
     kind: 'ok',

@@ -20,7 +20,6 @@ import { acceptanceCriteria, qaPaths, testGaps, testPlan } from './criteria.ts';
 import {
   changedFiles,
   qaSettings,
-  qaWorkCommands,
   type QaPrepared,
   type QaValidationReport,
 } from './definition.ts';
@@ -146,9 +145,10 @@ function artifact(
 
 // Checks QA's own output first: every criterion tested or in the ledger with a
 // reason, every screenshot on disk. Then it runs the QA commands itself; a
-// failing command means the product misses a criterion. Then it runs the
-// work commands again, so QA's files meet work's bar: a failure that names a
-// file QA changed this round is QA's to correct, any other goes back to work.
+// failing command means the product misses a criterion. Then it runs
+// validation.qa.commands, so QA's files meet the project's bar: a failure that
+// names a file QA changed this round is QA's to correct, any other goes back
+// to work.
 async function validateQa(input: {
   // Null for a round prepared before QA took one: no file counts as QA's.
   baseline: QaBaseline | null;
@@ -156,7 +156,7 @@ async function validateQa(input: {
   factoryDir: string;
   taskFile: string;
   taskId: string;
-  workCommands: Array<WorkCommand>;
+  validationCommands: Array<WorkCommand>;
   worktree: string;
 }): Promise<QaValidationReport> {
   const paths = qaPaths(input.factoryDir, input.taskId);
@@ -238,7 +238,7 @@ async function validateQa(input: {
   if ('message' in collected) {
     return errorReport(QA_VALIDATOR_VERSION, collected.message);
   }
-  // The work commands run again even when a QA command failed, so a file
+  // The validation commands run even when a QA command failed, so a file
   // QA wrote never reaches the worker unchecked.
   const current = fileDiffs(collected.diff);
   const qaFiles =
@@ -247,7 +247,7 @@ async function validateQa(input: {
       : Object.keys(current).filter((file) => current[file] !== input.baseline?.files[file]);
   const again: Array<ValidationCheck> = [];
   const qaFailures: Array<string> = [];
-  for (const command of input.workCommands) {
+  for (const command of input.validationCommands) {
     const result = await runCommand(command, input.worktree);
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -291,7 +291,7 @@ export const qaValidator: Validator<'qa'> = {
   leaseMs: (snapshot) =>
     validationLeaseMs([
       ...qaSettings(snapshot.execution.policy).commands,
-      ...qaWorkCommands(snapshot.execution.policy),
+      ...snapshot.execution.policy.validation.qa.commands,
     ]),
   validate: ({ run, session, snapshot }) => {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
@@ -315,7 +315,7 @@ export const qaValidator: Validator<'qa'> = {
       factoryDir: snapshot.execution.factoryDir,
       taskFile: task.taskFile,
       taskId: task.taskId,
-      workCommands: qaWorkCommands(snapshot.execution.policy),
+      validationCommands: snapshot.execution.policy.validation.qa.commands,
       worktree,
     });
   },
