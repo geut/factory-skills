@@ -44,7 +44,7 @@ All times are in milliseconds.
 
 - **External review rounds:** the distinct pull request commits that drew at least one review asking for changes, or a comment with a body, from anyone other than the pull request's author. Approvals don't count, and neither do comments without a body or the author's own reviews. Rounds are also counted per reviewer kind, **human** and **bot** (GitHub's user type); a commit that drew both counts once in the total. They are also split by disposition: **changes requested** when the commit drew at least one review asking for changes, else **commented**. A commit that drew both counts as changes requested, so the two add up to the total.
 - **Follow-up commits:** pull request commits made after handoff.
-- **Tokens and cost:** the ticket's total usage.
+- **Tokens and cost:** the ticket's total usage. `tokens` is split into four categories: `tokensInput`, `tokensOutput`, `tokensCacheRead`, and `tokensCacheWrite`. They are disjoint, as Pi reports them: `tokensInput` excludes cached input, which is `tokensCacheRead`, so the four add up to `tokens` without double counting. Run rows in the export carry the same fields. A ticket or run with no recorded usage has `tokens: 0` and null categories, so "unknown" is not mistaken for "none".
 
 ## Stage measures (per stage and model setup)
 
@@ -53,6 +53,7 @@ All times are in milliseconds.
 - **Returns to work:** work runs that a later stage sent back, grouped by that stage (`qa`, `review`).
 - **Review rounds per task:** the mean, over tasks, of each task's highest round in this stage.
 - **Tokens and cost per accepted output.**
+- **Tokens by category:** `tokens`, and `tokensInput`, `tokensOutput`, `tokensCacheRead`, and `tokensCacheWrite` summed over the runs whose usage is known. A category is null when no run in the row has known usage.
 - **Agent time.**
 - **Infrastructure-lost attempts:** infrastructure retries and runs that ended by launch failure, crash, a killed pane, or a gap. They are kept apart so a flaky sandbox does not count against the model.
 

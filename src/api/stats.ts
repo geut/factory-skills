@@ -28,6 +28,17 @@ const Envelope = {
 
 const nullableNumber = z.number().nullable();
 
+const nullableInt = z.int().nullable();
+
+// Tokens by category. They are disjoint (input excludes cached input) and add
+// up to `tokens`; null when no usage was recorded.
+const TokenCategories = {
+  tokensCacheRead: nullableInt,
+  tokensCacheWrite: nullableInt,
+  tokensInput: nullableInt.meta({ description: 'Input tokens, excluding cached input.' }),
+  tokensOutput: nullableInt,
+};
+
 const Interventions = z
   .object({
     limitPauses: z.int(),
@@ -99,6 +110,8 @@ const StageRow = z
     setup: z.string().meta({ description: 'The model setup: model and thinking level.' }),
     stage: z.string(),
     thinking: z.string(),
+    tokens: z.int(),
+    ...TokenCategories,
     tokensPerAcceptedOutput: nullableNumber,
   })
   .meta({ id: 'StatsStageRow' });
@@ -147,6 +160,7 @@ const TicketRow = z
     startedAt: z.string(),
     startToHandoffMs: nullableNumber,
     tokens: z.int(),
+    ...TokenCategories,
     waitingMs: z.number(),
   })
   .meta({ id: 'StatsTicketRow' });
@@ -332,7 +346,7 @@ const exportRoute = defineRoute({
   responses: {
     200: {
       description:
-        'NDJSON: one StatsTicketRow per line with `type: "ticket"`, then one run row per line with `type: "run"`. Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
+        'NDJSON: one StatsTicketRow per line with `type: "ticket"`, then one run row per line with `type: "run"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
       mediaType: 'application/x-ndjson',
       schema: z.string(),
     },

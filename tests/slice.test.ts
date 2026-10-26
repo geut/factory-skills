@@ -29,6 +29,7 @@ import {
   type Policy,
   type ResolvedTicket,
   type RunId,
+  zeroUsage,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
 import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
@@ -2074,6 +2075,78 @@ test('external review rounds split commits that drew changes requested from thos
   const summary = summarize(facts);
   assert.equal(summary.externalReviewRounds.changesRequested, 1);
   assert.equal(summary.externalReviewRounds.commented, 1);
+  await closeWhenIdle(db);
+});
+
+test('stats facts break tokens into input, output, cache read, and cache write, and leave unknown usage null', async () => {
+  const { branch, db, runtime, service, wrapup } = await reachWrapup();
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: {
+      ...zeroUsage(),
+      cacheReadTokens: 11,
+      cacheWriteTokens: 13,
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 36,
+    },
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  const execution = ticket?.execution ?? '';
+  const wrapupRun = () => runFacts(db, [execution]).find((run) => run.run === wrapup.runId);
+  // The categories are disjoint, so they add up to the run's tokens.
+  assert.deepEqual(
+    {
+      cacheRead: wrapupRun()?.tokensCacheRead,
+      cacheWrite: wrapupRun()?.tokensCacheWrite,
+      input: wrapupRun()?.tokensInput,
+      output: wrapupRun()?.tokensOutput,
+      tokens: wrapupRun()?.tokens,
+    },
+    { cacheRead: 11, cacheWrite: 13, input: 5, output: 7, tokens: 36 },
+  );
+  assert.equal(
+    (ticket?.tokensInput ?? 0) +
+      (ticket?.tokensOutput ?? 0) +
+      (ticket?.tokensCacheRead ?? 0) +
+      (ticket?.tokensCacheWrite ?? 0),
+    ticket?.tokens,
+  );
+  const stage = () =>
+    stageMeasures(runFacts(db, [execution])).find((row) => row.stage === 'wrapup');
+  assert.deepEqual(
+    {
+      cacheRead: stage()?.tokensCacheRead,
+      cacheWrite: stage()?.tokensCacheWrite,
+      input: stage()?.tokensInput,
+      output: stage()?.tokensOutput,
+      tokens: stage()?.tokens,
+    },
+    { cacheRead: 11, cacheWrite: 13, input: 5, output: 7, tokens: 36 },
+  );
+
+  // A run whose usage was never recorded has no categories, not zeros.
+  db.prepare('DELETE FROM usage_snapshots WHERE run_id = ?').run(wrapup.runId);
+  assert.deepEqual(
+    [
+      wrapupRun()?.tokensInput,
+      wrapupRun()?.tokensOutput,
+      wrapupRun()?.tokensCacheRead,
+      wrapupRun()?.tokensCacheWrite,
+    ],
+    [null, null, null, null],
+  );
+  assert.deepEqual(
+    [
+      stage()?.tokensInput,
+      stage()?.tokensOutput,
+      stage()?.tokensCacheRead,
+      stage()?.tokensCacheWrite,
+    ],
+    [null, null, null, null],
+  );
   await closeWhenIdle(db);
 });
 

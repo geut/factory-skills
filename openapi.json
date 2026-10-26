@@ -1069,7 +1069,7 @@
         ],
         "responses": {
           "200": {
-            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`. Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
+            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
@@ -3524,6 +3524,60 @@
           "thinking": {
             "type": "string"
           },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tokensPerAcceptedOutput": {
             "type": [
               "number",
@@ -3545,6 +3599,11 @@
           "setup",
           "stage",
           "thinking",
+          "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
           "tokensPerAcceptedOutput"
         ],
         "additionalProperties": false
@@ -3819,6 +3878,55 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "waitingMs": {
             "type": "number"
           }
@@ -3845,6 +3953,10 @@
           "startedAt",
           "startToHandoffMs",
           "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
           "waitingMs"
         ],
         "additionalProperties": false
