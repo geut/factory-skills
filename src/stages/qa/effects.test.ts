@@ -72,6 +72,8 @@ function validate(
     baseline?: false;
     e2e?: WorkCommand;
     lint?: WorkCommand;
+    // The test the plan cites for AC1.
+    proof?: string;
     typecheck?: WorkCommand;
   },
 ) {
@@ -88,7 +90,7 @@ function validate(
   mkdirSync(paths.dir, { recursive: true });
   writeFileSync(
     paths.plan,
-    '| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC1 | e2e/app.e2e.ts › shows 2 | none |\n',
+    `| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC1 | ${input.proof ?? 'e2e/app.e2e.ts › shows 2'} | none |\n`,
   );
   writeFileSync(paths.ledger, 'none\n');
   return qaValidator.validate(
@@ -169,4 +171,12 @@ test('without a baseline, or with a longer path, no failure is QA’s', async ()
     lint: command('lint', 'tests/e2e/app.e2e.tsx:1:1 error', 1),
   });
   assert.equal(longer.status === 'failed' && longer.detail.reason, 'product');
+});
+
+test('a component test or story counts as a criterion’s proof', async () => {
+  const report = await validate(worktree(), {
+    proof: 'src/App.stories.ts › Shows two (story, light and dark)',
+  });
+  assert.equal(report.status, 'passed');
+  assert.equal(report.checks.find((check) => check.name === 'AC1 covered')?.status, 'passed');
 });

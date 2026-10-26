@@ -33,6 +33,11 @@ function taskStages(policy: Policy, task: TaskRecord | null): Array<StageName> {
   return enabled(policy, flow.task).filter((stage) => task?.summaries[stage]?.label !== 'skipped');
 }
 
+// Whether `stage` runs for `task`: enabled, and not skipped by its task file.
+export function runsForTask(policy: Policy, task: TaskRecord, stage: StageName): boolean {
+  return taskStages(policy, task).includes(stage);
+}
+
 // The lowest-ordinal pending task whose dependencies are done.
 export function readyTask(snapshot: FactorySnapshot): TaskRecord | null {
   const done = new Set(

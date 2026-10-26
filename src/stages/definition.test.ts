@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { addTasks, blank, task } from '../stories/fixtures.ts';
 import { effects } from './effects.ts';
 import { stages } from './index.ts';
 import type { PlanInput } from './plan/definition.ts';
@@ -85,4 +86,67 @@ test('the first plan in a factory root is asked to create CONTEXT.md', () => {
   const partial = initial({ kind: 'read', missingSections: ['Known flakes'] });
   assert.doesNotMatch(partial, /Create .*CONTEXT\.md/);
   assert.match(partial, /Add the ## Known flakes section to \/repo\/\.factory\/CONTEXT\.md/);
+});
+
+// Work's first prompt for task 01, with QA on or off for the project and the task.
+function workPrompt(qa: 'on' | 'off' | 'skipped'): string {
+  const snapshot = blank();
+  addTasks(snapshot, 1);
+  snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
+  if (qa !== 'off') {
+    snapshot.execution.policy.stages['qa'] = { commands: [], enabled: true };
+  }
+  if (qa === 'skipped') {
+    task(snapshot, '01').summaries.qa = { counts: {}, label: 'skipped', round: 0 };
+  }
+  const input = stages.work.input?.(
+    { snapshot, task: task(snapshot, '01') },
+    {
+      handoff: null,
+      prepared: { adrPath: null, contextPath: null, taskType: 'feature' },
+      round: 0,
+    },
+  );
+  return stages.work.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
+}
+
+test('work leaves end-to-end tests to QA exactly when QA runs for the task', () => {
+  assert.match(
+    workPrompt('on'),
+    /QA runs for this task: write unit and component tests, keep the existing end-to-end suite passing, and add no end-to-end tests for this task's acceptance criteria\./,
+  );
+  for (const qa of ['off', 'skipped'] as const) {
+    assert.match(
+      workPrompt(qa),
+      /QA does not run for this task: add or update end-to-end coverage for its acceptance criteria/,
+    );
+  }
+});
+
+test('QA proves each criterion at the cheapest layer that runs the real code', () => {
+  const text = stages.qa.turn({
+    input: {
+      changedFiles: [],
+      checks: [],
+      commands: [],
+      criteria: [{ id: 'AC1', text: 'The filter survives a reload.' }],
+      dir: '/qa',
+      displayRef: '#7',
+      planPath: '/plan.md',
+      round: 1,
+      taskFile: '/01-task.md',
+      taskId: '01',
+      title: 'Filter',
+      validationCommands: [],
+      workerSummary: '',
+      worktree: '/wt',
+    },
+    kind: 'initial',
+  });
+  assert.match(
+    text,
+    /Prove each criterion a user can observe at the cheapest layer that runs the real code; use end-to-end tests for user paths through the running app\./,
+  );
+  assert.match(text, /Extend the existing spec for the feature/);
+  assert.doesNotMatch(text, /one observable end-to-end test for each criterion/);
 });

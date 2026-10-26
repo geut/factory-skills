@@ -46,7 +46,8 @@ Before finishing, verify that:
 
 - Every success condition maps to at least one task acceptance criterion.
 - Every task has a user story or observable outcome, explicit scope, and a verification approach.
-- Every task file starts with frontmatter holding `type`, `qa` and `blocked_by`. `qa` is `e2e` when a criterion can be observed in the running product, `none` when every criterion is internal (data layer, documentation, ADR, skill).
+- Every task file starts with frontmatter holding `type`, `qa` and `blocked_by`. `qa` is `e2e` when a criterion can be observed in the product (a page, a component's look or state, an HTTP response, a CLI's output), `none` when every criterion is internal (data layer, documentation, ADR, skill).
+- Acceptance criteria name observable outcomes and say nothing about how they will be tested: QA picks the layer.
 - Dependencies form an acyclic graph and the ready frontier is clear.
 - The plan does not contain speculative infrastructure or unrelated cleanup.
 - No task commits, pushes, or merges, and no criterion requires a commit. Work leaves its change uncommitted in the worktree and fails validation if HEAD moves; wrap-up hands off the commit.

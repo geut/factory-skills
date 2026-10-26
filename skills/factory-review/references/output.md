@@ -15,7 +15,7 @@ One evidence-based sentence.
 
 - AC1: verified — src/lib/server/events.ts:41-58; test "rejects cross-origin" in src/lib/server/events.test.ts:12
 - AC2: verified — src/lib/factory/live.svelte.ts:112
-- AC3: not_verified — needs a real browser; covered by QA's e2e
+- AC3: not_verified — needs a real browser; covered by QA
 - R1-2: fixed — src/lib/factory/live.svelte.ts:130-141
 
 ## Findings
