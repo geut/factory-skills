@@ -1,6 +1,6 @@
 ---
 name: factory-qa
-description: Prove one task's acceptance criteria with observable end-to-end tests against the real product, record a test plan and a test-gap ledger, and capture screenshots for the pull request. Use for the QA stage, after work and before review, when FACTORY.json enables stages.qa.
+description: Prove one task's acceptance criteria at the cheapest test layer that runs the real product code, extending the project's feature specs, record a test plan and a test-gap ledger, and capture screenshots for the pull request. Use for the QA stage, after work and before review, when FACTORY.json enables stages.qa.
 ---
 
 # Factory QA
@@ -17,16 +17,27 @@ Read `.factory/CONTEXT.md` when it exists, before exploring: it gives the test c
 
 Before you write anything, put each criterion in one of two groups:
 
-- **Observable**: a user can see the result through the running product: a page, an HTTP response, a CLI's output. It gets one end-to-end test.
+- **Observable**: a user can see the result through the product: a page, a component's look or state, an HTTP response, a CLI's output. Prove it with one test at the layer below.
 - **Internal**: the criterion is about a function's return shape, a schema or fixture detail, the content of documentation, a skill, or an ADR, a grep over the source, or the configured checks being green. It gets a ledger line naming what already covers it, such as `- AC8: covered by the work check test (pnpm test)` or `- AC3: covered by src/lib/server/read.test.ts`. Do not build a harness to watch internals from the outside. For example, do not parse a framework's serialized page data out of the HTML.
 
 When a task has no observable criterion, the ledger can hold every one of them. That is a valid result, not a failure.
 
-## Write one test per observable criterion
+## Choose the cheapest layer that proves it
 
-Write the test first, straight from the criterion and the project's harness, and let its failures tell you what to read. For each observable criterion:
+You own this task's end-to-end tests: when QA runs, the worker writes unit and component tests and leaves end-to-end tests to you. Prove each observable criterion at the cheapest layer that runs the real code. `.factory/CONTEXT.md` (Test layers) says which layer covers what in this project.
 
-1. Write a short test that drives the product the way a user would and asserts what the criterion says can be observed. Put the criterion in the test title, such as `AC2: the filter survives a reload`, and put it next to the project's existing end-to-end tests.
+- **End-to-end (Playwright)**: a user path through the running app, a network or auth boundary, navigation between pages. Write one only when the criterion needs the running app.
+- **Component test or story**: a component's look, state, theme or contrast, accessibility, or how it renders given data. A story that renders the state, or a component test next to the component, proves it. Do not open a story's iframe in Playwright to prove what the story already shows.
+
+Before writing a test, search the existing suite (`grep` the criterion's words, the route, the component name). When an existing test already proves the criterion, cite it in the test plan instead of writing another.
+
+Extend the spec that already covers the feature or flow rather than starting a file for this task. Name a new file after the feature or user flow, such as `live-updates.e2e.ts`, not after the ticket or task: `qa-23-02-flow-board.e2e.ts` means nothing once the ticket closes.
+
+## Write one test per criterion
+
+Write the test first, straight from the criterion and the project's harness, and let its failures tell you what to read. For each observable criterion an existing test does not already prove:
+
+1. Write a short test that drives the product the way a user would and asserts what the criterion says can be observed. Name the behavior in the test title, such as `the filter survives a reload`, and put it in the feature's existing spec or next to the component.
 2. Run only that test.
 3. When it fails, read the failure, and only then the product code it points at: a route, a label, a fixture. Fix the test with a small edit and run it again.
 
@@ -34,10 +45,10 @@ A failure that shows the product misses the criterion is a finding, not somethin
 
 - Exercise the running product, not internal functions. Assert the observable result, not that code ran.
 - For Playwright projects, follow [references/playwright.md](references/playwright.md).
-- Reuse the project's harness: its web server config, fixtures, and seed helpers. Keep each test short: a spec for one task is tens of lines per criterion, not a thousand-line file. Fix a failing test with a small edit, never by rewriting the whole file.
+- Reuse the project's harness: its web server config, fixtures, and seed helpers. Keep each test short: tens of lines per criterion, added to the feature's spec, not a thousand-line file. Fix a failing test with a small edit, never by rewriting the whole file.
 - Iterate with short timeouts and stop at the first failure, for example `pnpm exec playwright test <file> --timeout=15000 --max-failures=1`, so a wrong locator fails in seconds instead of minutes.
 - Probe through the test, not by hand. Do not start servers to explore with `curl`. If you must start a process yourself, record its pid (`cmd & pid=$!`) and kill that pid. Never use `pkill -f` with a pattern that also appears in your own command line. Prefer `localhost` to `127.0.0.1`, because dev servers often listen on IPv6 only.
-- Capture a screenshot only where the criterion's result is visible on screen. Save it in `screenshots/` under the QA directory, named after the criterion, such as `screenshots/ac2-filter-after-reload.png`. Take one screenshot per distinct screen, and do not capture the same page again for a second criterion.
+- Capture a screenshot only where the criterion's result is visible on screen, from the end-to-end test, or from the project's story tooling when it saves screenshots. Save it in `screenshots/` under the QA directory, named after the criterion, such as `screenshots/ac2-filter-after-reload.png`. Take one screenshot per distinct screen, and do not capture the same page again for a second criterion.
 - When an observable criterion still cannot be proven by an automated test, do not fake one. Record it in the ledger.
 
 Run the QA commands the prompt lists once, at the end. If a test fails because the product does not meet the criterion, keep the test as it is: the controller runs the QA commands and returns the task to work with the failure. Do not weaken the assertion and do not change product code.
@@ -50,19 +61,20 @@ Decide and act. A QA round should be a short loop of write, run, fix, not a long
 
 Write both files in the QA directory the prompt names:
 
-- `test-plan.md`: a table with one row per tested criterion. A row can list several screenshots, separated by commas.
+- `test-plan.md`: a table with one row per proven criterion, citing the end-to-end test, component test, or story that proves it, new or existing. A row can list several screenshots, separated by commas.
 
   ```markdown
-  | AC  | Test                                                     | Screenshot                 |
-  | --- | -------------------------------------------------------- | -------------------------- |
-  | AC1 | tests/e2e/filter.spec.ts › AC1: filter applies           | screenshots/ac1-filter.png |
-  | AC2 | tests/e2e/filter.spec.ts › AC2: filter survives a reload | none                       |
+  | AC  | Test                                         | Screenshot                 |
+  | --- | -------------------------------------------- | -------------------------- |
+  | AC1 | tests/e2e/filter.spec.ts › filter applies    | screenshots/ac1-filter.png |
+  | AC2 | tests/e2e/filter.spec.ts › survives a reload | none                       |
+  | AC3 | src/lib/Filter.stories.ts › Empty (story)    | screenshots/ac3-empty.png  |
   ```
 
 - `ledger.md`: what the tests do not prove, one line each, keyed by criterion where one applies.
 
   ```markdown
-  - AC3: Email delivery needs the real provider; checked by hand in staging.
+  - AC4: Email delivery needs the real provider; checked by hand in staging.
   - Mobile layouts are not covered.
   ```
 

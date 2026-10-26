@@ -18,8 +18,8 @@ One sentence for the observable result.
 
 ## E2E
 
-passed | failed | not_feasible
-Note: evidence or human path.
+passed | failed | not_feasible | qa
+Note: evidence or human path; `qa` when QA runs for the task and owns its end-to-end tests.
 
 ## Review responses
 

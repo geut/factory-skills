@@ -16,7 +16,7 @@ An optional per-task stage that a task's plan turns off for that task, such as Q
 _Avoid_: disabled (that is the project-wide switch)
 
 **QA**:
-The stage between work and review that proves a task's acceptance criteria with observable tests run against the real product, and captures screenshots as evidence.
+The stage between work and review that proves a task's acceptance criteria with tests that run the real product code, each at the cheapest layer that proves it (an end-to-end test for a user path, a component test or story for a component's look or state), and captures screenshots as evidence. When it runs for a task, it owns that task's end-to-end tests.
 _Avoid_: testing stage, verification
 
 **Acceptance criterion**:
@@ -24,7 +24,7 @@ One observable condition a task must meet, listed in its task file.
 _Avoid_: requirement, AC (in prose)
 
 **Test plan**:
-QA's mapping from each acceptance criterion of a task to the observable test that proves it.
+QA's mapping from each acceptance criterion of a task to the test that proves it: an end-to-end test, a component test, or a story.
 
 **Test-gap ledger**:
 QA's record of what the tests do not prove, and why.

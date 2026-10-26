@@ -96,19 +96,19 @@ What belongs in this task and what explicitly does not.
 
 - [ ] Observable, testable behavior.
 
-One behavior per criterion. Phrase it as something a user can see in the running product when it is one: QA writes an end-to-end test for each observable criterion and lists the rest in its ledger.
+One behavior per criterion. Phrase it as an outcome a user can see in the running product when it is one. Do not say how it will be tested (no "e2e:", "unit:", or "story:" annotations): QA chooses the cheapest layer that proves each observable criterion and lists the rest in its ledger.
 
 The frontmatter holds exactly these three fields, and all three are required:
 
 - `type`: one of `bug`, `feature`, `performance`, `refactor`, `investigation`.
-- `qa`: whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the running product: a page, an HTTP response, a CLI's output. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. A `none` task still lists its acceptance criteria.
+- `qa`: whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the product: a page, a component's look or state, an HTTP response, a CLI's output. QA then proves it at the cheapest layer, not necessarily end to end. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. A `none` task still lists its acceptance criteria.
 - `blocked_by`: the task files this one waits for, as a list of their numbers, such as `["01", "02"]`, or `[]` when it waits for none. A number that matches no task file, the task's own number, or tasks that wait on each other fail plan validation.
 
 Do not add other fields. The controller tracks each task's status in its own store, never in the file.
 
 ## Verification
 
-Expected unit/integration seam and relevant end-to-end story. If E2E automation is not feasible, state why and give a human verification path.
+Expected unit/integration seam. When QA will not run for the task (`qa: none`, or QA off in FACTORY.json), the relevant end-to-end story too; if E2E automation is not feasible, state why and give a human verification path.
 
 ## Context
 
