@@ -115,7 +115,7 @@ A comment, status change, or checkbox tick the factory writes to a ticket's issu
 _Avoid_: write-back, sync
 
 **Issue checklist**:
-Wrap-up's judgment of each open checkbox of the ticket's issue (`B1`..`Bn`): met, with the task criterion or file that proves it, or not met, with why. At handoff the controller ticks the met boxes and comments the rest with wrap-up's decisions.
+Wrap-up's judgment of each open checklist item of the ticket's issue (`B1`..`Bn`): met, with the task criterion or file that proves it, or not met, with why. What counts as an item is the tracker's: Markdown boxes in the body on GitHub. At handoff the controller ticks the met items and comments the rest with wrap-up's decisions.
 _Avoid_: acceptance criteria, which belong to a task file
 
 **Pull request outcome**:

@@ -145,9 +145,16 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: {
           decisions: ['Stored the filter in the URL instead of localStorage.'],
-          met: [{ id: 'B1', text: 'A reload keeps the filter.' }],
+          met: [
+            { id: 'B1', key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' },
+          ],
           open: [
-            { id: 'B2', reason: 'Task 01 R1-2: no label yet', text: 'The filter is labelled.' },
+            {
+              id: 'B2',
+              key: '1:The filter is labelled.',
+              reason: 'Task 01 R1-2: no label yet',
+              text: 'The filter is labelled.',
+            },
           ],
         },
         pullRequest: null,
@@ -165,9 +172,11 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
       item.kind === 'update_ticket_source' && item.update === 'handoff',
   );
   assert.equal(updates.length, 1);
-  assert.deepEqual(updates[0]?.checklist, ['A reload keeps the filter.']);
+  assert.deepEqual(updates[0]?.checklist, [
+    { key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' },
+  ]);
   // One comment per ticket: a rerun's handoff replaces it.
-  assert.equal(updates[0]?.commentMarker, `<!-- factory:handoff:${snapshot.ticket.id} -->`);
+  assert.equal(updates[0]?.commentKey, `handoff:${snapshot.ticket.id}`);
   assert.equal(
     updates[0]?.comment,
     [

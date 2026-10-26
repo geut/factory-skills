@@ -1,4 +1,5 @@
 import type { ActionRecord, FactorySnapshot, PassedCheck, StageName } from '../domain.ts';
+import type { ChecklistItem } from '../ports/tracker.ts';
 import { planValidator } from '../validation/plan.ts';
 import type { Validator } from '../validation/report.ts';
 import { reviewValidator } from '../validation/review.ts';
@@ -12,6 +13,9 @@ import { prepareWrapupInput } from './wrapup/effects.ts';
 export type InputContext = {
   action: Extract<ActionRecord, { kind: 'prepare_input' }>;
   deps: {
+    // The ticket's issue checklist through its tracker; null when it has none.
+    // Throws when the tracker cannot be read.
+    checklistItems: () => Array<ChecklistItem> | null;
     // Whether the action's execution is still the ticket's current one.
     executionCurrent: boolean;
     // The checks of each task's latest passed validation by `stage`.

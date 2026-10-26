@@ -19,7 +19,7 @@ Do not create `wrapup.md` or a `visuals/` directory in the factory root by defau
 
 ## Close the issue loop
 
-The prompt lists the issue's open checkboxes as `B1`..`Bn`, each task's review Verification lines, QA test plan rows, and the open review findings. Judge each box against that evidence and record it under `## Issue checklist`: `met` with the task criterion (verified by review or tested by QA) or file that proves it, or `not_met` with the reason. A box an open finding contradicts, even a minor one, stays `not_met`. Under `## Decisions`, list the choices that changed the issue's approach, such as a different API or a dropped requirement. Do not edit the issue yourself: the controller ticks the boxes and posts the comment after it accepts the handoff.
+The prompt lists the issue's open checklist items as `B1`..`Bn`, each task's review Verification lines, QA test plan rows, and the open review findings. Judge each box against that evidence and record it under `## Issue checklist`: `met` with the task criterion (verified by review or tested by QA) or file that proves it, or `not_met` with the reason. A box an open finding contradicts, even a minor one, stays `not_met`. Under `## Decisions`, list the choices that changed the issue's approach, such as a different API or a dropped requirement. Do not edit the issue yourself: the controller ticks the boxes and posts the comment after it accepts the handoff.
 
 ## Build the handoff
 

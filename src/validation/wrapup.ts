@@ -8,11 +8,7 @@ import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '..
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
 import { latestReviews } from '../stages/review/parse.ts';
-import {
-  checkIssueChecklist,
-  openBoxes,
-  type ChecklistContext,
-} from '../stages/wrapup/checklist.ts';
+import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
@@ -161,7 +157,7 @@ export function captureWrapupState(input: {
   factoryRoot: string;
   ticketDir: string;
   worktree: string;
-}): WrapupBaseline {
+}): Omit<WrapupBaseline, 'boxes'> {
   return {
     baseHead:
       input.baseBranch === null ? null : refSha(input.codeRoot, `refs/heads/${input.baseBranch}`),
@@ -185,7 +181,8 @@ export function parseBaseline(text: string): WrapupBaseline | null {
       'factory' in value &&
       'remotes' in value
     ) {
-      return value as WrapupBaseline;
+      // A baseline taken before wrap-up read the issue's checklist has none.
+      return { boxes: [], ...(value as Omit<WrapupBaseline, 'boxes'>) };
     }
   } catch {
     return null;
@@ -344,7 +341,7 @@ export function validateWrapup(input: {
   usage: () => string;
   worktree: string;
 }): WrapupValidationReport {
-  let current: WrapupBaseline;
+  let current: Omit<WrapupBaseline, 'boxes'>;
   let dirty: boolean;
   let branchExists: boolean;
   try {
@@ -632,11 +629,14 @@ function readQaPlan(file: string): string {
 
 // The issue's open boxes, each task's criteria, and the findings its latest
 // review left open.
-function issueContext(snapshot: FactorySnapshot): Omit<ChecklistContext, 'exists'> {
-  const { execution, ticket } = snapshot;
+function issueContext(
+  snapshot: FactorySnapshot,
+  baseline: WrapupBaseline,
+): Omit<ChecklistContext, 'exists'> {
+  const { execution } = snapshot;
   const reviews = latestReviews(snapshot);
   return {
-    boxes: openBoxes(ticket),
+    boxes: baseline.boxes,
     criteria: new Map(
       snapshot.tasks.map((task) => [
         task.taskId,
@@ -686,7 +686,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         baseline,
         baseSha: execution.worktreeBaseSha,
         branch: execution.worktreeBranch,
-        checklist: issueContext(snapshot),
+        checklist: issueContext(snapshot, baseline),
         codeRoot: execution.policy.codeRoot,
         commands: execution.policy.validation.work.commands,
         factoryRoot: factoryRootOf(execution.factoryDir),

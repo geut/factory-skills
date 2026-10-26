@@ -1,17 +1,21 @@
 import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
-import type { Checkbox } from '../../ports/checklist.ts';
 import { defineStage } from '../definition.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 import { formatFinding, latestReviews } from '../review/parse.ts';
-import { openBoxes } from './checklist.ts';
+import type { IssueBox } from './checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
 export type WrapupPrepared = {
   adrPath: string | null;
-  // The worktree, refs, and factory files before wrap-up ran (WrapupBaseline JSON).
+  // The worktree, refs, factory files, and issue checklist before wrap-up ran
+  // (WrapupBaseline JSON).
   baseline: string;
+  // The issue's open checklist items, B1..Bn, as the baseline holds them.
+  boxes: Array<IssueBox>;
+  // Why the tracker's checklist could not be read; null when it was.
+  boxesUnread: string | null;
   contextPath: string | null;
   // QA's screenshots from each task's latest passed QA validation.
   screenshots: Array<{ name: string; path: string; taskId: string }>;
@@ -30,8 +34,9 @@ export type WrapupInput = {
   contextPath: string | null;
   displayRef: string;
   factoryRoot: string;
-  // The issue's open boxes, B1..Bn.
-  issueBoxes: Array<Checkbox>;
+  // The issue's open checklist items, B1..Bn.
+  issueBoxes: Array<IssueBox>;
+  issueBoxesUnread: string | null;
   minorFindings: Array<string>;
   model: string;
   planPath: string;
@@ -114,7 +119,8 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
       factoryRoot: factoryRootOf(execution.factoryDir),
-      issueBoxes: openBoxes(snapshot.ticket),
+      issueBoxes: prepared.boxes,
+      issueBoxesUnread: prepared.boxesUnread,
       minorFindings: notes.findings,
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
@@ -213,7 +219,11 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           : input.minorFindings.map((finding) => `- ${finding}`)),
         '',
         ...(input.issueBoxes.length === 0
-          ? ['Issue checkboxes: none; write `none` under ## Issue checklist.']
+          ? [
+              input.issueBoxesUnread === null
+                ? 'Issue checkboxes: none; write `none` under ## Issue checklist.'
+                : `Issue checkboxes: none, because the tracker could not be read (${input.issueBoxesUnread}); write \`none\` under ## Issue checklist.`,
+            ]
           : [
               'Issue checkboxes (one ## Issue checklist line each):',
               ...input.issueBoxes.map((box) => `- ${box.id}: ${box.text}`),

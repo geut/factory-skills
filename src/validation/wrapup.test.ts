@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WrapupBaseline } from '../domain.ts';
+import { markdownChecklist } from '../ports/markdown-checklist.ts';
+import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
 import {
@@ -69,8 +71,9 @@ function fixture(): Fixture {
   writeFileSync(path.join(worktree, 'src/filter.ts'), 'export const filter = 2;\n');
   writeFileSync(path.join(worktree, 'src/store.ts'), 'export const store = {};\n');
   return {
-    baseline: () =>
-      captureWrapupState({
+    baseline: () => ({
+      boxes: [],
+      ...captureWrapupState({
         baseBranch: 'main',
         baseSha,
         branch,
@@ -79,6 +82,7 @@ function fixture(): Fixture {
         ticketDir: path.join(factoryRoot, 'tickets/proj-1'),
         worktree,
       }),
+    }),
     baseSha,
     codeRoot,
     factoryRoot,
@@ -172,11 +176,14 @@ function validate(
         execution.worktreeBaseSha = value.baseSha;
         execution.worktreeBranch = branch;
         execution.worktreePath = value.worktree;
-        finished.baseline = JSON.stringify(baseline);
+        // The issue's checklist as wrap-up's input preparation read it.
+        finished.baseline = JSON.stringify(
+          options.issue === undefined
+            ? baseline
+            : { ...baseline, boxes: openBoxes(markdownChecklist(options.issue.body)) },
+        );
         finished.resultJson = JSON.stringify({ output });
         if (options.issue !== undefined) {
-          snapshot.ticket.body = options.issue.body;
-          snapshot.ticket.sourceKind = 'github';
           addTasks(snapshot, 1);
           task(snapshot, '01').taskFile = '01-task.md';
           run(snapshot, session(snapshot, 'review', '01'), {
@@ -252,10 +259,11 @@ test('the issue checklist marks each open box met with evidence or not_met with 
   assert.equal(outcome.status, 'passed', failures(outcome));
   assert.deepEqual(outcome.status === 'passed' ? outcome.detail.checklist : null, {
     decisions: ['Stored the filter in the URL instead of localStorage.'],
-    met: [{ id: 'B1', text: 'A reload keeps the filter.' }],
+    met: [{ id: 'B1', key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' }],
     open: [
       {
         id: 'B2',
+        key: '1:The filter is labelled.',
         reason: 'Task 01 R1-2 says the label is never rendered',
         text: 'The filter is labelled.',
       },

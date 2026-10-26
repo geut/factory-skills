@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { TrackerConfig } from '../config.ts';
-import { tickCheckboxes } from './checklist.ts';
+import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
 import {
   UnsupportedOperation,
   type IssueLink,
@@ -385,15 +385,24 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       return listBlockedBy(at).map((related) => linkOf(at.owner, at.repo, related));
     },
     capabilities: new Set(capabilities),
+    // GitHub keeps an issue's checklist as Markdown boxes in its body.
+    checklistItems: (issue) => {
+      const at = locate(issue);
+      return markdownChecklist(
+        client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body,
+      );
+    },
     children: (issue) => {
       const at = locate(issue);
       return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
     },
-    comment: (issue, markdown, marker, mode) => {
+    comment: (issue, markdown, key, mode) => {
       if (addComment === undefined || listComments === undefined) {
         throw new UnsupportedOperation('github', 'comments');
       }
       const at = locate(issue);
+      // A hidden marker in the comment body finds the comment of a key again.
+      const marker = `<!-- factory:${key} -->`;
       const body = `${markdown}\n\n${marker}`;
       const posted = listComments(at).find((item) => item.body.includes(marker));
       if (posted === undefined) {
@@ -449,14 +458,14 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       }
       editLabels(locate(issue), add === undefined ? [] : [add], remove);
     },
-    tickBoxes: (issue, texts) => {
+    tickBoxes: (issue, keys) => {
       if (editBody === undefined) {
         throw new UnsupportedOperation('github', 'ticking checkboxes');
       }
       const at = locate(issue);
-      // The body as it is now: people may have edited it since the ticket started.
+      // The body as it is now: people may have edited it since it was read.
       const current = client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body;
-      const ticked = tickCheckboxes(current, texts);
+      const ticked = tickMarkdown(current, keys);
       if (ticked.body !== current) {
         editBody(at, ticked.body);
       }

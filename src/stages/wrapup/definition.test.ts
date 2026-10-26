@@ -23,6 +23,8 @@ test('wrap-up is given each task’s review verification, gaps included', () => 
       prepared: {
         adrPath: null,
         baseline: '{}',
+        boxes: [],
+        boxesUnread: null,
         contextPath: null,
         screenshots: [],
         testPlan: [],
@@ -42,11 +44,14 @@ test('wrap-up is given each task’s review verification, gaps included', () => 
 test('wrap-up is given the issue’s open boxes as B1..Bn and each task’s QA test plan', () => {
   const snapshot = blank();
   snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
-  snapshot.ticket.body =
-    '## Done when\n\n- [x] The README says so.\n- [ ] A reload keeps the filter.\n- [ ] The filter is labelled.\n';
   const prepared = {
     adrPath: null,
     baseline: '{}',
+    boxes: [
+      { id: 'B1', key: 'k1', text: 'A reload keeps the filter.' },
+      { id: 'B2', key: 'k2', text: 'The filter is labelled.' },
+    ],
+    boxesUnread: null as string | null,
     contextPath: null,
     screenshots: [],
     testPlan: ['Task 01 AC1: e2e/filter.e2e.ts › survives a reload'],
@@ -64,6 +69,8 @@ test('wrap-up is given the issue’s open boxes as B1..Bn and each task’s QA t
   );
   assert.match(text, /QA test plan:\n- Task 01 AC1: e2e\/filter\.e2e\.ts › survives a reload\n/);
   assert.match(text, /an open review finding names/);
-  snapshot.ticket.sourceKind = 'file';
+  prepared.boxes = [];
   assert.match(turn(), /Issue checkboxes: none; write `none` under ## Issue checklist\./);
+  prepared.boxesUnread = 'gh: rate limited';
+  assert.match(turn(), /none, because the tracker could not be read \(gh: rate limited\)/);
 });

@@ -274,9 +274,9 @@ export function trackerUpdate(
   snapshot: FactorySnapshot,
   ids: IdSource,
   input: {
-    checklist?: Array<string>;
+    checklist?: Array<{ key: string; text: string }>;
     comment: string;
-    commentMarker?: string;
+    commentKey?: string;
     issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
     key: string;
     update: 'cancelled' | 'handoff' | 'paused' | 'started';
@@ -291,7 +291,7 @@ export function trackerUpdate(
     attentionRequestId: null,
     checklist: input.checklist ?? [],
     comment: input.comment,
-    commentMarker: input.commentMarker ?? null,
+    commentKey: input.commentKey ?? null,
     id: ids.action(),
     idempotencyKey: `tracker:${snapshot.execution.id}:${input.key}`,
     issueStatus: input.issueStatus,
@@ -1084,7 +1084,7 @@ function handOff(
     },
   );
   trackerUpdate(snapshot, ids, {
-    checklist: checklist?.met.map((box) => box.text) ?? [],
+    checklist: checklist?.met.map(({ key, text }) => ({ key, text })) ?? [],
     comment: [
       pullRequestUrl === null
         ? 'The factory finished this ticket. Its handoff has the merge commands.'
@@ -1097,7 +1097,7 @@ function handOff(
         : ['', 'Left open:', ...checklist.open.map((box) => `- [ ] ${box.text} — ${box.reason}`)]),
     ].join('\n'),
     // One handoff comment per ticket: a rerun's replaces it.
-    commentMarker: `<!-- factory:handoff:${snapshot.ticket.id} -->`,
+    commentKey: `handoff:${snapshot.ticket.id}`,
     issueStatus: 'in_review',
     key: `handoff:${run.id}`,
     update: 'handoff',

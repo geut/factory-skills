@@ -18,15 +18,16 @@ const issue: TrackerIssue = {
 
 type Call = Array<unknown>;
 
-// A tracker that records its calls; `changed` names box texts the issue no longer has.
+// A tracker that records its calls; `changed` names item keys the issue no longer has.
 function fake(capabilities: Array<TrackerCapability>, changed: Array<string> = []) {
   const calls: Array<Call> = [];
   const tracker: Tracker = {
     blockedBy: () => [],
     capabilities: new Set(capabilities),
+    checklistItems: () => [],
     children: () => [],
-    comment: (_issue, markdown, marker, mode) => {
-      calls.push(['comment', markdown, marker, mode]);
+    comment: (_issue, markdown, key, mode) => {
+      calls.push(['comment', markdown, key, mode]);
     },
     kind: 'github',
     listBacklog: () => [],
@@ -34,18 +35,21 @@ function fake(capabilities: Array<TrackerCapability>, changed: Array<string> = [
     setStatus: (_issue, status) => {
       calls.push(['status', status]);
     },
-    tickBoxes: (_issue, texts) => {
-      calls.push(['tickBoxes', texts]);
-      return { conflicts: texts.filter((text) => changed.includes(text)) };
+    tickBoxes: (_issue, keys) => {
+      calls.push(['tickBoxes', keys]);
+      return { conflicts: keys.filter((key) => changed.includes(key)) };
     },
   };
   return { calls, tracker };
 }
 
 const handoff = {
-  checklist: ['A reload keeps the filter.', 'The filter is labelled.'],
+  checklist: [
+    { key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' },
+    { key: '1:The filter is labelled.', text: 'The filter is labelled.' },
+  ],
   comment: 'The factory finished this ticket.',
-  commentMarker: '<!-- factory:handoff:T1 -->',
+  commentKey: 'handoff:T1',
   idempotencyKey: 'tracker:E1:handoff:R1',
   issueStatus: 'in_review' as const,
 };
@@ -54,51 +58,41 @@ test('a handoff ticks the met boxes, then replaces its one comment, then shows t
   const { calls, tracker } = fake(['checklist', 'comment', 'status']);
   assert.deepEqual(applyTicketUpdate(tracker, issue, handoff), { conflicts: [] });
   assert.deepEqual(calls, [
-    ['tickBoxes', handoff.checklist],
-    ['comment', 'The factory finished this ticket.', '<!-- factory:handoff:T1 -->', 'replace'],
+    ['tickBoxes', ['1:A reload keeps the filter.', '1:The filter is labelled.']],
+    ['comment', 'The factory finished this ticket.', 'handoff:T1', 'replace'],
     ['status', 'in_review'],
   ]);
 });
 
 test('a box someone changed stays unticked and the comment says so', () => {
-  const { calls, tracker } = fake(['checklist', 'comment'], ['The filter is labelled.']);
+  const { calls, tracker } = fake(['checklist', 'comment'], ['1:The filter is labelled.']);
   assert.deepEqual(applyTicketUpdate(tracker, issue, handoff), {
     conflicts: ['The filter is labelled.'],
   });
   assert.equal(
     calls[1]?.[1],
-    'The factory finished this ticket.\n\nNot ticked, because the box changed on the issue:\n- The filter is labelled.',
+    'The factory finished this ticket.\n\nNot ticked, because the item changed on the issue:\n- The filter is labelled.',
   );
 });
 
-test('a tracker that cannot tick boxes gets the met boxes in the comment instead', () => {
+test('a tracker without a checklist gets the comment only', () => {
   const { calls, tracker } = fake(['comment']);
   applyTicketUpdate(tracker, issue, handoff);
   assert.deepEqual(calls, [
-    [
-      'comment',
-      'The factory finished this ticket.\n\nMet (this tracker cannot tick the issue’s boxes):\n- [x] A reload keeps the filter.\n- [x] The filter is labelled.',
-      '<!-- factory:handoff:T1 -->',
-      'replace',
-    ],
+    ['comment', 'The factory finished this ticket.', 'handoff:T1', 'replace'],
   ]);
 });
 
-test('an update without a marker posts once, keyed by its action', () => {
+test('an update without a comment key posts once, keyed by its action', () => {
   const { calls, tracker } = fake(['comment']);
   applyTicketUpdate(tracker, issue, {
     ...handoff,
     checklist: [],
-    commentMarker: null,
+    commentKey: null,
     issueStatus: null,
   });
   assert.deepEqual(calls, [
-    [
-      'comment',
-      'The factory finished this ticket.',
-      '<!-- factory:tracker:E1:handoff:R1 -->',
-      'once',
-    ],
+    ['comment', 'The factory finished this ticket.', 'tracker:E1:handoff:R1', 'once'],
   ]);
 });
 
@@ -112,7 +106,7 @@ test('a failed edit still posts the comment, with the met boxes, then fails for 
     [
       'comment',
       'The factory finished this ticket.\n\nMet (ticking them on the issue failed):\n- [x] A reload keeps the filter.\n- [x] The filter is labelled.',
-      '<!-- factory:handoff:T1 -->',
+      'handoff:T1',
       'replace',
     ],
     ['status', 'in_review'],

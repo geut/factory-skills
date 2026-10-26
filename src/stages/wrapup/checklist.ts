@@ -1,12 +1,16 @@
-import type { ReviewFinding, TicketRecord } from '../../domain.ts';
-import { issueCheckboxes, type Checkbox } from '../../ports/checklist.ts';
+import type { ReviewFinding } from '../../domain.ts';
+import type { ChecklistItem } from '../../ports/tracker.ts';
+
+// An open item of the issue's checklist as wrap-up sees it: numbered B1..Bn,
+// with the tracker's key for ticking it.
+export type IssueBox = { id: string; key: string; text: string };
 
 // What wrap-up concluded about the issue: the boxes it met, the boxes left
 // open and why, and the decisions that changed the issue's approach.
 export type IssueChecklist = {
   decisions: Array<string>;
-  met: Array<Checkbox>;
-  open: Array<Checkbox & { reason: string }>;
+  met: Array<IssueBox>;
+  open: Array<IssueBox & { reason: string }>;
 };
 
 // What the checklist is checked against: the issue's open boxes, each task's
@@ -14,19 +18,18 @@ export type IssueChecklist = {
 // covers, the findings its latest review left open, and whether a cited file
 // exists in the worktree.
 export type ChecklistContext = {
-  boxes: Array<Checkbox>;
+  boxes: Array<IssueBox>;
   criteria: Map<string, Array<string>>;
   exists: (file: string) => boolean;
   findings: Array<{ finding: ReviewFinding; taskId: string }>;
   proven: Map<string, Array<string>>;
 };
 
-// The open boxes of the ticket's issue. A ticket from a file or --text has no
-// issue to tick.
-export function openBoxes(ticket: TicketRecord): Array<Checkbox> {
-  return ticket.sourceKind === 'file' || ticket.sourceKind === 'text'
-    ? []
-    : issueCheckboxes(ticket.body);
+// The open items of the issue's checklist, numbered B1..Bn in order.
+export function openBoxes(items: Array<ChecklistItem>): Array<IssueBox> {
+  return items
+    .filter((item) => !item.done)
+    .map((item, index) => ({ id: `B${index + 1}`, key: item.key, text: item.text }));
 }
 
 // `01`, `1`, and `001` name the same task.

@@ -28,7 +28,7 @@ import type {
   TerminalOutcome,
   WrapupValidationDetail,
 } from '../domain.ts';
-import type { Tracker, TrackerIssue } from '../ports/tracker.ts';
+import type { Tracker } from '../ports/tracker.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
@@ -46,7 +46,7 @@ import {
   sweepStrays,
   type SweepOutcome,
 } from './strays.ts';
-import { applyTicketUpdate } from './ticket-source.ts';
+import { applyTicketUpdate, trackerIssueOf } from './ticket-source.ts';
 import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
@@ -410,18 +410,7 @@ async function updateTicketSource(
     finishLeasedAction(input.db, action.id, input.now(), 'failed', 'FACTORY.json has no tracker.');
     return null;
   }
-  const issue: TrackerIssue = {
-    author: null,
-    body: snapshot.ticket.body,
-    createdAt: null,
-    displayRef: snapshot.ticket.displayRef,
-    id: snapshot.ticket.id,
-    labels: snapshot.ticket.labels,
-    ref: snapshot.ticket.commandRef,
-    title: snapshot.ticket.title,
-    updatedAt: null,
-    url: snapshot.ticket.sourceRef,
-  };
+  const issue = trackerIssueOf(snapshot.ticket);
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
@@ -434,7 +423,7 @@ async function updateTicketSource(
         conflicts.length === 0 ? 'succeeded' : 'failed',
         conflicts.length === 0
           ? null
-          : `Left unticked, because the box changed on the issue: ${conflicts.map((text) => `"${text}"`).join(', ')}.`,
+          : `Left unticked, because the item changed on the issue: ${conflicts.map((text) => `"${text}"`).join(', ')}.`,
       );
       return null;
     } catch (error: unknown) {
@@ -511,7 +500,12 @@ async function runValidation(
 // Prepares a stage's input outside the controller transaction and hands the
 // reducer what it found, or why the stage cannot start.
 function prepareInput(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+  input: {
+    db: DatabaseSync;
+    ids: IdSource;
+    now: () => string;
+    tracker: () => Tracker | null;
+  },
   action: Extract<ActionRecord, { kind: 'prepare_input' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
@@ -519,6 +513,17 @@ function prepareInput(
   const result = effects[action.stage].prepareInput({
     action,
     deps: {
+      // Null when the ticket has no issue or its tracker keeps no checklist.
+      checklistItems: () => {
+        const tracker = input.tracker();
+        const { ticket } = snapshot;
+        return tracker === null ||
+          ticket.sourceKind === 'file' ||
+          ticket.sourceKind === 'text' ||
+          !tracker.capabilities.has('checklist')
+          ? null
+          : tracker.checklistItems(trackerIssueOf(ticket));
+      },
       executionCurrent: executionIsCurrent(input.db, executionId),
       passedChecks: (stage) =>
         passedChecks(input.db, executionId, stage, effects[stage].validator.version),

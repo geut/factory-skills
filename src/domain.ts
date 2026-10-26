@@ -5,7 +5,7 @@ import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ContextGaps } from './stages/plan/context.ts';
 import type { Criterion } from './stages/qa/criteria.ts';
-import type { IssueChecklist } from './stages/wrapup/checklist.ts';
+import type { IssueBox, IssueChecklist } from './stages/wrapup/checklist.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -311,6 +311,9 @@ export type WrapupValidationReport = ValidationReport<
 // input is prepared, before the agent runs.
 export type WrapupBaseline = {
   baseHead: string | null;
+  // The issue's open checklist items when wrap-up first prepared its input;
+  // its prompt, corrections, and validation all use these.
+  boxes: Array<IssueBox>;
   branch: string;
   factory: Record<string, string>;
   head: string;
@@ -615,13 +618,13 @@ export type ActionRecord =
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;
-      // The issue's box texts to tick; empty for most updates.
-      checklist: Array<string>;
+      // The issue's checklist items to tick; empty for most updates.
+      checklist: Array<{ key: string; text: string }>;
       // Markdown for the comment.
       comment: string;
-      // A marker the comment keeps across executions: a rerun's comment
-      // replaces the one carrying it. Null posts one comment per update.
-      commentMarker: string | null;
+      // A key the comment keeps across executions: a rerun's comment replaces
+      // the one of that key. Null posts one comment per update.
+      commentKey: string | null;
       // The status to show on the issue; null leaves it, `clear` removes it.
       issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
       kind: 'update_ticket_source';

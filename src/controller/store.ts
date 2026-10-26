@@ -951,10 +951,14 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       attentionReplyId: null,
       attentionRequestId: null,
       checklist: Array.isArray(payload['checklist'])
-        ? payload['checklist'].filter((text): text is string => typeof text === 'string')
+        ? payload['checklist'].flatMap((item: unknown) =>
+            isRecord(item) && typeof item['key'] === 'string' && typeof item['text'] === 'string'
+              ? [{ key: item['key'], text: item['text'] }]
+              : [],
+          )
         : [],
       comment: payload['comment'],
-      commentMarker: typeof payload['commentMarker'] === 'string' ? payload['commentMarker'] : null,
+      commentKey: typeof payload['commentKey'] === 'string' ? payload['commentKey'] : null,
       issueStatus:
         issueStatus === 'clear' || issueStatus === 'in_progress' || issueStatus === 'in_review'
           ? issueStatus
@@ -996,7 +1000,7 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({
         checklist: action.checklist,
         comment: action.comment,
-        commentMarker: action.commentMarker,
+        commentKey: action.commentKey,
         issueStatus: action.issueStatus,
         update: action.update,
       });

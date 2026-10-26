@@ -43,7 +43,7 @@ const issue: TrackerIssue = {
   url: 'https://github.com/geut/factory-skills/issues/7',
 };
 
-test('checklist ticks boxes in the issue body as it is now, and reports a changed box', () => {
+test('the checklist is the issue body’s boxes, ticked by key in the body as it is now', () => {
   const written: Array<string> = [];
   const tracker = createGithubTracker(config, {
     editBody: (_at, body) => {
@@ -54,12 +54,16 @@ test('checklist ticks boxes in the issue body as it is now, and reports a change
     listSubIssues: () => [],
   });
   assert.ok(tracker.capabilities.has('checklist'));
-  assert.deepEqual(tracker.tickBoxes(issue, ['Survives a reload.', 'Has a label.']), {
-    conflicts: ['Has a label.'],
+  assert.deepEqual(tracker.checklistItems(issue), [
+    { done: false, key: '1:Survives a reload.', text: 'Survives a reload.' },
+    { done: false, key: '1:Has a clear label.', text: 'Has a clear label.' },
+  ]);
+  assert.deepEqual(tracker.tickBoxes(issue, ['1:Survives a reload.', '1:Has a label.']), {
+    conflicts: ['1:Has a label.'],
   });
   assert.deepEqual(written, ['Intro\n- [x] Survives a reload.\n- [ ] Has a clear label.\n']);
   // Nothing to tick: the body is not written again.
-  assert.deepEqual(tracker.tickBoxes(issue, ['Has a label.']), { conflicts: ['Has a label.'] });
+  assert.deepEqual(tracker.tickBoxes(issue, ['1:Has a label.']), { conflicts: ['1:Has a label.'] });
   assert.equal(written.length, 1);
 });
 
@@ -72,7 +76,7 @@ test('a tracker that cannot edit the body has no checklist', () => {
   assert.throws(() => tracker.tickBoxes(issue, ['x']), /does not support/);
 });
 
-test('a replacing comment updates the comment carrying its marker instead of posting again', () => {
+test('a replacing comment updates the comment of its key, found by a hidden marker', () => {
   const comments: Array<{ body: string; id: number }> = [{ body: 'Started.', id: 1 }];
   const client: GithubClient = {
     addComment: (_at, body) => {
@@ -89,13 +93,13 @@ test('a replacing comment updates the comment carrying its marker instead of pos
   };
   const tracker = createGithubTracker(config, client);
   const marker = '<!-- factory:handoff:T1 -->';
-  tracker.comment(issue, 'Finished; opened #9.', marker, 'replace');
-  tracker.comment(issue, 'Finished again; opened #10.', marker, 'replace');
+  tracker.comment(issue, 'Finished; opened #9.', 'handoff:T1', 'replace');
+  tracker.comment(issue, 'Finished again; opened #10.', 'handoff:T1', 'replace');
   assert.deepEqual(comments, [
     { body: 'Started.', id: 1 },
     { body: `Finished again; opened #10.\n\n${marker}`, id: 2 },
   ]);
   // A once comment is still posted only once.
-  tracker.comment(issue, 'Something else.', marker, 'once');
+  tracker.comment(issue, 'Something else.', 'handoff:T1', 'once');
   assert.equal(comments.length, 2);
 });
