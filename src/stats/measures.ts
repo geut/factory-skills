@@ -67,6 +67,14 @@ export function summarize(facts: Array<TicketFacts>) {
     costUsd: facts.reduce((sum, item) => sum + item.costUsd, 0),
     externalReviewRounds: {
       bot: withPullRequest.reduce((sum, item) => sum + item.externalReviewRounds.bot, 0),
+      changesRequested: withPullRequest.reduce(
+        (sum, item) => sum + item.externalReviewRounds.changesRequested,
+        0,
+      ),
+      commented: withPullRequest.reduce(
+        (sum, item) => sum + item.externalReviewRounds.commented,
+        0,
+      ),
       distribution,
       human: withPullRequest.reduce((sum, item) => sum + item.externalReviewRounds.human, 0),
       median: median(withPullRequest.map((item) => item.externalReviewRounds.total)),

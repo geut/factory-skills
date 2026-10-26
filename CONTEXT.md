@@ -122,7 +122,7 @@ _Avoid_: acceptance criteria, which belong to a task file
 What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.
 
 **External review round**:
-A commit on a ticket's pull request that drew at least one review asking for changes, or commenting, from someone other than the pull request's author.
+A commit on a ticket's pull request that drew at least one review asking for changes, or commenting, from someone other than the pull request's author. A round is changes requested when any of its reviews asked for changes, else commented. Here "changes requested" is the code host's review state, not a review verdict.
 _Avoid_: review round, when the factory's own review stage is meant
 
 **Follow-up commit**:

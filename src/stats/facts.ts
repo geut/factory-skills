@@ -45,7 +45,13 @@ export type TicketFacts = {
   costUsd: number;
   displayRef: string;
   execution: string;
-  externalReviewRounds: { bot: number; human: number; total: number };
+  externalReviewRounds: {
+    bot: number;
+    changesRequested: number;
+    commented: number;
+    human: number;
+    total: number;
+  };
   factoryMs: number | null;
   factoryVersion: string | null;
   followUpCommits: number;
@@ -156,24 +162,29 @@ function outcomeOf(row: Record<string, unknown>): Outcome {
 }
 
 // A commit that drew a review asking for changes, or commenting with a body,
-// from anyone but the pull request's author. Counted per author kind; a commit
-// that drew both counts once in the total.
+// from anyone but the pull request's author. Counted per author kind, and as
+// changes requested when any of its reviews asked for changes, else as
+// commented. A commit counts once in the total.
 function reviewRounds(db: DatabaseSync, execution: string, author: string | null) {
   const rows = db
     .prepare(
-      `SELECT commit_sha, author, author_type FROM pull_request_reviews
+      `SELECT commit_sha, author, author_type, state FROM pull_request_reviews
        WHERE execution_id = ? AND commit_sha IS NOT NULL
          AND (state = 'changes_requested' OR (state = 'commented' AND has_body = 1))`,
     )
     .all(execution)
     .filter((item) => item['author'] !== author);
-  const commits = (kind: string | null) =>
-    new Set(
-      rows
-        .filter((item) => kind === null || item['author_type'] === kind)
-        .map((item) => String(item['commit_sha'])),
-    ).size;
-  return { bot: commits('bot'), human: commits('human'), total: commits(null) };
+  const commitCount = (keep: (item: (typeof rows)[number]) => boolean) =>
+    new Set(rows.filter(keep).map((item) => String(item['commit_sha']))).size;
+  const total = commitCount(() => true);
+  const changesRequested = commitCount((item) => item['state'] === 'changes_requested');
+  return {
+    bot: commitCount((item) => item['author_type'] === 'bot'),
+    changesRequested,
+    commented: total - changesRequested,
+    human: commitCount((item) => item['author_type'] === 'human'),
+    total,
+  };
 }
 
 export function ticketFacts(

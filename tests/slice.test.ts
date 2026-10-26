@@ -2038,7 +2038,14 @@ test('external review rounds count commits that drew pushback, split human and b
   await service.syncPullRequests();
   const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
   assert.equal(ticket?.outcome, 'merged');
-  assert.deepEqual(ticket?.externalReviewRounds, { bot: 1, human: 1, total: 2 });
+  // c1 drew both a request for changes and a comment: it counts as changes requested.
+  assert.deepEqual(ticket?.externalReviewRounds, {
+    bot: 1,
+    changesRequested: 1,
+    commented: 1,
+    human: 1,
+    total: 2,
+  });
   assert.equal(
     ticket?.configuration,
     'plan=work-model · medium review=review-model · high work=work-model · medium wrapup=work-model · medium',
@@ -2047,6 +2054,26 @@ test('external review rounds count commits that drew pushback, split human and b
   assert.equal(summary.mergeRate, 1);
   assert.equal(summary.externalReviewRounds.median, 2);
   assert.ok(ticket !== undefined && ticket.leadMs !== null && ticket.factoryMs !== null);
+  await closeWhenIdle(db);
+});
+
+test('external review rounds split commits that drew changes requested from those that only drew comments', async () => {
+  const { db, service } = await handedOff('merged', [
+    review('R1', 'reviewer', 'human', 'changes_requested', 'c1'),
+    review('R2', 'reviewer', 'human', 'commented', 'c2'),
+  ]);
+  await service.syncPullRequests();
+  const facts = ticketFacts(db, { now: new Date().toISOString() });
+  assert.deepEqual(facts[0]?.externalReviewRounds, {
+    bot: 0,
+    changesRequested: 1,
+    commented: 1,
+    human: 2,
+    total: 2,
+  });
+  const summary = summarize(facts);
+  assert.equal(summary.externalReviewRounds.changesRequested, 1);
+  assert.equal(summary.externalReviewRounds.commented, 1);
   await closeWhenIdle(db);
 });
 

@@ -42,7 +42,7 @@ All times are in milliseconds.
 
   A ticket **needed a person** when any of them is non-zero.
 
-- **External review rounds:** the distinct pull request commits that drew at least one review asking for changes, or a comment with a body, from anyone other than the pull request's author. Approvals don't count, and neither do comments without a body or the author's own reviews. Rounds are also counted per reviewer kind, **human** and **bot** (GitHub's user type); a commit that drew both counts once in the total.
+- **External review rounds:** the distinct pull request commits that drew at least one review asking for changes, or a comment with a body, from anyone other than the pull request's author. Approvals don't count, and neither do comments without a body or the author's own reviews. Rounds are also counted per reviewer kind, **human** and **bot** (GitHub's user type); a commit that drew both counts once in the total. They are also split by disposition: **changes requested** when the commit drew at least one review asking for changes, else **commented**. A commit that drew both counts as changes requested, so the two add up to the total.
 - **Follow-up commits:** pull request commits made after handoff.
 - **Tokens and cost:** the ticket's total usage.
 

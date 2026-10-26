@@ -241,7 +241,7 @@ Measures are SQL views over raw facts:
   - agent time
   - overhead (stage time minus agent time)
 - **Human interventions**, counted separately: questions, limit pauses, replies, manual retries, manual completes, and stops.
-- **External review rounds:** distinct PR commits with at least one non-approving review (changes requested, or a comment with a body) from anyone other than the PR author, split by human and bot. **Follow-up commits** are commits pushed after handoff.
+- **External review rounds:** distinct PR commits with at least one non-approving review (changes requested, or a comment with a body) from anyone other than the PR author, split by human and bot, and by disposition: changes requested (the commit drew at least one) or commented. **Follow-up commits** are commits pushed after handoff.
 - **Outcome:** merged, abandoned (`pull_request_closed`), cancelled (by a person), or unknown. Unknown outcomes count in process measures, but are excluded from merge rate and external review rounds.
 
 ### Routes (`read` scope; windows by ticket start)
