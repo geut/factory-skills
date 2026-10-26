@@ -49,8 +49,8 @@ function untrackedPaths(cwd: string): Array<string> | { message: string } {
   return listed.stdout.split('\0').filter((item) => item.length > 0);
 }
 
-function trackedDiff(cwd: string): GitResult | { message: string } {
-  const diff = git(cwd, ['diff', '--no-ext-diff', 'HEAD']);
+function trackedDiff(cwd: string, base: string): GitResult | { message: string } {
+  const diff = git(cwd, ['diff', '--no-ext-diff', base]);
   if (gitFailure(diff)) {
     return { message: diff.stderr.trim() || 'cannot read the worktree diff' };
   }
@@ -61,8 +61,13 @@ function untrackedDiff(cwd: string, file: string): GitResult {
   return git(cwd, ['diff', '--no-index', '--', '/dev/null', file]);
 }
 
-export function collectWorkDiff(cwd: string): { diff: string } | { message: string } {
-  const tracked = trackedDiff(cwd);
+// The worktree's changes since `base` (uncommitted by default), untracked files
+// included.
+export function collectWorkDiff(
+  cwd: string,
+  base = 'HEAD',
+): { diff: string } | { message: string } {
+  const tracked = trackedDiff(cwd, base);
   if ('message' in tracked) {
     return tracked;
   }

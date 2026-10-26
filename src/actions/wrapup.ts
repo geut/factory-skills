@@ -5,6 +5,9 @@ import { finishLeasedAction, ticketTab } from '../controller/store.ts';
 import type { ActionRecord, FactorySnapshot, IdSource, RunId } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { runOutput } from '../stages/output.ts';
+import { latestReviews } from '../stages/review/parse.ts';
+import { diffNotes } from '../stages/wrapup/notes.ts';
 import { collectWorkDiff } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 
@@ -42,16 +45,30 @@ export async function openHandoffPane(
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
       if (action.kind === 'open_diff') {
-        const collected = collectWorkDiff(action.cwd);
+        // Wrap-up may have committed the work, so the diff runs from the
+        // commit the worktree started at.
+        const collected = collectWorkDiff(action.cwd, snapshot.execution.worktreeBaseSha ?? 'HEAD');
         const file = `${sessionFile}.diff`;
         mkdirSync(path.dirname(file), { recursive: true });
-        writeFileSync(file, 'diff' in collected ? collected.diff : `# ${collected.message}\n`);
+        const patch = 'diff' in collected ? collected.diff : `# ${collected.message}\n`;
+        writeFileSync(file, patch);
+        const notes = diffNotes(
+          patch,
+          run === null ? '' : runOutput(run),
+          latestReviews(snapshot).flatMap(({ result, taskId }) =>
+            result.findings.map((finding) => ({ finding, taskId })),
+          ),
+        );
+        const notesFile = notes === null ? null : `${sessionFile}.notes.json`;
+        if (notesFile !== null) {
+          writeFileSync(notesFile, `${JSON.stringify(notes, null, 2)}\n`);
+        }
         await input.runtime.openPane({
           cwd: action.cwd,
           name: action.name,
           scriptFile: `${sessionFile}.diff.sh`,
           tab: ticketTab(snapshot),
-          target: { file, kind: 'diff' },
+          target: { file, kind: 'diff', notes: notesFile },
         });
       } else {
         await input.runtime.openPane({

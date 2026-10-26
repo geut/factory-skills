@@ -161,7 +161,7 @@ const statusesFor = {
 } as const satisfies Record<string, ReadonlyArray<VerificationStatus>>;
 
 // The `path:line` and `path:start-end` locations an evidence text cites.
-function citations(
+export function citations(
   evidence: string,
 ): Array<{ end: number; file: string; start: number; text: string }> {
   const found = [];

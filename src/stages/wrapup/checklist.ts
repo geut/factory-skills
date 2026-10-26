@@ -166,7 +166,7 @@ export function checkIssueChecklist(
 }
 
 // The bullet points of `## Decisions`; a wrapped bullet goes on.
-function parseDecisions(section: string): Array<string> {
+export function parseDecisions(section: string): Array<string> {
   const decisions: Array<string> = [];
   for (const line of isNone(section) ? [] : section.split('\n')) {
     const bullet = /^\s*[-*]\s+(.*)$/.exec(line);

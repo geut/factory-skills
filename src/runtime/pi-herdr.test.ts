@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -220,6 +220,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
     cwd: directory,
     env,
     freshBin: 'fresh',
+    hunkBin: 'hunk',
     piBin: pi,
     target: { kind: 'session', sessionFile },
   });
@@ -233,10 +234,59 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
     cwd: directory,
     env: {},
     freshBin: 'fresh',
+    hunkBin: 'hunk',
     piBin: pi,
     target: { kind: 'session', sessionFile },
   });
   assert.doesNotMatch(bare, /export (PATH|BASH_ENV)=/);
+});
+
+test('the diff pane opens the patch in Hunk when it is installed, else in Fresh', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-diff-pane-'));
+  const bin = path.join(directory, 'bin');
+  mkdirSync(bin);
+  const viewer = (name: string) =>
+    writeFileSync(
+      path.join(bin, name),
+      `#!/bin/bash\nprintf "%s " ${name} "$@" > "${directory}/seen"\n`,
+      { mode: 0o755 },
+    );
+  viewer('fresh');
+  const file = path.join(directory, 'run.jsonl.diff');
+  const script = path.join(directory, 'diff.sh');
+  const render = (notes: string | null = null) =>
+    writeFileSync(
+      script,
+      renderPaneScript({
+        cwd: directory,
+        env: { PATH: `${bin}:/usr/bin:/bin` },
+        freshBin: 'fresh',
+        hunkBin: 'hunk',
+        piBin: 'pi',
+        target: { file, kind: 'diff', notes },
+      }),
+      { mode: 0o755 },
+    );
+  render();
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `fresh --no-restore ${file} `);
+
+  viewer('hunk');
+  render();
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(
+    readFileSync(path.join(directory, 'seen'), 'utf8'),
+    `hunk patch ${file} --agent-notes `,
+  );
+
+  // Wrap-up's notes on the diff go to Hunk as its agent context.
+  const notes = path.join(directory, 'run.jsonl.notes.json');
+  render(notes);
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(
+    readFileSync(path.join(directory, 'seen'), 'utf8'),
+    `hunk patch ${file} --agent-notes --agent-context ${notes} `,
+  );
 });
 
 test('pane id comes from the nested herdr plugin pane payload', () => {

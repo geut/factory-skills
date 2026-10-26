@@ -7,14 +7,10 @@ import { afterEach, test } from 'node:test';
 import type { WrapupBaseline } from '../domain.ts';
 import { markdownChecklist } from '../ports/markdown-checklist.ts';
 import { openBoxes } from '../stages/wrapup/checklist.ts';
+import { listedPaths } from '../stages/wrapup/handoff.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
-import {
-  captureWrapupState,
-  listedPaths,
-  wrapupValidator,
-  type PullRequestLookup,
-} from './wrapup.ts';
+import { captureWrapupState, wrapupValidator, type PullRequestLookup } from './wrapup.ts';
 
 const roots: Array<string> = [];
 
@@ -213,6 +209,7 @@ test('a complete handoff passes, and prose outside the headings is ignored', asy
         'files section',
         'tests section',
         'issue checklist',
+        'decision locations',
         'merge commands',
         'no product code',
         'factory files',
@@ -368,6 +365,26 @@ test('the Files section must list every changed path and nothing else', async ()
       ),
     ),
     /lists src\/ghost\.ts, which did not change/,
+  );
+});
+
+test('a decision cites lines of a changed file, where the diff shows it', async () => {
+  const value = fixture();
+  const baseline = value.baseline();
+  const decided = (where: string) =>
+    validate(
+      value,
+      baseline,
+      handoff(value, { decisions: `- Kept the filter in a module constant (${where})` }),
+    );
+  assert.equal((await decided('src/filter.ts:1')).status, 'passed');
+  assert.match(
+    failures(await decided('src/filter.ts:1-3')),
+    /cites src\/filter\.ts:1-3, but src\/filter\.ts has 1 line/,
+  );
+  assert.match(
+    failures(await decided('README.md:1')),
+    /cites README\.md:1, but README\.md did not change/,
   );
 });
 
@@ -678,5 +695,10 @@ test('Files paths come from backticks or the first word of a list item', () => {
   assert.deepEqual(
     [...listedPaths('- `src/a.ts` — new\n- src/b.ts: changed\n- **Removed:** `old/c.md`\nnone\n')],
     ['src/a.ts', 'src/b.ts', 'old/c.md'],
+  );
+  // What a line says about its file may name other code; only the paths before it count.
+  assert.deepEqual(
+    [...listedPaths('- `src/a.ts`, `src/b.ts` — both call `api/client.ts` now\n')],
+    ['src/a.ts', 'src/b.ts'],
   );
 });

@@ -7,9 +7,9 @@ import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
-import { latestReviews } from '../stages/review/parse.ts';
+import { citations, latestReviews } from '../stages/review/parse.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
-import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
+import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
   failedReport,
@@ -17,6 +17,7 @@ import {
   type ValidationCheck,
   type Validator,
 } from './report.ts';
+import { worktreeLines } from './review.ts';
 
 export const WRAPUP_VALIDATOR_VERSION = 'wrapup.v2';
 
@@ -188,42 +189,6 @@ export function parseBaseline(text: string): WrapupBaseline | null {
     return null;
   }
   return null;
-}
-
-function cleanPath(value: string): string {
-  return value
-    .trim()
-    .replace(/^\.\//, '')
-    .replace(/[,;:]$/, '');
-}
-
-// Paths named in the Files section: backticked tokens first, else the
-// first path-like word of each list item.
-export function listedPaths(section: string): Set<string> {
-  const paths = new Set<string>();
-  for (const line of section.split('\n')) {
-    const quoted = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1] ?? '');
-    const candidates =
-      quoted.length > 0
-        ? quoted
-        : line
-            .replace(/^\s*(?:[-*+]|\d+\.)\s+/, '')
-            .replace(/^\*\*[^*]+\*\*:?\s*/, '')
-            .split(/\s+/)
-            .slice(0, 1);
-    for (const candidate of candidates) {
-      const value = cleanPath(candidate);
-      if (
-        value.length > 0 &&
-        !value.includes(' ') &&
-        !/^[a-z]+:\/\//i.test(value) &&
-        (value.includes('/') || /\.[A-Za-z0-9]+$/.test(value))
-      ) {
-        paths.add(value);
-      }
-    }
-  }
-  return paths;
 }
 
 function matchesGenerated(file: string, patterns: Array<string>): boolean {
@@ -427,6 +392,34 @@ export function validateWrapup(input: {
       'schema',
       checklist.failures,
       `${checklist.result.met.length} met, ${checklist.result.open.length} open, ${checklist.result.decisions.length} decision${checklist.result.decisions.length === 1 ? '' : 's'}`,
+    ),
+  );
+
+  // A decision's cited lines get its note on the handoff diff, so they must be
+  // lines of a changed file.
+  const located = checklist.result.decisions.flatMap((decision) => citations(decision));
+  const lineCount = worktreeLines(input.worktree);
+  checks.push(
+    check(
+      'decision locations',
+      'diff',
+      located.flatMap((cited) => {
+        if (!actual.has(cited.file)) {
+          return [
+            `## Decisions cites ${cited.text}, but ${cited.file} did not change; cite where the decision shows in the diff.`,
+          ];
+        }
+        const count = lineCount(cited.file);
+        if (count === null) {
+          return [`## Decisions cites ${cited.text}, but ${cited.file} was removed.`];
+        }
+        return cited.start >= 1 && cited.end >= cited.start && cited.end <= count
+          ? []
+          : [
+              `## Decisions cites ${cited.text}, but ${cited.file} has ${count} line${count === 1 ? '' : 's'}.`,
+            ];
+      }),
+      `${located.length} location${located.length === 1 ? '' : 's'} cited`,
     ),
   );
 
