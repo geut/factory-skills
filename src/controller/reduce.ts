@@ -25,6 +25,7 @@ import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/def
 import { nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
+import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 
@@ -273,7 +274,9 @@ export function trackerUpdate(
   snapshot: FactorySnapshot,
   ids: IdSource,
   input: {
+    checklist?: Array<string>;
     comment: string;
+    commentMarker?: string;
     issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
     key: string;
     update: 'cancelled' | 'handoff' | 'paused' | 'started';
@@ -286,7 +289,9 @@ export function trackerUpdate(
     attempts: 0,
     attentionReplyId: null,
     attentionRequestId: null,
+    checklist: input.checklist ?? [],
     comment: input.comment,
+    commentMarker: input.commentMarker ?? null,
     id: ids.action(),
     idempotencyKey: `tracker:${snapshot.execution.id}:${input.key}`,
     issueStatus: input.issueStatus,
@@ -1042,6 +1047,7 @@ function handOff(
   notice: string,
   ids: IdSource,
   pullRequestUrl: string | null,
+  checklist: IssueChecklist | null,
 ): Reduction {
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
@@ -1078,10 +1084,20 @@ function handOff(
     },
   );
   trackerUpdate(snapshot, ids, {
-    comment:
+    checklist: checklist?.met.map((box) => box.text) ?? [],
+    comment: [
       pullRequestUrl === null
         ? 'The factory finished this ticket. Its handoff has the merge commands.'
         : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
+      ...(checklist === null || checklist.decisions.length === 0
+        ? []
+        : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)]),
+      ...(checklist === null || checklist.open.length === 0
+        ? []
+        : ['', 'Left open:', ...checklist.open.map((box) => `- [ ] ${box.text} — ${box.reason}`)]),
+    ].join('\n'),
+    // One handoff comment per ticket: a rerun's replaces it.
+    commentMarker: `<!-- factory:handoff:${snapshot.ticket.id} -->`,
     issueStatus: 'in_review',
     key: `handoff:${run.id}`,
     update: 'handoff',
@@ -1206,6 +1222,7 @@ function applyOutcome(
           outcome.notice ?? '',
           ids,
           outcome.pullRequestUrl ?? null,
+          outcome.checklist ?? null,
         );
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;

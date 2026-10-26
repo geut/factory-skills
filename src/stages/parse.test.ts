@@ -7,6 +7,8 @@ const handoff = [
   'PR summary',
   'Files',
   'Tests',
+  'Issue checklist',
+  'Decisions',
   'Operations',
   'Limitations',
   'Merge commands',

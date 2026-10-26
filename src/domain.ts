@@ -5,6 +5,7 @@ import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ContextGaps } from './stages/plan/context.ts';
 import type { Criterion } from './stages/qa/criteria.ts';
+import type { IssueChecklist } from './stages/wrapup/checklist.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -295,6 +296,8 @@ export type ReviewValidationReport = ValidationReport<
 // A passing wrap-up carries the pull request it checked, which the controller
 // records as the ticket's pull request.
 export type WrapupValidationDetail = {
+  // The issue's boxes wrap-up met or left open, and its decisions.
+  checklist: IssueChecklist;
   pullRequest: PullRequestInfo | null;
   usage: string;
 };
@@ -612,8 +615,13 @@ export type ActionRecord =
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;
+      // The issue's box texts to tick; empty for most updates.
+      checklist: Array<string>;
       // Markdown for the comment.
       comment: string;
+      // A marker the comment keeps across executions: a rerun's comment
+      // replaces the one carrying it. Null posts one comment per update.
+      commentMarker: string | null;
       // The status to show on the issue; null leaves it, `clear` removes it.
       issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
       kind: 'update_ticket_source';

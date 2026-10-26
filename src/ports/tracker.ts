@@ -4,7 +4,13 @@
 // adapter cannot do throws UnsupportedOperation; asking for one in FACTORY.json
 // stops the server at startup instead.
 
-export type TrackerCapability = 'backlog' | 'blockedBy' | 'children' | 'comment' | 'status';
+export type TrackerCapability =
+  | 'backlog'
+  | 'blockedBy'
+  | 'checklist'
+  | 'children'
+  | 'comment'
+  | 'status';
 
 // A factory status shown on an issue, or `clear` to remove it.
 export type IssueStatus = 'clear' | 'in_progress' | 'in_review';
@@ -46,8 +52,14 @@ export type Tracker = {
   // children is an umbrella and cannot be started.
   children: (issue: TrackerIssue) => Array<IssueLink>;
   // Comments on `issue` unless a comment carrying `marker` is already there,
-  // so a retried update posts once.
-  comment: (issue: TrackerIssue, markdown: string, marker: string) => void;
+  // so a retried update posts once. With `replace`, that comment's text is
+  // replaced instead, so the issue keeps one up-to-date comment.
+  comment: (
+    issue: TrackerIssue,
+    markdown: string,
+    marker: string,
+    mode: 'once' | 'replace',
+  ) => void;
   // Also the ticket's source kind, such as `github`.
   kind: string;
   // Open issues matching the query, newest first.
@@ -56,6 +68,9 @@ export type Tracker = {
   resolve: (ref: string) => Resolved | null;
   // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a no-op.
   setStatus: (issue: TrackerIssue, status: IssueStatus) => void;
+  // Ticks the open boxes with these texts in the issue body as it is now and
+  // changes nothing else. A text no box has any more is a conflict.
+  tickBoxes: (issue: TrackerIssue, texts: Array<string>) => { conflicts: Array<string> };
 };
 
 export class UnsupportedOperation extends Error {

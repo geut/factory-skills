@@ -79,7 +79,7 @@ function client(tracked: Tracked, overrides: Partial<GithubClient> = {}): Github
       tracked.labels.push({ add, remove });
     },
     fetchIssue: () => issue,
-    listComments: () => tracked.comments,
+    listComments: () => tracked.comments.map((body, id) => ({ body, id })),
     listSubIssues: () => [],
     ...overrides,
   };

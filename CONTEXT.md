@@ -111,8 +111,12 @@ The system that holds the repository and its pull requests, such as GitHub.
 _Avoid_: repo provider, provider
 
 **Tracker update**:
-A comment or status change the factory writes to a ticket's issue when the ticket starts, pauses for a person, or reaches handoff. It never blocks the ticket.
+A comment, status change, or checkbox tick the factory writes to a ticket's issue when the ticket starts, pauses for a person, or reaches handoff. It never blocks the ticket.
 _Avoid_: write-back, sync
+
+**Issue checklist**:
+Wrap-up's judgment of each open checkbox of the ticket's issue (`B1`..`Bn`): met, with the task criterion or file that proves it, or not met, with why. At handoff the controller ticks the met boxes and comments the rest with wrap-up's decisions.
+_Avoid_: acceptance criteria, which belong to a task file
 
 **Pull request outcome**:
 What happened to a ticket's pull request after handoff: its external reviews, whether it merged, and when.

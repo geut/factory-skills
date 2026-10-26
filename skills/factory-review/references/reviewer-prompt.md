@@ -62,7 +62,7 @@ Severity is `critical`, `major`, or `minor`:
 - `major`: unmet acceptance criterion, likely user-visible defect, invalid architecture boundary, or missing proof of essential behavior.
 - `minor`: real localized maintainability or clarity problem within scope.
 
-`critical` and `major` are blocking. `minor` is not. Exclude purely stylistic preferences. Number findings from 1. The controller synthesizes stable ids `R{round}-{n}` from those numbers.
+`critical` and `major` are blocking. `minor` is not. Exclude purely stylistic preferences. When a finding means a criterion is not fully met, name it in the title, such as `(AC2)`: wrap-up leaves the issue's box for that criterion unticked while the finding is open. Number findings from 1. The controller synthesizes stable ids `R{round}-{n}` from those numbers.
 
 The template itself is [output.md](output.md).
 

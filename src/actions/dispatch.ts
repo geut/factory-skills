@@ -46,6 +46,7 @@ import {
   sweepStrays,
   type SweepOutcome,
 } from './strays.ts';
+import { applyTicketUpdate } from './ticket-source.ts';
 import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
@@ -421,18 +422,20 @@ async function updateTicketSource(
     updatedAt: null,
     url: snapshot.ticket.sourceRef,
   };
-  // The marker makes a retried comment a no-op, even after a crash.
-  const marker = `<!-- factory:${action.idempotencyKey} -->`;
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
-      if (tracker.capabilities.has('comment')) {
-        tracker.comment(issue, action.comment, marker);
-      }
-      if (action.issueStatus !== null && tracker.capabilities.has('status')) {
-        tracker.setStatus(issue, action.issueStatus);
-      }
-      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
+      const { conflicts } = applyTicketUpdate(tracker, issue, action);
+      // A box someone changed stays unticked: a warning, never a retry.
+      finishLeasedAction(
+        input.db,
+        action.id,
+        input.now(),
+        conflicts.length === 0 ? 'succeeded' : 'failed',
+        conflicts.length === 0
+          ? null
+          : `Left unticked, because the box changed on the issue: ${conflicts.map((text) => `"${text}"`).join(', ')}.`,
+      );
       return null;
     } catch (error: unknown) {
       failure = messageOf(error);

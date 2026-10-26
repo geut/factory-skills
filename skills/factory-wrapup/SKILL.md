@@ -17,6 +17,10 @@ Update `.factory/CONTEXT.md`, `.factory/PRD.md`, or project documentation only w
 
 Do not create `wrapup.md` or a `visuals/` directory in the factory root by default. The wrap-up Pi session is the human handoff. Promote an artifact to project documentation only when it must survive the ticket session.
 
+## Close the issue loop
+
+The prompt lists the issue's open checkboxes as `B1`..`Bn`, each task's review Verification lines, QA test plan rows, and the open review findings. Judge each box against that evidence and record it under `## Issue checklist`: `met` with the task criterion (verified by review or tested by QA) or file that proves it, or `not_met` with the reason. A box an open finding contradicts, even a minor one, stays `not_met`. Under `## Decisions`, list the choices that changed the issue's approach, such as a different API or a dropped requirement. Do not edit the issue yourself: the controller ticks the boxes and posts the comment after it accepts the handoff.
+
 ## Build the handoff
 
 The session handoff is the Output template. Do not wrap it in a recap.
@@ -108,6 +112,6 @@ In a controller run, let the controller record wrap-up usage, show the final usa
 
 ## Output
 
-Return only the `factory.wrapup.v1` template in [references/output.md](references/output.md). No JSON object, no recap after it. Include every heading.
+Return only the `factory.wrapup.v2` template in [references/output.md](references/output.md). No JSON object, no recap after it. Include every heading.
 
 After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is only for a question you cannot answer. Do not edit the controller database.

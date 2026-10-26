@@ -1,9 +1,20 @@
+import { readFileSync } from 'node:fs';
 import { inspectWrapupInput } from '../../actions/wrapup-input.ts';
 import { factoryRootOf, ticketDirOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { captureWrapupState } from '../../validation/wrapup.ts';
 import type { InputContext, InputResult } from '../effects.ts';
+import { qaPaths, testPlan } from '../qa/criteria.ts';
 import type { WrapupPrepared } from './definition.ts';
+
+function readText(file: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    // A task QA did not run for has no test plan.
+    return '';
+  }
+}
 
 function wrapupRuns(snapshot: FactorySnapshot) {
   const session = snapshot.sessions.find((item) => item.stage === 'wrapup') ?? null;
@@ -61,6 +72,11 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
             ? []
             : [{ name: check.name, path: check.evidencePath, taskId: check.taskId }],
         ),
+      testPlan: snapshot.tasks.flatMap((task) =>
+        testPlan(readText(qaPaths(snapshot.execution.factoryDir, task.taskId).plan)).map(
+          (row) => `Task ${task.taskId} ${row.criterion}: ${row.test}`,
+        ),
+      ),
       usage: deps.usage(),
       verification: deps
         .passedChecks('work')

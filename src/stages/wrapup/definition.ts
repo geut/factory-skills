@@ -1,8 +1,10 @@
 import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
+import type { Checkbox } from '../../ports/checklist.ts';
 import { defineStage } from '../definition.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
-import { formatFinding, runReview } from '../review/parse.ts';
+import { formatFinding, latestReviews } from '../review/parse.ts';
+import { openBoxes } from './checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
@@ -13,6 +15,8 @@ export type WrapupPrepared = {
   contextPath: string | null;
   // QA's screenshots from each task's latest passed QA validation.
   screenshots: Array<{ name: string; path: string; taskId: string }>;
+  // Each task's QA test plan rows, such as `Task 01 AC1: e2e/filter.e2e.ts › survives a reload`.
+  testPlan: Array<string>;
   // The all-stage usage table so far, excluding wrap-up.
   usage: string;
   // One line per passing work-validation check, per task.
@@ -26,6 +30,8 @@ export type WrapupInput = {
   contextPath: string | null;
   displayRef: string;
   factoryRoot: string;
+  // The issue's open boxes, B1..Bn.
+  issueBoxes: Array<Checkbox>;
   minorFindings: Array<string>;
   model: string;
   planPath: string;
@@ -40,6 +46,7 @@ export type WrapupInput = {
     title: string;
     verdict: string;
   }>;
+  testPlan: Array<string>;
   usage: string;
   verification: Array<string>;
   worktree: string;
@@ -54,43 +61,32 @@ function reviewNotes(snapshot: FactorySnapshot): {
 } {
   const findings: Array<string> = [];
   const verification: Array<string> = [];
-  for (const session of snapshot.sessions) {
-    if (session.stage !== 'review') {
-      continue;
-    }
-    const latest = snapshot.runs
-      .filter((run) => run.sessionId === session.id && run.resultStatus === 'valid')
-      .sort((left, right) => right.sequence - left.sequence)[0];
-    if (latest === undefined) {
-      continue;
-    }
-    const parsed = runReview(latest);
+  for (const { result, taskId } of latestReviews(snapshot)) {
     // Finding ids restart in every task's review, so name the task.
-    if (parsed.kind === 'valid') {
-      const label = `Task ${session.taskId ?? '?'}`;
-      findings.push(
-        ...parsed.result.findings
-          .filter((item) => !item.blocking)
-          .map((item) => `${label} ${formatFinding(item)}`),
-      );
-      verification.push(
-        ...parsed.result.verification.map(
-          (line) => `${label} ${line.id}: ${line.status} — ${line.evidence}`,
-        ),
-      );
-    }
+    const label = `Task ${taskId}`;
+    findings.push(
+      ...result.findings
+        .filter((item) => !item.blocking)
+        .map((item) => `${label} ${formatFinding(item)}`),
+    );
+    verification.push(
+      ...result.verification.map(
+        (line) => `${label} ${line.id}: ${line.status} — ${line.evidence}`,
+      ),
+    );
   }
   return { findings, verification };
 }
 
 const skill = 'factory-wrapup';
-const contract = 'factory.wrapup.v1';
+const contract = 'factory.wrapup.v2';
 const tools = ['read', 'bash', 'grep', 'find', 'ls'];
 
 export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
   conclude: (_view, _run, report) =>
     report.status === 'passed'
       ? {
+          checklist: report.detail.checklist,
           kind: 'accept',
           notice: report.detail.usage,
           ...(report.detail.pullRequest === null
@@ -118,6 +114,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
       factoryRoot: factoryRootOf(execution.factoryDir),
+      issueBoxes: openBoxes(snapshot.ticket),
       minorFindings: notes.findings,
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
@@ -132,6 +129,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         title: task.title,
         verdict: task.summaries.review?.label ?? 'none',
       })),
+      testPlan: prepared.testPlan,
       usage: prepared.usage,
       verification: prepared.verification,
       worktree: execution.worktreePath,
@@ -206,10 +204,22 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           ? ['none']
           : input.reviewVerification.map((line) => `- ${line}`)),
         '',
+        'QA test plan:',
+        ...(input.testPlan.length === 0 ? ['none'] : input.testPlan.map((row) => `- ${row}`)),
+        '',
         'Non-blocking review findings:',
         ...(input.minorFindings.length === 0
           ? ['none']
           : input.minorFindings.map((finding) => `- ${finding}`)),
+        '',
+        ...(input.issueBoxes.length === 0
+          ? ['Issue checkboxes: none; write `none` under ## Issue checklist.']
+          : [
+              'Issue checkboxes (one ## Issue checklist line each):',
+              ...input.issueBoxes.map((box) => `- ${box.id}: ${box.text}`),
+              '',
+              'Mark a box met only with evidence: a task criterion review verified or QA tested that proves it, as `Task 01 AC2`, or a file. Leave it not_met, with the reason, when an open review finding names a criterion it rests on. The controller ticks the met boxes on the issue and comments the open ones with ## Decisions.',
+            ]),
         '',
         'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
         input.usage,

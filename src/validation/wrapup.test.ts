@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WrapupBaseline } from '../domain.ts';
+import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
 import {
   captureWrapupState,
@@ -58,6 +59,10 @@ function fixture(): Fixture {
   mkdirSync(path.join(factoryRoot, 'tickets/proj-1'), { recursive: true });
   writeFileSync(path.join(factoryRoot, 'FACTORY.json'), '{}\n');
   writeFileSync(path.join(factoryRoot, 'tickets/proj-1/plan.md'), '# Plan\n');
+  writeFileSync(
+    path.join(factoryRoot, 'tickets/proj-1/01-task.md'),
+    '# Store the filter\n\n## Acceptance criteria\n\n- [ ] The filter survives a reload.\n- [ ] The filter has a label.\n',
+  );
   const worktree = path.join(factoryRoot, 'worktrees/proj-1');
   git(codeRoot, ['worktree', 'add', '-b', branch, worktree, 'main']);
   // The approved work: one changed file and one new file.
@@ -83,7 +88,13 @@ function fixture(): Fixture {
 
 function handoff(
   fixtureValue: Fixture,
-  input: { files?: Array<string>; merge?: string; tests?: string } = {},
+  input: {
+    checklist?: string;
+    decisions?: string;
+    files?: Array<string>;
+    merge?: string;
+    tests?: string;
+  } = {},
 ): string {
   const files = input.files ?? ['src/filter.ts', 'src/store.ts'];
   return `Some prose before the template is ignored.
@@ -103,6 +114,14 @@ ${files.map((file) => `- \`${file}\``).join('\n')}
 ## Tests
 
 ${input.tests ?? '- `npm test` (test): passed'}
+
+## Issue checklist
+
+${input.checklist ?? 'none'}
+
+## Decisions
+
+${input.decisions ?? 'none'}
 
 ## Operations
 
@@ -134,6 +153,8 @@ function validate(
   options: {
     findPullRequest?: PullRequestLookup;
     generated?: Array<string>;
+    // The ticket's issue body, with task 01 and its approving review.
+    issue?: { body: string; review: string };
     pullRequests?: boolean;
   } = {},
 ) {
@@ -153,6 +174,16 @@ function validate(
         execution.worktreePath = value.worktree;
         finished.baseline = JSON.stringify(baseline);
         finished.resultJson = JSON.stringify({ output });
+        if (options.issue !== undefined) {
+          snapshot.ticket.body = options.issue.body;
+          snapshot.ticket.sourceKind = 'github';
+          addTasks(snapshot, 1);
+          task(snapshot, '01').taskFile = '01-task.md';
+          run(snapshot, session(snapshot, 'review', '01'), {
+            output: options.issue.review,
+            round: 1,
+          });
+        }
       },
       { findPullRequest: options.findPullRequest ?? noPullRequest, usage: () => 'usage table' },
     ),
@@ -174,6 +205,7 @@ test('a complete handoff passes, and prose outside the headings is ignored', asy
         'handoff headings',
         'files section',
         'tests section',
+        'issue checklist',
         'merge commands',
         'no product code',
         'factory files',
@@ -182,6 +214,124 @@ test('a complete handoff passes, and prose outside the headings is ignored', asy
       ],
     );
   }
+});
+
+const issueBody =
+  '## Done when\n\n- [ ] A reload keeps the filter.\n- [x] The README says so.\n- [ ] The filter is labelled.\n';
+
+// An approving review that verified both criteria of task 01, with `findings`.
+const approved = (findings = 'none') =>
+  review(
+    'approve',
+    findings,
+    undefined,
+    '- AC1: verified — src/filter.ts:1\n- AC2: verified — src/filter.ts:1',
+  );
+
+// A minor finding that contradicts AC2, the label criterion.
+const labelFinding = `### 2. [Minor] The label is never rendered (AC 2)
+
+**Location:** src/filter.ts:1
+**Finding:** The label text exists but no component shows it.
+**Evidence:** Nothing reads filter.label.`;
+
+test('the issue checklist marks each open box met with evidence or not_met with a reason', async () => {
+  const value = fixture();
+  const outcome = await validate(
+    value,
+    value.baseline(),
+    handoff(value, {
+      checklist: [
+        '- B1: met — Task 01 AC1 verified; src/filter.ts:1 keeps it',
+        '- B2: not_met — Task 01 R1-2 says the label is never rendered',
+      ].join('\n'),
+      decisions: '- Stored the filter in the URL instead of localStorage.',
+    }),
+    { issue: { body: issueBody, review: approved() } },
+  );
+  assert.equal(outcome.status, 'passed', failures(outcome));
+  assert.deepEqual(outcome.status === 'passed' ? outcome.detail.checklist : null, {
+    decisions: ['Stored the filter in the URL instead of localStorage.'],
+    met: [{ id: 'B1', text: 'A reload keeps the filter.' }],
+    open: [
+      {
+        id: 'B2',
+        reason: 'Task 01 R1-2 says the label is never rendered',
+        text: 'The filter is labelled.',
+      },
+    ],
+  });
+});
+
+test('an unknown or missing box, or a met box without evidence, comes back as a correction', async () => {
+  const value = fixture();
+  const checked = (checklist: string, decisions = 'none') =>
+    validate(value, value.baseline(), handoff(value, { checklist, decisions }), {
+      issue: { body: issueBody, review: approved() },
+    }).then(failures);
+  assert.match(
+    await checked('- B1: met — Task 01 AC1\n- B2: met — src/store.ts\n- B9: met — Task 01 AC1'),
+    /B9 is not an open box of the issue \(B1, B2\)/,
+  );
+  assert.match(await checked('- B1: met — Task 01 AC1'), /## Issue checklist has no line for B2/);
+  const unsupported = await checked(
+    '- B1: met — it works now\n- B2: met — Task 03 AC1, src/missing.ts:4\n',
+  );
+  assert.match(
+    unsupported,
+    /B1 is met but cites no verified task criterion \(Task 01 AC1\) or file/,
+  );
+  assert.match(unsupported, /B2 cites Task 03 AC1, which is not a criterion of this ticket/);
+  assert.match(
+    await checked('- B1: met — Task 01 AC1\n- B2: not_met'),
+    /B2 is not_met without a reason/,
+  );
+  assert.match(
+    await checked('- B1: met — Task 01 AC1\n- B2: not_met — later', 'We changed things.'),
+    /## Decisions must be none or bullet points/,
+  );
+});
+
+test('a met box rests on a criterion review verified or QA tested', async () => {
+  const value = fixture();
+  const checklist = '- B1: met — Task 01 AC1\n- B2: met — Task 01 AC2';
+  const unverified = review(
+    'approve',
+    'none',
+    undefined,
+    '- AC1: verified — src/filter.ts:1\n- AC2: not_verified — needs a browser',
+  );
+  const output = handoff(value, { checklist });
+  const options = { issue: { body: issueBody, review: unverified } };
+  assert.match(
+    failures(await validate(value, value.baseline(), output, options)),
+    /B2 cites Task 01 AC2, which review did not verify and QA's test plan does not cover/,
+  );
+  // QA's test plan proves it instead.
+  const qa = path.join(value.factoryRoot, 'tickets/proj-1/qa/01');
+  mkdirSync(qa, { recursive: true });
+  writeFileSync(
+    path.join(qa, 'test-plan.md'),
+    '| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC2 | e2e/label.e2e.ts › shows the label | none |\n',
+  );
+  const outcome = await validate(value, value.baseline(), output, options);
+  assert.equal(outcome.status, 'passed', failures(outcome));
+});
+
+test('a box is not met while an open review finding names the criterion it cites', async () => {
+  const value = fixture();
+  const outcome = await validate(
+    value,
+    value.baseline(),
+    handoff(value, {
+      checklist: '- B1: met — Task 01 AC1\n- B2: met — Task 01 AC2 verified',
+    }),
+    { issue: { body: issueBody, review: approved(labelFinding) } },
+  );
+  assert.match(
+    failures(outcome),
+    /B2 is met, but open finding Task 01 R1-2 names AC2; mark B2 not_met with that finding as the reason/,
+  );
 });
 
 test('a missing heading fails', async () => {
