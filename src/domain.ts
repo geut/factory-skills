@@ -3,6 +3,7 @@ import type { InternalLabel, Limits, Validation, WorkCommand } from './config.ts
 import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
+import type { ContextGaps } from './stages/plan/context.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -341,6 +342,8 @@ export type ControllerEvent =
       baseBranch: string;
       baseSha: string;
       branch: string;
+      // What the factory root's CONTEXT.md lacks; the plan launched here fills it in.
+      context: ContextGaps;
       kind: 'worktree_ready';
       worktreePath: string;
     }

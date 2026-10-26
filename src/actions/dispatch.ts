@@ -31,6 +31,7 @@ import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
+import { contextGaps } from '../stages/plan/context.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -308,6 +309,7 @@ async function worktree(
       baseBranch: prepared.baseBranch,
       baseSha: prepared.baseSha,
       branch: prepared.branch,
+      context: contextGaps(factoryRoot),
       kind: 'worktree_ready',
       worktreePath: prepared.path,
     },

@@ -9,7 +9,7 @@ Implement one task. Keep the change no larger than the task's observable outcome
 
 ## Establish the contract
 
-Read `.factory/CONTEXT.md`, the ticket's `plan.md`, optional `adr.md`, the target task, its blockers, relevant code and tests, and project instructions. Confirm the ticket and task identifiers before editing. Do not begin when a dependency is incomplete or the worktree is shared with another active ticket.
+Read `.factory/CONTEXT.md` first: it lists the commands for check, lint and tests, the environment, and the test layers, so use them before exploring for your own. Then read the ticket's `plan.md`, optional `adr.md`, the target task, its blockers, relevant code and tests, and project instructions. Confirm the ticket and task identifiers before editing. Do not begin when a dependency is incomplete or the worktree is shared with another active ticket.
 
 If the plan conflicts with current evidence, add a bullet to `plan.md` under `Discoveries` and adjust affected task scope before continuing. A bullet is a plain finding, what was found and what it changed, with no date, round, or run label; see [the plan artifacts](../factory-plan/references/artifacts.md). Escalate when the new evidence changes product behavior or invalidates multiple tasks.
 

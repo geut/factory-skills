@@ -1,10 +1,23 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { factoryRootOf } from '../controller/keys.ts';
 import { taskId, type PlanValidationReport, type PlannedTask } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { stageEnabled } from '../stages/flow.ts';
+import {
+  CONTEXT_LINE_BUDGET,
+  contextPathOf,
+  createContextInstruction,
+  inspectContext,
+} from '../stages/plan/context.ts';
 import { acceptanceCriteria } from '../stages/qa/criteria.ts';
-import { errorReport, failedReport, passedReport, type Validator } from './report.ts';
+import {
+  errorReport,
+  failedReport,
+  passedReport,
+  type ValidationCheck,
+  type Validator,
+} from './report.ts';
 import { readTaskFile } from './task-file.ts';
 
 function titleOf(markdown: string, fallback: string): string {
@@ -71,7 +84,67 @@ function cycleFailure(tasks: Array<PlannedTask>): string | null {
   return null;
 }
 
-export const PLAN_VALIDATOR_VERSION = 'plan.v4';
+// The factory root's CONTEXT.md holds every required section. Its size is
+// only a warning: trimming it is the person's call.
+type ContextCheck = { check: ValidationCheck; failures: Array<string> };
+
+function contextCheck(factoryRoot: string): ContextCheck {
+  const file = contextPathOf(factoryRoot);
+  const context = inspectContext(factoryRoot);
+  const failures =
+    context.kind === 'missing'
+      ? [`CONTEXT.md is missing. ${createContextInstruction(factoryRoot)}`]
+      : [
+          ...context.missingSections.map(
+            (section) =>
+              `CONTEXT.md has no "## ${section}" section. Add it, saying "none known yet" if nothing is known, and leave the rest of the file as it is.`,
+          ),
+          ...context.emptySections.map(
+            (section) =>
+              `CONTEXT.md has an empty "## ${section}" section. Write what you learned, or "none known yet".`,
+          ),
+        ];
+  const details =
+    failures.length > 0
+      ? failures.join('\n')
+      : context.kind === 'read' && context.lines > CONTEXT_LINE_BUDGET
+        ? `Warning: ${file} is ${context.lines} lines, over the ${CONTEXT_LINE_BUDGET}-line budget.`
+        : file;
+  return {
+    check: {
+      details,
+      kind: 'artifact',
+      name: 'CONTEXT.md',
+      status: failures.length > 0 ? 'failed' : 'passed',
+    },
+    failures,
+  };
+}
+
+export const PLAN_VALIDATOR_VERSION = 'plan.v5';
+
+// A failed plan: one check per artifact failure, named by `nameOf`, then the
+// CONTEXT.md check and its failures.
+function planFailed(
+  failures: Array<string>,
+  nameOf: (failure: string) => string,
+  context: ContextCheck,
+): PlanValidationReport {
+  return failedReport(
+    PLAN_VALIDATOR_VERSION,
+    [
+      ...failures.map((failure): ValidationCheck => ({
+        details: failure,
+        kind: 'artifact',
+        name: nameOf(failure),
+        status: 'failed',
+      })),
+      context.check,
+    ],
+    [...failures, ...context.failures],
+    null,
+  );
+}
 
 // `requireCriteria`: QA is enabled, so every task needs acceptance criteria.
 function inspectPlanDir(input: {
@@ -103,18 +176,9 @@ function inspectPlanDir(input: {
   if (filenames.length === 0) {
     failures.push('At least one task file is required.');
   }
+  const context = contextCheck(factoryRootOf(input.factoryDir));
   if (failures.length > 0) {
-    return failedReport(
-      PLAN_VALIDATOR_VERSION,
-      failures.map((failure) => ({
-        details: failure,
-        kind: 'artifact',
-        name: failure,
-        status: 'failed',
-      })),
-      failures,
-      null,
-    );
+    return planFailed(failures, (failure) => failure, context);
   }
 
   failures.push(...duplicateFailures(filenames));
@@ -163,24 +227,15 @@ function inspectPlanDir(input: {
   if (cycle !== null) {
     failures.push(cycle);
   }
-  if (failures.length > 0) {
-    return failedReport(
-      PLAN_VALIDATOR_VERSION,
-      failures.map((failure) => ({
-        details: failure,
-        kind: 'artifact',
-        name: 'task files',
-        status: 'failed',
-      })),
-      failures,
-      null,
-    );
+  if (failures.length > 0 || context.failures.length > 0) {
+    return planFailed(failures, () => 'task files', context);
   }
   return passedReport(
     PLAN_VALIDATOR_VERSION,
     [
       { details: planFile, kind: 'artifact', name: 'plan.md', status: 'passed' },
       { details: String(tasks.length), kind: 'schema', name: 'task graph', status: 'passed' },
+      context.check,
     ],
     { planPath: planFile, tasks },
   );

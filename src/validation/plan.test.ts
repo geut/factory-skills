@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { factoryRootOf } from '../controller/keys.ts';
 import { validationContext } from './fixture.ts';
 import { planValidator } from './plan.ts';
 
@@ -20,10 +21,51 @@ function task(title: string, fields: string, body = ''): string {
   return `---\n${fields}\n---\n\n# ${title}\n${body}`;
 }
 
+const context = [
+  '# Context',
+  '',
+  '## Commands',
+  '`npm test` runs every test.',
+  '',
+  '## Environment',
+  'none known yet',
+  '',
+  '## Test layers',
+  'none known yet',
+  '',
+  '## Servers and ports',
+  'none known yet',
+  '',
+  '## Known flakes',
+  'none known yet',
+  '',
+  '## Fixtures and fakes',
+  'none known yet',
+  '',
+  '## Vocabulary',
+  'none known yet',
+  '',
+].join('\n');
+
+// A ticket directory in a fresh factory root holding `contextText` as CONTEXT.md.
+function ticketDir(contextText: string | null = context): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const dir = path.join(root, 'tickets', '42');
+  mkdirSync(dir, { recursive: true });
+  if (contextText !== null) {
+    writeFileSync(path.join(root, 'CONTEXT.md'), contextText);
+  }
+  return dir;
+}
+
+function cleanUp(factoryDir: string) {
+  rmSync(factoryRootOf(factoryDir), { force: true, recursive: true });
+}
+
 const store = task('Store', 'type: feature\nqa: e2e\nblocked_by: []');
 
 async function failures(files: Record<string, string>): Promise<Array<string>> {
-  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const factoryDir = ticketDir();
   try {
     writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
     for (const [name, text] of Object.entries(files)) {
@@ -32,12 +74,12 @@ async function failures(files: Record<string, string>): Promise<Array<string>> {
     const report = await validate(factoryDir);
     return report.status === 'failed' ? report.failures : [];
   } finally {
-    rmSync(factoryDir, { force: true, recursive: true });
+    cleanUp(factoryDir);
   }
 }
 
 test('plan validation accepts plan.md plus at least one task file', async () => {
-  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const factoryDir = ticketDir();
   try {
     const empty = await validate(factoryDir);
     assert.equal(empty.status, 'failed');
@@ -65,18 +107,19 @@ test('plan validation accepts plan.md plus at least one task file', async () => 
       [
         ['plan.md', 'passed'],
         ['task graph', 'passed'],
+        ['CONTEXT.md', 'passed'],
       ],
     );
     assert.equal(passed.detail.tasks[0]?.taskId, '01');
     assert.equal(passed.detail.tasks[1]?.title, 'Restore');
     assert.deepEqual(passed.detail.tasks[1]?.blockedBy, ['01']);
   } finally {
-    rmSync(factoryDir, { force: true, recursive: true });
+    cleanUp(factoryDir);
   }
 });
 
 test('a dependency is the task with that number or filename', async () => {
-  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const factoryDir = ticketDir();
   try {
     writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
     writeFileSync(path.join(factoryDir, '01-task-store.md'), store);
@@ -99,7 +142,7 @@ test('a dependency is the task with that number or filename', async () => {
       [[], ['01'], ['01', '02']],
     );
   } finally {
-    rmSync(factoryDir, { force: true, recursive: true });
+    cleanUp(factoryDir);
   }
 });
 
@@ -179,7 +222,7 @@ test('a plan run without a result is not validated', async () => {
 });
 
 test('with QA enabled, every task file must list acceptance criteria', async () => {
-  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-plan-'));
+  const factoryDir = ticketDir();
   const withQa = () =>
     planValidator.validate(
       validationContext('plan', (snapshot, finished) => {
@@ -221,6 +264,65 @@ test('with QA enabled, every task file must list acceptance criteria', async () 
       assert.deepEqual(skipped.detail.tasks[0]?.skips, ['qa']);
     }
   } finally {
-    rmSync(factoryDir, { force: true, recursive: true });
+    cleanUp(factoryDir);
+  }
+});
+
+// A plan of one task in a factory root whose CONTEXT.md is `contextText`.
+async function contextReport(contextText: string | null) {
+  const factoryDir = ticketDir(contextText);
+  try {
+    writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), store);
+    return await validate(factoryDir);
+  } finally {
+    cleanUp(factoryDir);
+  }
+}
+
+test('a plan that leaves no CONTEXT.md is a correction', async () => {
+  const report = await contextReport(null);
+  assert.equal(report.status, 'failed');
+  if (report.status === 'failed') {
+    assert.equal(report.failures.length, 1);
+    assert.match(report.failures[0] ?? '', /CONTEXT\.md is missing/);
+  }
+});
+
+test('a CONTEXT.md without a required section is a correction', async () => {
+  const report = await contextReport(context.replace('## Known flakes\n', ''));
+  assert.equal(report.status, 'failed');
+  if (report.status === 'failed') {
+    assert.equal(report.failures.length, 1);
+    assert.match(report.failures[0] ?? '', /## Known flakes/);
+  }
+});
+
+test('an existing CONTEXT.md with every section passes and is left as it was', async () => {
+  const factoryDir = ticketDir();
+  try {
+    writeFileSync(path.join(factoryDir, 'plan.md'), '# Filter\n');
+    writeFileSync(path.join(factoryDir, '01-task-store.md'), store);
+    assert.equal((await validate(factoryDir)).status, 'passed');
+    assert.equal(readFileSync(path.join(factoryRootOf(factoryDir), 'CONTEXT.md'), 'utf8'), context);
+  } finally {
+    cleanUp(factoryDir);
+  }
+});
+
+test('a CONTEXT.md over the line budget passes with a warning', async () => {
+  const report = await contextReport(context + 'A fact.\n'.repeat(200));
+  assert.equal(report.status, 'passed');
+  const check = report.checks.find((item) => item.name === 'CONTEXT.md');
+  assert.equal(check?.status, 'passed');
+  assert.match(check?.details ?? '', /Warning: .* over the 150-line budget/);
+});
+
+test('a CONTEXT.md of bare headings is a correction', async () => {
+  const report = await contextReport(context.replaceAll('none known yet\n', ''));
+  assert.equal(report.status, 'failed');
+  if (report.status === 'failed') {
+    assert.equal(report.failures.length, 6);
+    assert.match(report.failures[0] ?? '', /empty "## Environment" section/);
   }
 });

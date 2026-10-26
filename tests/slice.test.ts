@@ -17,6 +17,7 @@ import { createRouter } from '../src/api/router.ts';
 import { apiRoutes } from '../src/api/routes.ts';
 import { unusedCommands } from '../src/api/testing.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
+import { factoryRootOf } from '../src/controller/keys.ts';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent, loadGeneration } from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
@@ -33,6 +34,7 @@ import { sha256 } from '../src/hash.ts';
 import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
 import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
+import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
@@ -68,7 +70,12 @@ function repo(): { codeRoot: string; factoryRoot: string } {
   return { codeRoot, factoryRoot };
 }
 
+// What a first planner leaves: the plan, one task, and the factory root's CONTEXT.md.
 function writePlanFiles(factoryDir: string, taskFile: string): void {
+  writeFileSync(
+    path.join(factoryRootOf(factoryDir), 'CONTEXT.md'),
+    CONTEXT_SECTIONS.map((section) => `## ${section}\nnone known yet\n`).join('\n'),
+  );
   writeFileSync(
     path.join(factoryDir, 'plan.md'),
     '# Remember the filter\n\n## Outcome\nThe catalog keeps its filter.\n',
@@ -161,6 +168,8 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   if (planRun === undefined) {
     throw new Error('missing plan run');
   }
+  // The repo has no CONTEXT.md yet, so the first planner is asked for one.
+  assert.match(runtime.launches[0]?.prompt ?? '', /Create .*\.factory\/CONTEXT\.md/);
   runtime.emit(planRun, {
     kind: 'subagent_done',
     output: 'Plan files are written.',

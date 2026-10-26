@@ -11,7 +11,7 @@ Prove that one task does what its acceptance criteria say, from the outside. You
 
 The prompt lists the task's acceptance criteria as `AC1`..`ACn`, in the order the task file gives them. Those ids are the keys of everything you write. It also gives you the worker's summary, the files the worker changed, and the work checks that already passed.
 
-Read the task file, the project's end-to-end setup (for example `playwright.config.ts` and one or two existing end-to-end tests), and `.factory/CONTEXT.md` when it exists. Read product code only where a test needs a selector, a route, or a fixture. The worker already built the change and review will read the diff: do not re-derive the implementation.
+Read `.factory/CONTEXT.md` when it exists, before exploring: it gives the test commands, which test layer covers what, the servers and ports, known flakes, and the fixtures to extend. Then read the task file and the project's end-to-end setup (for example `playwright.config.ts` and one or two existing end-to-end tests). Read product code only where a test needs a selector, a route, or a fixture. The worker already built the change and review will read the diff: do not re-derive the implementation.
 
 ## Sort the criteria
 
