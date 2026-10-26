@@ -1,10 +1,11 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { recordPullRequest } from '../controller/facts.ts';
 import { factoryRootOf } from '../controller/keys.ts';
 import { attentionCard } from '../controller/run-card.ts';
 import {
+  activeWorktrees,
   claimNextAction,
   executionIsCurrent,
   extendActionLease,
@@ -12,6 +13,7 @@ import {
   loadSnapshotByExecution,
   loadSnapshotByRun,
   passedChecks,
+  recordStrayProcess,
   ticketTab,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
@@ -37,6 +39,13 @@ import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
 import { archiveStamp } from './leftovers.ts';
+import {
+  listProcesses,
+  processAlive,
+  strayProcesses,
+  sweepStrays,
+  type SweepOutcome,
+} from './strays.ts';
 import { prepareWorktree, setUpWorktree } from './worktree.ts';
 import { openHandoffPane } from './wrapup.ts';
 
@@ -199,11 +208,65 @@ async function perform(
   }
 }
 
+// How long a stray server gets to exit on SIGTERM before SIGKILL.
+const STRAY_GRACE_MS = 3000;
+
+function strayCard(snapshot: FactorySnapshot, outcomes: Array<SweepOutcome>): string {
+  const lines = outcomes.map(
+    (outcome) =>
+      `- ${outcome.kind === 'stray_process_stopped' ? 'stopped' : 'could not stop'} pid ${outcome.pid} (${outcome.command.slice(0, 80)}) from ${path.basename(outcome.worktree)}: ${outcome.detail}`,
+  );
+  return [
+    `${snapshot.ticket.displayRef}: stray processes from inactive worktrees, before this run:`,
+    ...lines,
+  ].join('\n');
+}
+
+// Servers an earlier ticket's agents left running would collide with, or be
+// reused by, this run's test harness. Work and QA runs start without them.
+async function sweepStrayProcesses(
+  input: { db: DatabaseSync; notify: (message: string) => void; now: () => string },
+  snapshot: FactorySnapshot,
+  run: RunRecord,
+): Promise<void> {
+  const worktreesDir = path.join(factoryRootOf(snapshot.execution.factoryDir), 'worktrees');
+  if (!existsSync(worktreesDir)) {
+    return;
+  }
+  const strays = strayProcesses({
+    activeWorktrees: activeWorktrees(input.db),
+    exists: existsSync,
+    processes: listProcesses(),
+    protectedPids: new Set([process.pid, process.ppid]),
+    realWorktreesDir: realpathSync(worktreesDir),
+    worktreesDir,
+  });
+  if (strays.length === 0) {
+    return;
+  }
+  const outcomes = await sweepStrays({
+    alive: processAlive,
+    graceMs: STRAY_GRACE_MS,
+    record: (outcome) =>
+      recordStrayProcess(input.db, {
+        ...outcome,
+        executionId: snapshot.execution.id,
+        now: input.now(),
+        runId: run.id,
+      }),
+    signal: (pid, signal) => process.kill(pid, signal),
+    strays,
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+  input.notify(strayCard(snapshot, outcomes));
+}
+
 async function launch(
   input: {
     db: DatabaseSync;
     factoryRoot: string;
     ids: IdSource;
+    notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
   },
@@ -222,6 +285,14 @@ async function launch(
   mkdirSync(snapshot.execution.factoryDir, { recursive: true });
   const sessionFile = session.sessionFile ?? newSessionFile(input.factoryRoot, snapshot, session);
   const mode = action.kind === 'resume_run' ? 'resume' : action.mode;
+  if (session.stage === 'work' || session.stage === 'qa') {
+    // Cleanup never holds up the run: a sweep that fails is only reported.
+    await sweepStrayProcesses(input, snapshot, run).catch((error: unknown) => {
+      input.notify(
+        `${snapshot.ticket.displayRef}: the stray process sweep failed: ${messageOf(error)}`,
+      );
+    });
+  }
   const spec: LaunchSpec = {
     cwd: action.cwd,
     mode,

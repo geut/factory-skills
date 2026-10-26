@@ -139,12 +139,15 @@ test('herdr launch uses the generic argv pane contract', () => {
     sessionFile: '/tmp/session.jsonl',
     thinking: 'medium',
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
+    worktree: '/repo/.factory/worktrees/proj-1',
   });
   assert.match(script, /trap '' TSTP/);
   assert.match(script, /-e '\/pkg\/child-handshake\.ts'/);
   assert.match(script, /PI_SUBAGENT_AUTO_EXIT=1/);
   assert.match(script, /FACTORY_CHILD=1/);
   assert.match(script, /FACTORY_REPLY_REQUIRED=1/);
+  assert.match(script, /export FACTORY_WORKTREE='\/repo\/\.factory\/worktrees\/proj-1'/);
+  assert.match(script, /export FACTORY_RUN_ID='run-1'/);
   assert.match(script, /--tools 'read,bash,grep,find,ls,caller_ping,subagent_done'/);
   assert.match(script, / '@\/tmp\/prompt\.txt'/);
   assert.match(script, /\.exitcode/);
@@ -177,7 +180,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
   const pi = path.join(directory, 'pi');
   writeFileSync(
     pi,
-    '#!/bin/bash\nprintf "%s|%s" "$PATH" "$FROM_BASH_ENV" > "$(dirname "$0")/seen"\n',
+    '#!/bin/bash\nprintf "%s|%s|%s" "$PATH" "$FROM_BASH_ENV" "$FACTORY_WORKTREE" > "$(dirname "$0")/seen"\n',
     {
       mode: 0o755,
     },
@@ -201,12 +204,17 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
       sessionFile,
       thinking: 'medium',
       tools: 'read,bash',
+      worktree: directory,
     }),
     { mode: 0o755 },
   );
   // Herdr's environment, without the server's PATH or BASH_ENV.
   execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
-  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded`);
+  // FACTORY_WORKTREE marks every process the agent starts, for the stray sweep.
+  assert.equal(
+    readFileSync(path.join(directory, 'seen'), 'utf8'),
+    `${env.PATH}|loaded|${directory}`,
+  );
 
   const pane = renderPaneScript({
     cwd: directory,
@@ -218,7 +226,8 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
   writeFileSync(path.join(directory, 'seen'), '');
   writeFileSync(script, pane, { mode: 0o755 });
   execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
-  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded`);
+  // A handoff pane outlives its ticket; its marker keeps the stray sweep off it.
+  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded|handoff`);
 
   const bare = renderPaneScript({
     cwd: directory,

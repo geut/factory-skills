@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -181,6 +181,53 @@ test('a valid plan registers tasks and launches the first work agent', async () 
   assert.match(service.status('proj-123'), /stage: work/);
   assert.equal(work.cwd.includes(`${path.sep}worktrees${path.sep}`), true);
 });
+
+test(
+  'a server left by an earlier ticket is stopped before work starts',
+  { skip: process.platform !== 'linux' && 'the process lister reads /proc' },
+  async () => {
+    const { codeRoot, factoryRoot } = repo();
+    // A Storybook an earlier ticket's agent backgrounded, still marked with
+    // its worktree after the pane closed.
+    const stale = path.join(factoryRoot, 'worktrees', 'proj-1');
+    mkdirSync(stale, { recursive: true });
+    const server = spawn('sleep', ['60'], {
+      cwd: codeRoot,
+      env: { ...process.env, FACTORY_WORKTREE: stale },
+      stdio: 'ignore',
+    });
+    const exited = new Promise((resolve) => server.once('exit', resolve));
+    try {
+      writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+      const runtime = new FakeRuntime();
+      const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+      await service.command('start proj-123.md');
+      writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+      const planRun = runtime.launches[0]?.runId;
+      if (planRun === undefined) {
+        throw new Error('missing plan run');
+      }
+      runtime.emit(planRun, {
+        kind: 'subagent_done',
+        output: 'Plan files are written.',
+        usage: sampleUsage(),
+      });
+      await waitFor(() => launchesOf(runtime, 'work').length === 1);
+      await exited;
+      const db = openStateDatabase(factoryRoot);
+      const events = db
+        .prepare("SELECT payload_json FROM events WHERE kind = 'stray_process_stopped'")
+        .all()
+        .map((item) => JSON.parse(String(item['payload_json'])));
+      db.close();
+      assert.deepEqual(events, [
+        { command: 'sleep 60', detail: 'SIGTERM', pid: server.pid, worktree: stale },
+      ]);
+    } finally {
+      server.kill('SIGKILL');
+    }
+  },
+);
 
 // The dashboard API check: the planner named task 01 as `blocked_by: [1]`, the
 // dependency pointed at no task, and accepting the plan failed a foreign key.
