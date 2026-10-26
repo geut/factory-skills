@@ -162,9 +162,9 @@ function outcomeOf(row: Record<string, unknown>): Outcome {
 }
 
 // A commit that drew a review asking for changes, or commenting with a body,
-// from anyone but the pull request's author. Counted per author kind, and by
-// disposition: a commit that drew changes requested counts there, one that
-// only drew comments counts as commented. A commit counts once in the total.
+// from anyone but the pull request's author. Counted per author kind, and as
+// changes requested when any of its reviews asked for changes, else as
+// commented. A commit counts once in the total.
 function reviewRounds(db: DatabaseSync, execution: string, author: string | null) {
   const rows = db
     .prepare(
@@ -174,16 +174,16 @@ function reviewRounds(db: DatabaseSync, execution: string, author: string | null
     )
     .all(execution)
     .filter((item) => item['author'] !== author);
-  const commits = (keep: (item: (typeof rows)[number]) => boolean) =>
-    new Set(rows.filter(keep).map((item) => String(item['commit_sha'])));
-  const changesRequested = commits((item) => item['state'] === 'changes_requested');
-  const total = commits(() => true);
+  const commitCount = (keep: (item: (typeof rows)[number]) => boolean) =>
+    new Set(rows.filter(keep).map((item) => String(item['commit_sha']))).size;
+  const total = commitCount(() => true);
+  const changesRequested = commitCount((item) => item['state'] === 'changes_requested');
   return {
-    bot: commits((item) => item['author_type'] === 'bot').size,
-    changesRequested: changesRequested.size,
-    commented: total.size - changesRequested.size,
-    human: commits((item) => item['author_type'] === 'human').size,
-    total: total.size,
+    bot: commitCount((item) => item['author_type'] === 'bot'),
+    changesRequested,
+    commented: total - changesRequested,
+    human: commitCount((item) => item['author_type'] === 'human'),
+    total,
   };
 }
 
