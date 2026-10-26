@@ -4,7 +4,13 @@
 // adapter cannot do throws UnsupportedOperation; asking for one in FACTORY.json
 // stops the server at startup instead.
 
-export type TrackerCapability = 'backlog' | 'blockedBy' | 'children' | 'comment' | 'status';
+export type TrackerCapability =
+  | 'backlog'
+  | 'blockedBy'
+  | 'checklist'
+  | 'children'
+  | 'comment'
+  | 'status';
 
 // A factory status shown on an issue, or `clear` to remove it.
 export type IssueStatus = 'clear' | 'in_progress' | 'in_review';
@@ -31,6 +37,11 @@ export type TrackerIssue = {
   url: string;
 };
 
+// One item of an issue's checklist, however the tracker keeps it: a Markdown
+// box in the body, a checklist field, or a sub-issue. The key is the adapter's
+// and means nothing to the factory but the item.
+export type ChecklistItem = { done: boolean; key: string; text: string };
+
 // A linked issue: a sub-issue or an issue that blocks another.
 export type IssueLink = { displayRef: string; title: string; url: string | null };
 
@@ -42,12 +53,16 @@ export type Tracker = {
   // Issues that block `issue`, through the tracker's native links.
   blockedBy: (issue: TrackerIssue) => Array<IssueLink>;
   capabilities: ReadonlySet<TrackerCapability>;
+  // The issue's checklist as it is now, in order.
+  checklistItems: (issue: TrackerIssue) => Array<ChecklistItem>;
   // Sub-issues of `issue`, through the tracker's native links. An issue with
   // children is an umbrella and cannot be started.
   children: (issue: TrackerIssue) => Array<IssueLink>;
-  // Comments on `issue` unless a comment carrying `marker` is already there,
-  // so a retried update posts once.
-  comment: (issue: TrackerIssue, markdown: string, marker: string) => void;
+  // Comments on `issue` unless the comment of `key` is already there, so a
+  // retried update posts once. With `replace`, that comment's text is
+  // replaced instead, so the issue keeps one up-to-date comment. How the
+  // adapter finds the comment of a key is its own.
+  comment: (issue: TrackerIssue, markdown: string, key: string, mode: 'once' | 'replace') => void;
   // Also the ticket's source kind, such as `github`.
   kind: string;
   // Open issues matching the query, newest first.
@@ -56,6 +71,9 @@ export type Tracker = {
   resolve: (ref: string) => Resolved | null;
   // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a no-op.
   setStatus: (issue: TrackerIssue, status: IssueStatus) => void;
+  // Ticks the checklist items of these keys and changes nothing else. A key
+  // the issue no longer has, because someone edited it, is a conflict.
+  tickBoxes: (issue: TrackerIssue, keys: Array<string>) => { conflicts: Array<string> };
 };
 
 export class UnsupportedOperation extends Error {

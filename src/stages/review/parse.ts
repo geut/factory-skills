@@ -348,6 +348,22 @@ export function earlierFindings(
   return [];
 }
 
+// Each task's latest valid review result, in session order.
+export function latestReviews(
+  snapshot: FactorySnapshot,
+): Array<{ result: ReviewResult; taskId: string }> {
+  return snapshot.sessions.flatMap((session) => {
+    if (session.stage !== 'review' || session.taskId === null) {
+      return [];
+    }
+    const latest = snapshot.runs
+      .filter((run) => run.sessionId === session.id && run.resultStatus === 'valid')
+      .sort((left, right) => right.sequence - left.sequence)[0];
+    const parsed = latest === undefined ? null : runReview(latest);
+    return parsed?.kind === 'valid' ? [{ result: parsed.result, taskId: session.taskId }] : [];
+  });
+}
+
 // How many acceptance criteria a review verified, and which it could not:
 // `6/6 ACs verified` or `5/6 ACs verified · AC3 not verified`. Null for a
 // review without criterion lines.

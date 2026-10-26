@@ -1,11 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
-import type { WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
+import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
+import { latestReviews } from '../stages/review/parse.ts';
+import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   errorReport,
@@ -154,7 +157,7 @@ export function captureWrapupState(input: {
   factoryRoot: string;
   ticketDir: string;
   worktree: string;
-}): WrapupBaseline {
+}): Omit<WrapupBaseline, 'boxes'> {
   return {
     baseHead:
       input.baseBranch === null ? null : refSha(input.codeRoot, `refs/heads/${input.baseBranch}`),
@@ -178,7 +181,8 @@ export function parseBaseline(text: string): WrapupBaseline | null {
       'factory' in value &&
       'remotes' in value
     ) {
-      return value as WrapupBaseline;
+      // A baseline taken before wrap-up read the issue's checklist has none.
+      return { boxes: [], ...(value as Omit<WrapupBaseline, 'boxes'>) };
     }
   } catch {
     return null;
@@ -323,6 +327,8 @@ export function validateWrapup(input: {
   baseline: WrapupBaseline;
   baseSha: string;
   branch: string;
+  // What the issue checklist is checked against, but the worktree.
+  checklist: Omit<ChecklistContext, 'exists'>;
   codeRoot: string;
   commands: Array<WorkCommand>;
   factoryRoot: string;
@@ -335,7 +341,7 @@ export function validateWrapup(input: {
   usage: () => string;
   worktree: string;
 }): WrapupValidationReport {
-  let current: WrapupBaseline;
+  let current: Omit<WrapupBaseline, 'boxes'>;
   let dirty: boolean;
   let branchExists: boolean;
   try {
@@ -357,7 +363,7 @@ export function validateWrapup(input: {
       'handoff headings',
       'schema',
       missing.map((name) => `## ${name} is missing.`),
-      'factory.wrapup.v1',
+      'factory.wrapup.v2',
     ),
   ];
 
@@ -402,6 +408,25 @@ export function validateWrapup(input: {
       input.commands.length === 0
         ? 'no validation commands are configured'
         : 'every validation command is named',
+    ),
+  );
+
+  // The issue's boxes and decisions, which the controller writes to the issue.
+  const checklist = checkIssueChecklist(section('Issue checklist'), section('Decisions'), {
+    ...input.checklist,
+    exists: (file) => {
+      const resolved = path.resolve(input.worktree, file);
+      return (
+        resolved.startsWith(`${path.resolve(input.worktree)}${path.sep}`) && existsSync(resolved)
+      );
+    },
+  });
+  checks.push(
+    check(
+      'issue checklist',
+      'schema',
+      checklist.failures,
+      `${checklist.result.met.length} met, ${checklist.result.open.length} open, ${checklist.result.decisions.length} decision${checklist.result.decisions.length === 1 ? '' : 's'}`,
     ),
   );
 
@@ -569,7 +594,11 @@ export function validateWrapup(input: {
   const failures = checks
     .filter((item) => item.status === 'failed')
     .flatMap((item) => item.details.split('\n'));
-  const detail = { pullRequest: policy.length === 0 ? checked : null, usage: input.usage() };
+  const detail = {
+    checklist: checklist.result,
+    pullRequest: policy.length === 0 ? checked : null,
+    usage: input.usage(),
+  };
   return failures.length === 0
     ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
     : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
@@ -587,6 +616,50 @@ function outputOf(resultJson: string | null): string {
   } catch {
     return '';
   }
+}
+
+// QA's test plan for a task; empty when QA did not run for it.
+function readQaPlan(file: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+// The issue's open boxes, each task's criteria, and the findings its latest
+// review left open.
+function issueContext(
+  snapshot: FactorySnapshot,
+  baseline: WrapupBaseline,
+): Omit<ChecklistContext, 'exists'> {
+  const { execution } = snapshot;
+  const reviews = latestReviews(snapshot);
+  return {
+    boxes: baseline.boxes,
+    criteria: new Map(
+      snapshot.tasks.map((task) => [
+        task.taskId,
+        taskCriteria(path.join(execution.factoryDir, task.taskFile)).map((item) => item.id),
+      ]),
+    ),
+    findings: reviews.flatMap(({ result, taskId }) =>
+      result.findings.map((finding) => ({ finding, taskId })),
+    ),
+    proven: new Map(
+      snapshot.tasks.map((task) => [
+        task.taskId,
+        [
+          ...(reviews.find((item) => item.taskId === task.taskId)?.result.verification ?? [])
+            .filter((line) => line.status === 'verified')
+            .map((line) => line.id),
+          ...testPlan(readQaPlan(qaPaths(execution.factoryDir, task.taskId).plan)).map(
+            (row) => row.criterion,
+          ),
+        ],
+      ]),
+    ),
+  };
 }
 
 export const wrapupValidator: Validator<'wrapup'> = {
@@ -613,6 +686,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         baseline,
         baseSha: execution.worktreeBaseSha,
         branch: execution.worktreeBranch,
+        checklist: issueContext(snapshot, baseline),
         codeRoot: execution.policy.codeRoot,
         commands: execution.policy.validation.work.commands,
         factoryRoot: factoryRootOf(execution.factoryDir),

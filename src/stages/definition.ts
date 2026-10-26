@@ -11,6 +11,7 @@ import type {
 import type { StageValidationReport, ValidationCheck } from '../validation/report.ts';
 import { childInstructions } from './prompt.ts';
 import type { Criterion } from './qa/criteria.ts';
+import type { IssueChecklist } from './wrapup/checklist.ts';
 
 // What the driver shows a stage about the execution it runs in. Stages read
 // it and never change it.
@@ -39,6 +40,8 @@ export type Handoff = {
 // stay with the driver.
 export type Outcome =
   | {
+      // For the closing stage: the issue's boxes it met or left open, and its decisions.
+      checklist?: IssueChecklist;
       // For a per-task stage, what the next per-task stage is given.
       handoff?: Handoff;
       kind: 'accept';

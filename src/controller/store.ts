@@ -950,7 +950,15 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       ...base,
       attentionReplyId: null,
       attentionRequestId: null,
+      checklist: Array.isArray(payload['checklist'])
+        ? payload['checklist'].flatMap((item: unknown) =>
+            isRecord(item) && typeof item['key'] === 'string' && typeof item['text'] === 'string'
+              ? [{ key: item['key'], text: item['text'] }]
+              : [],
+          )
+        : [],
       comment: payload['comment'],
+      commentKey: typeof payload['commentKey'] === 'string' ? payload['commentKey'] : null,
       issueStatus:
         issueStatus === 'clear' || issueStatus === 'in_progress' || issueStatus === 'in_review'
           ? issueStatus
@@ -990,7 +998,9 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ message: action.message });
     case 'update_ticket_source':
       return jsonText({
+        checklist: action.checklist,
         comment: action.comment,
+        commentKey: action.commentKey,
         issueStatus: action.issueStatus,
         update: action.update,
       });

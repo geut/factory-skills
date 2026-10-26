@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { TrackerConfig } from '../config.ts';
+import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
 import {
   UnsupportedOperation,
   type IssueLink,
@@ -39,6 +40,8 @@ type IssueLocator = { host: string; number: number; owner: string; repo: string 
 // The calls the adapter makes. Tests pass a stand-in.
 export type GithubClient = {
   addComment?: (input: Omit<IssueLocator, 'host'>, body: string) => void;
+  editBody?: (input: Omit<IssueLocator, 'host'>, body: string) => void;
+  editComment?: (input: Omit<IssueLocator, 'host'>, id: number, body: string) => void;
   editLabels?: (
     input: Omit<IssueLocator, 'host'>,
     add: Array<string>,
@@ -46,7 +49,7 @@ export type GithubClient = {
   ) => void;
   fetchIssue: (input: IssueLocator) => GithubIssue;
   listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
-  listComments?: (input: Omit<IssueLocator, 'host'>) => Array<string>;
+  listComments?: (input: Omit<IssueLocator, 'host'>) => Array<{ body: string; id: number }>;
   listIssues?: (input: {
     host: string;
     labels: Array<string>;
@@ -120,6 +123,33 @@ export function githubCliClient(): GithubClient {
         body,
       );
     },
+    editBody: (input, body) => {
+      gh(
+        [
+          'issue',
+          'edit',
+          String(input.number),
+          '--repo',
+          `${input.owner}/${input.repo}`,
+          '--body-file',
+          '-',
+        ],
+        body,
+      );
+    },
+    editComment: (input, id, body) => {
+      gh(
+        [
+          'api',
+          '--method',
+          'PATCH',
+          `repos/${input.owner}/${input.repo}/issues/comments/${id}`,
+          '--field',
+          'body=@-',
+        ],
+        body,
+      );
+    },
     editLabels: (input, add, remove) => {
       gh([
         'issue',
@@ -184,7 +214,9 @@ export function githubCliClient(): GithubClient {
       ]);
       const comments = Array.isArray(payload) ? payload.flat() : [];
       return comments.flatMap((item) =>
-        isRecord(item) && typeof item['body'] === 'string' ? [item['body']] : [],
+        isRecord(item) && typeof item['body'] === 'string' && typeof item['id'] === 'number'
+          ? [{ body: item['body'], id: item['id'] }]
+          : [],
       );
     },
     listIssues: (input) => {
@@ -328,9 +360,12 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
   const listBlockedBy = client.listBlockedBy;
   const listIssues = client.listIssues;
   const capabilities: Array<TrackerCapability> = ['children'];
-  const { addComment, editLabels, listComments } = client;
+  const { addComment, editBody, editComment, editLabels, listComments } = client;
   if (addComment !== undefined && listComments !== undefined) {
     capabilities.push('comment');
+  }
+  if (editBody !== undefined) {
+    capabilities.push('checklist');
   }
   if (editLabels !== undefined) {
     capabilities.push('status');
@@ -350,19 +385,34 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       return listBlockedBy(at).map((related) => linkOf(at.owner, at.repo, related));
     },
     capabilities: new Set(capabilities),
+    // GitHub keeps an issue's checklist as Markdown boxes in its body.
+    checklistItems: (issue) => {
+      const at = locate(issue);
+      return markdownChecklist(
+        client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body,
+      );
+    },
     children: (issue) => {
       const at = locate(issue);
       return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
     },
-    comment: (issue, markdown, marker) => {
+    comment: (issue, markdown, key, mode) => {
       if (addComment === undefined || listComments === undefined) {
         throw new UnsupportedOperation('github', 'comments');
       }
       const at = locate(issue);
-      if (listComments(at).some((body) => body.includes(marker))) {
-        return;
+      // A hidden marker in the comment body finds the comment of a key again.
+      const marker = `<!-- factory:${key} -->`;
+      const body = `${markdown}\n\n${marker}`;
+      const posted = listComments(at).find((item) => item.body.includes(marker));
+      if (posted === undefined) {
+        addComment(at, body);
+      } else if (mode === 'replace' && posted.body !== body) {
+        if (editComment === undefined) {
+          throw new UnsupportedOperation('github', 'editing comments');
+        }
+        editComment(at, posted.id, body);
       }
-      addComment(at, `${markdown}\n\n${marker}`);
     },
     kind: 'github',
     listBacklog: (query) => {
@@ -407,6 +457,19 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
         return;
       }
       editLabels(locate(issue), add === undefined ? [] : [add], remove);
+    },
+    tickBoxes: (issue, keys) => {
+      if (editBody === undefined) {
+        throw new UnsupportedOperation('github', 'ticking checkboxes');
+      }
+      const at = locate(issue);
+      // The body as it is now: people may have edited it since it was read.
+      const current = client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body;
+      const ticked = tickMarkdown(current, keys);
+      if (ticked.body !== current) {
+        editBody(at, ticked.body);
+      }
+      return { conflicts: ticked.conflicts };
     },
   };
 }

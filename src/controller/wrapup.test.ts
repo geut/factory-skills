@@ -31,6 +31,8 @@ function finishedWrapup(): {
   return { runId: run.id, snapshot: done.snapshot ?? snapshot };
 }
 
+const noIssue = { decisions: [], met: [], open: [] };
+
 function validation(snapshot: FactorySnapshot): Extract<ActionRecord, { kind: 'validate_run' }> {
   const found = snapshot.actions.findLast(
     (action): action is Extract<ActionRecord, { kind: 'validate_run' }> =>
@@ -49,7 +51,7 @@ test('subagent_done enqueues exactly one wrap-up validation and keeps the raw ha
   );
   assert.equal(validations.length, 1);
   const run = snapshot.runs.find((item) => item.id === runId);
-  assert.equal(run?.resultContract, 'factory.wrapup.v1');
+  assert.equal(run?.resultContract, 'factory.wrapup.v2');
   assert.equal(run?.resultStatus, 'invalid');
   assert.match(run?.resultError ?? '', /## PR summary is missing/);
   assert.match(run?.resultJson ?? '', /Done\./);
@@ -107,7 +109,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
     report: passedReport(
       WRAPUP_VALIDATOR_VERSION,
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
-      { pullRequest: null, usage: 'Stage  Sess  Input' },
+      { checklist: noIssue, pullRequest: null, usage: 'Stage  Sess  Input' },
     ),
     runId,
     stage: 'wrapup' as const,
@@ -131,6 +133,61 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
   assert.match(
     duplicate.response.kind === 'status' ? duplicate.response.message : '',
     /Duplicate validation event ignored/,
+  );
+});
+
+test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with decisions and gaps', () => {
+  const { runId, snapshot } = finishedWrapup();
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: {
+          decisions: ['Stored the filter in the URL instead of localStorage.'],
+          met: [
+            { id: 'B1', key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' },
+          ],
+          open: [
+            {
+              id: 'B2',
+              key: '1:The filter is labelled.',
+              reason: 'Task 01 R1-2: no label yet',
+              text: 'The filter is labelled.',
+            },
+          ],
+        },
+        pullRequest: null,
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  const updates = (passed.snapshot ?? snapshot).actions.filter(
+    (item): item is Extract<ActionRecord, { kind: 'update_ticket_source' }> =>
+      item.kind === 'update_ticket_source' && item.update === 'handoff',
+  );
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0]?.checklist, [
+    { key: '1:A reload keeps the filter.', text: 'A reload keeps the filter.' },
+  ]);
+  // One comment per ticket: a rerun's handoff replaces it.
+  assert.equal(updates[0]?.commentKey, `handoff:${snapshot.ticket.id}`);
+  assert.equal(
+    updates[0]?.comment,
+    [
+      'The factory finished this ticket. Its handoff has the merge commands.',
+      '',
+      'Decisions:',
+      '- Stored the filter in the URL instead of localStorage.',
+      '',
+      'Left open:',
+      '- [ ] The filter is labelled. — Task 01 R1-2: no label yet',
+    ].join('\n'),
   );
 });
 

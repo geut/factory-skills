@@ -5,6 +5,8 @@ export const WRAPUP_HEADINGS = [
   'PR summary',
   'Files',
   'Tests',
+  'Issue checklist',
+  'Decisions',
   'Operations',
   'Limitations',
   'Merge commands',

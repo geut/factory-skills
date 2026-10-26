@@ -1375,6 +1375,14 @@ ${files.map((file) => `- \`${file}\``).join('\n')}
 
 No validation commands are configured.
 
+## Issue checklist
+
+none
+
+## Decisions
+
+none
+
 ## Operations
 
 none
