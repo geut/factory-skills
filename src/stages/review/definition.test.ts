@@ -6,7 +6,6 @@ import {
   majorFinding,
   minorFinding,
   review,
-  reviewV5,
   run,
   session,
   task,
@@ -107,10 +106,11 @@ test('the first review lists the criteria to verify', () => {
 });
 
 test('a later review asks to verify each earlier blocking finding, without claiming a fix', () => {
-  const earlier = reviewV5(
+  const earlier = review(
     'changes_requested',
-    roundOneVerification,
     `${majorFinding}\n\n${minorFinding}`,
+    undefined,
+    roundOneVerification,
   );
   const text = prompt(2, [earlier]);
   assert.doesNotMatch(text, /addressed/);

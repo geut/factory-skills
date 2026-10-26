@@ -8,7 +8,7 @@ import { taskCriteria } from '../stages/qa/criteria.ts';
 import {
   earlierFindings,
   parseReview,
-  REVIEW_CONTRACT_V4,
+  REVIEW_CONTRACT,
   type ReviewContext,
 } from '../stages/review/parse.ts';
 import {
@@ -26,7 +26,6 @@ const mutatingTools = new Set(['bash', 'edit', 'write']);
 export const REVIEW_VALIDATOR_VERSION = 'review.v1';
 
 function reviewChecks(input: {
-  contract: string;
   currentDiffHash: string;
   resultError: string | null;
   resultStatus: 'pending' | 'valid' | 'invalid';
@@ -79,7 +78,7 @@ function reviewChecks(input: {
           .split('\n')
           .filter((line) => line.length > 0);
   const schema: ValidationCheck = {
-    details: schemaFailures.length === 0 ? input.contract : schemaFailures.join('\n'),
+    details: schemaFailures.length === 0 ? REVIEW_CONTRACT : schemaFailures.join('\n'),
     kind: 'schema',
     name: 'review result',
     status: schemaFailures.length === 0 ? 'passed' : 'failed',
@@ -117,7 +116,6 @@ function worktreeLines(cwd: string): ReviewContext['lineCount'] {
 
 function validateReview(input: {
   context: ReviewContext;
-  contract: string;
   cwd: string;
   output: string;
   resultError: string | null;
@@ -132,12 +130,10 @@ function validateReview(input: {
   if ('message' in collected) {
     return errorReport(REVIEW_VALIDATOR_VERSION, collected.message);
   }
-  // The run's parse checked the template; only a v5 review has lines to check
-  // against the task and the worktree.
+  // The run's parse checked the template; its Verification lines are checked
+  // here against the task and the worktree.
   const parsed =
-    input.resultStatus === 'valid' && input.contract !== REVIEW_CONTRACT_V4
-      ? parseReview(input.output, input.round, input.contract, input.context)
-      : null;
+    input.resultStatus === 'valid' ? parseReview(input.output, input.round, input.context) : null;
   return reviewChecks({
     ...input,
     currentDiffHash: sha256(collected.diff),
@@ -169,7 +165,6 @@ export const reviewValidator: Validator<'review'> = {
           ),
           lineCount: worktreeLines(worktree),
         },
-        contract: run.resultContract ?? REVIEW_CONTRACT_V4,
         cwd: worktree,
         output: runOutput(run),
         resultError: run.resultError,

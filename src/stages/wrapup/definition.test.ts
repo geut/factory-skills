@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addTasks, blank, reviewV5, run, session } from '../../stories/fixtures.ts';
+import { addTasks, blank, review, run, session } from '../../stories/fixtures.ts';
 import { wrapup } from './definition.ts';
 
 test('wrap-up is given each task’s review verification, gaps included', () => {
@@ -8,8 +8,10 @@ test('wrap-up is given each task’s review verification, gaps included', () => 
   addTasks(snapshot, 1);
   snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
   run(snapshot, session(snapshot, 'review', '01'), {
-    output: reviewV5(
+    output: review(
       'approve',
+      'none',
+      undefined,
       ['- AC1: verified — src/a.ts:4', '- AC2: not_verified — needs a real browser'].join('\n'),
     ),
     round: 1,

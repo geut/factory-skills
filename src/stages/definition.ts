@@ -111,7 +111,6 @@ export type StageDefinition<
   autoExit: true;
   // Pure: what the stage concludes from a report that passed or failed.
   conclude: (view: StageView, run: RunRecord, report: Concluded<Name>) => Outcome;
-  // The contract new runs answer to, recorded on each run as it is created.
   contract: string;
   corrections: CorrectionPolicy;
   emoji: string;
@@ -126,15 +125,13 @@ export type StageDefinition<
   ) => Input;
   // The stage's name in prose, such as "Wrap-up".
   label: string;
-  // The contract of runs created before runs recorded theirs, if it differs.
-  legacyContract?: string;
   // The policy model this stage's agent runs on.
   model: keyof Policy['models'];
   name: Name;
   // An optional stage runs only when the project's configuration enables it.
   optional: boolean;
-  // Pure: the run's output read against the contract its run recorded.
-  parse: (output: string, round: number, contract: string) => ParsedOutput;
+  // Pure: the run's output read against the stage's contract.
+  parse: (output: string, round: number) => ParsedOutput;
   // Whether runs wait for the stage's input preparation (its effects).
   preparesInput: boolean;
   // Whether each first run or reentry of a task starts a new numbered round.
@@ -160,7 +157,7 @@ type StageSpec<Input, Name extends StageName, Prepared> = Omit<
   'autoExit' | 'optional' | 'parse' | 'rounds' | 'spawning' | 'turn'
 > & {
   optional?: boolean;
-  parse?: (output: string, round: number, contract: string) => ParsedOutput;
+  parse?: (output: string, round: number) => ParsedOutput;
   prompts: {
     correction: (failures: Array<string>) => string;
     initial: (input: Input) => string;

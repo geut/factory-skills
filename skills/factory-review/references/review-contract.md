@@ -1,6 +1,6 @@
 # Review contract
 
-The reviewer output template in [output.md](output.md) is `factory.review.v5`. The result is markdown, not JSON. A review started before v5 still answers to `factory.review.v4`, which has no `## Verification`. Verdict rules for the prompt are in [reviewer-prompt.md](reviewer-prompt.md).
+The reviewer output template in [output.md](output.md) is `factory.review.v5`. The result is markdown, not JSON. Verdict rules for the prompt are in [reviewer-prompt.md](reviewer-prompt.md).
 
 ## Verdicts
 
