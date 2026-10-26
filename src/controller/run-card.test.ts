@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { REVIEW_CONTRACT } from '../stages/review/parse.ts';
-import { reviewV5 } from '../stories/fixtures.ts';
+import { review } from '../stories/fixtures.ts';
 import { approvedNext, roundLimit, staleDiff } from '../stories/scenarios.ts';
 import {
   classifyRun,
@@ -83,13 +82,14 @@ test('a review card names the task, the round, and the ticket progress', () => {
   assert.equal(runListLabel(snapshot, run), 'review · 03 · r1 · approved');
 });
 
-test('a v5 review card sums up the acceptance criteria it verified', () => {
+test('a review card sums up the acceptance criteria it verified', () => {
   const { run, snapshot } = approvedNext();
   assert.ok(run !== null);
   assert.deepEqual(runCard(snapshot, run, 'Meets every criterion.').items, []);
   const verify = (lines: Array<string>) => {
-    run.resultContract = REVIEW_CONTRACT;
-    run.resultJson = JSON.stringify({ output: reviewV5('approve', lines.join('\n')) });
+    run.resultJson = JSON.stringify({
+      output: review('approve', 'none', undefined, lines.join('\n')),
+    });
     return runCard(snapshot, run, 'Meets every criterion.').items;
   };
   assert.deepEqual(verify(['- AC1: verified — src/a.ts:1', '- AC2: verified — src/b.ts:2']), [

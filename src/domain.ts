@@ -281,7 +281,6 @@ export type ReviewResult = {
   round: number;
   summary: string;
   verdict: ReviewVerdict;
-  // factory.review.v5 only; empty for a v4 review.
   verification: Array<ReviewVerification>;
 };
 

@@ -11,11 +11,8 @@ import type {
 import { runOutput } from '../output.ts';
 
 export const REVIEW_CONTRACT = 'factory.review.v5';
-// Runs started before v5 keep their contract: their reviewer was never asked
-// for Verification.
-export const REVIEW_CONTRACT_V4 = 'factory.review.v4';
 
-// What a v5 review is checked against: the task's acceptance criterion ids,
+// What a review is checked against: the task's acceptance criterion ids,
 // the earlier blocking finding ids it must verify, and the worktree's files.
 export type ReviewContext = {
   criteria: ReadonlyArray<string>;
@@ -256,14 +253,12 @@ function parseVerification(
   return lines;
 }
 
-// Parses the review Markdown template of `contract`: v4, or v5 with its
-// Verification lines checked against `context` when one is given. The
-// verdict drives a transition, so a result that breaks the verdict rules is
-// malformed.
+// Parses the factory.review.v5 Markdown template, with its Verification lines
+// checked against `context` when one is given. The verdict drives a
+// transition, so a result that breaks the verdict rules is malformed.
 export function parseReview(
   output: string,
   round: number,
-  contract: string,
   context: ReviewContext | null = null,
 ): ParsedReview {
   const markdown = unfence(output);
@@ -271,9 +266,7 @@ export function parseReview(
   const verdictSection = section(markdown, 'Verdict');
   const summary = section(markdown, 'Summary');
   const findingsSection = section(markdown, 'Findings');
-  // A v4 reviewer was never asked for Verification.
-  const v4 = contract === REVIEW_CONTRACT_V4;
-  const verificationSection = v4 ? null : section(markdown, 'Verification');
+  const verificationSection = section(markdown, 'Verification');
   let verdict: ReviewVerdict | null = null;
   if (verdictSection === null) {
     failures.push('## Verdict is missing.');
@@ -292,7 +285,7 @@ export function parseReview(
   if (findingsSection === null) {
     failures.push('## Findings is missing.');
   }
-  if (!v4 && verificationSection === null) {
+  if (verificationSection === null) {
     failures.push(
       '## Verification is missing. Add it between Summary and Findings, with one line per acceptance criterion and earlier blocking finding.',
     );
@@ -321,10 +314,9 @@ export function parseReview(
   return { kind: 'valid', result: { findings, round, summary, verdict, verification } };
 }
 
-// A finished review run's result, read against the contract it recorded. A run
-// from before runs recorded one was a v4 review.
+// A finished review run's result.
 export function runReview(run: RunRecord, output = runOutput(run)): ParsedReview {
-  return parseReview(output, run.semanticRound, run.resultContract ?? REVIEW_CONTRACT_V4);
+  return parseReview(output, run.semanticRound);
 }
 
 // The blocking findings of the task's latest valid review before `round`,
