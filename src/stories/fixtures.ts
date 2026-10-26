@@ -21,7 +21,7 @@ import {
 } from '../domain.ts';
 import type { WidgetChild } from '../extension/widget.ts';
 import { stages } from '../stages/index.ts';
-import { parseReview } from '../stages/review/parse.ts';
+import { parseReview, REVIEW_CONTRACT, REVIEW_CONTRACT_V4 } from '../stages/review/parse.ts';
 
 // Snapshots for the component gallery. They are built by hand, field by
 // field, so every scenario is a plain value that renders without a database.
@@ -211,8 +211,17 @@ export function run(
   const terminal = input.terminal === undefined ? 'subagent_done' : input.terminal;
   const output = input.output ?? '';
   const round = input.round ?? 0;
+  // A review run answers to v5 when it reports Verification, as reviewV5 does.
+  const contract =
+    owner.stage !== 'review'
+      ? stages[owner.stage].contract
+      : output.includes('## Verification')
+        ? REVIEW_CONTRACT
+        : REVIEW_CONTRACT_V4;
   const parsed =
-    owner.stage === 'review' && terminal === 'subagent_done' ? parseReview(output, round) : null;
+    owner.stage === 'review' && terminal === 'subagent_done'
+      ? parseReview(output, round, contract)
+      : null;
   const purpose = input.purpose ?? 'initial';
   const created: RunRecord = {
     baseline: null,
@@ -227,7 +236,7 @@ export function run(
     paneName: `${owner.stage} ${snapshot.ticket.displayRef}`,
     parentRunId: input.parent?.id ?? null,
     purpose,
-    resultContract: null,
+    resultContract: contract,
     resultError: parsed?.kind === 'invalid' ? parsed.failures.join('\n') : null,
     resultHash: null,
     resultJson:
@@ -317,6 +326,16 @@ export function review(
   summary = 'Checked the diff against the task file.',
 ): string {
   return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Findings\n\n${findings}\n`;
+}
+
+// A factory.review.v5 result: `review` with its Verification lines.
+export function reviewV5(
+  verdict: string,
+  verification: string,
+  findings = 'none',
+  summary = 'Checked the diff against the task file.',
+): string {
+  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Verification\n\n${verification}\n\n## Findings\n\n${findings}\n`;
 }
 
 export const majorFinding = `### 1. [Major] Missing DB_URL bypasses the typed error page

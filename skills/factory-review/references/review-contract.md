@@ -1,6 +1,6 @@
 # Review contract
 
-The reviewer output template in [output.md](output.md) is `factory.review.v4`. The result is markdown, not JSON. Verdict rules for the prompt are in [reviewer-prompt.md](reviewer-prompt.md).
+The reviewer output template in [output.md](output.md) is `factory.review.v5`. The result is markdown, not JSON. A review started before v5 still answers to `factory.review.v4`, which has no `## Verification`. Verdict rules for the prompt are in [reviewer-prompt.md](reviewer-prompt.md).
 
 ## Verdicts
 
@@ -8,7 +8,7 @@ The reviewer output template in [output.md](output.md) is `factory.review.v4`. T
 - `changes_requested`: at least one finding is blocking (`critical` or `major`), including an unmet acceptance criterion or missing proof of required behavior.
 - `blocked`: required scope, evidence, model independence, or read-only isolation is missing.
 
-Unmet acceptance criteria are findings, not a separate checks list. "Looks correct" and "tests pass" are not evidence.
+Unmet acceptance criteria are findings. `## Verification` records, per criterion and per earlier blocking finding, what was checked and where; the controller checks that every expected id is there and every cited location exists. "Looks correct" and "tests pass" are not evidence.
 
 ## Severity
 

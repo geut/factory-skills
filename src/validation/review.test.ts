@@ -4,10 +4,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import type { RunRecord, SessionRecord } from '../domain.ts';
+import type { FactorySnapshot, RunRecord, SessionRecord } from '../domain.ts';
 import { sha256 } from '../hash.ts';
-import { formatFinding, parseReview } from '../stages/review/parse.ts';
-import { session } from '../stories/fixtures.ts';
+import {
+  formatFinding,
+  parseReview,
+  REVIEW_CONTRACT,
+  REVIEW_CONTRACT_V4,
+  type ReviewContext,
+} from '../stages/review/parse.ts';
+import { addTasks, session, task } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
 import { reviewValidator } from './review.ts';
 import { collectWorkDiff } from './work.ts';
@@ -30,14 +36,14 @@ const minor = `### 2. [Minor] Unclear name
 **Evidence:** It is read in three places.`;
 
 test('approve with no findings and approve with minor findings are valid', () => {
-  const clean = parseReview(review('approve'), 1);
+  const clean = parseReview(review('approve'), 1, REVIEW_CONTRACT_V4);
   assert.equal(clean.kind, 'valid');
   if (clean.kind === 'valid') {
     assert.equal(clean.result.verdict, 'approve');
     assert.deepEqual(clean.result.findings, []);
     assert.equal(clean.result.summary, 'The filter survives a reload.');
   }
-  const withMinor = parseReview(review('approve', minor), 1);
+  const withMinor = parseReview(review('approve', minor), 1, REVIEW_CONTRACT_V4);
   assert.equal(withMinor.kind, 'valid');
   if (withMinor.kind === 'valid') {
     assert.equal(withMinor.result.findings[0]?.id, 'R1-2');
@@ -46,7 +52,11 @@ test('approve with no findings and approve with minor findings are valid', () =>
 });
 
 test('changes_requested keeps stable round ids and finding fields', () => {
-  const parsed = parseReview(review('changes_requested', `${major}\n\n${minor}`), 2);
+  const parsed = parseReview(
+    review('changes_requested', `${major}\n\n${minor}`),
+    2,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(parsed.kind, 'valid');
   if (parsed.kind !== 'valid') {
     return;
@@ -63,7 +73,7 @@ test('changes_requested keeps stable round ids and finding fields', () => {
 });
 
 test('verdict rules reject inconsistent results', () => {
-  const approveBlocking = parseReview(review('approve', major), 1);
+  const approveBlocking = parseReview(review('approve', major), 1, REVIEW_CONTRACT_V4);
   assert.equal(approveBlocking.kind, 'invalid');
   if (approveBlocking.kind === 'invalid') {
     assert.match(
@@ -71,7 +81,11 @@ test('verdict rules reject inconsistent results', () => {
       /approve cannot include a blocking finding: R1-1/,
     );
   }
-  const changesWithoutBlocker = parseReview(review('changes_requested', minor), 1);
+  const changesWithoutBlocker = parseReview(
+    review('changes_requested', minor),
+    1,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(changesWithoutBlocker.kind, 'invalid');
   if (changesWithoutBlocker.kind === 'invalid') {
     assert.match(changesWithoutBlocker.failures.join('\n'), /at least one Critical or Major/);
@@ -79,14 +93,18 @@ test('verdict rules reject inconsistent results', () => {
 });
 
 test('missing headings, template placeholders, and unknown verdicts are malformed', () => {
-  const placeholder = parseReview(review('approve | changes_requested | blocked'), 1);
+  const placeholder = parseReview(
+    review('approve | changes_requested | blocked'),
+    1,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(placeholder.kind, 'invalid');
-  const unknown = parseReview(review('lgtm'), 1);
+  const unknown = parseReview(review('lgtm'), 1, REVIEW_CONTRACT_V4);
   assert.equal(unknown.kind, 'invalid');
   if (unknown.kind === 'invalid') {
     assert.match(unknown.failures[0] ?? '', /got "lgtm"/);
   }
-  const missing = parseReview('Looks good to me.', 1);
+  const missing = parseReview('Looks good to me.', 1, REVIEW_CONTRACT_V4);
   assert.equal(missing.kind, 'invalid');
   if (missing.kind === 'invalid') {
     assert.deepEqual(missing.failures, [
@@ -95,22 +113,31 @@ test('missing headings, template placeholders, and unknown verdicts are malforme
       '## Findings is missing.',
     ]);
   }
-  const noSummary = parseReview(review('approve', 'none', ''), 1);
+  const noSummary = parseReview(review('approve', 'none', ''), 1, REVIEW_CONTRACT_V4);
   assert.equal(noSummary.kind, 'invalid');
 });
 
 test('finding headings, severity, numbering, and required fields are checked', () => {
-  const badHeading = parseReview(review('changes_requested', '### Filter resets'), 1);
+  const badHeading = parseReview(
+    review('changes_requested', '### Filter resets'),
+    1,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(badHeading.kind, 'invalid');
   const badSeverity = parseReview(
     review('changes_requested', major.replace('[Major]', '[High]')),
     1,
+    REVIEW_CONTRACT_V4,
   );
   assert.equal(badSeverity.kind, 'invalid');
   if (badSeverity.kind === 'invalid') {
     assert.match(badSeverity.failures[0] ?? '', /severity "High"/);
   }
-  const duplicate = parseReview(review('changes_requested', `${major}\n\n${major}`), 1);
+  const duplicate = parseReview(
+    review('changes_requested', `${major}\n\n${major}`),
+    1,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(duplicate.kind, 'invalid');
   if (duplicate.kind === 'invalid') {
     assert.match(duplicate.failures.join('\n'), /Finding 1 is numbered twice/);
@@ -118,12 +145,13 @@ test('finding headings, severity, numbering, and required fields are checked', (
   const noEvidence = parseReview(
     review('changes_requested', major.replace(/\*\*Evidence:\*\*.*\n/, '')),
     1,
+    REVIEW_CONTRACT_V4,
   );
   assert.equal(noEvidence.kind, 'invalid');
   if (noEvidence.kind === 'invalid') {
     assert.match(noEvidence.failures.join('\n'), /Finding 1 is missing \*\*Evidence:\*\*/);
   }
-  const prose = parseReview(review('approve', 'Everything looks fine.'), 1);
+  const prose = parseReview(review('approve', 'Everything looks fine.'), 1, REVIEW_CONTRACT_V4);
   assert.equal(prose.kind, 'invalid');
 });
 
@@ -132,7 +160,11 @@ test('a fenced template and multi-line fields are accepted', () => {
     '**Evidence:** No storage call exists on the change path.',
     '**Evidence:** No storage call exists\non the change path.',
   );
-  const parsed = parseReview(`\`\`\`markdown\n${review('changes_requested', multiline)}\`\`\``, 1);
+  const parsed = parseReview(
+    `\`\`\`markdown\n${review('changes_requested', multiline)}\`\`\``,
+    1,
+    REVIEW_CONTRACT_V4,
+  );
   assert.equal(parsed.kind, 'valid');
   if (parsed.kind === 'valid') {
     assert.equal(
@@ -140,6 +172,143 @@ test('a fenced template and multi-line fields are accepted', () => {
       'No storage call exists\non the change path.',
     );
   }
+});
+
+// factory.review.v5: a Verification line per acceptance criterion and, from
+// round 2, per earlier blocking finding.
+function reviewV5(verdict: string, verification: string, findings = 'none') {
+  return `## Verdict\n\n${verdict}\n\n## Summary\n\nThe filter survives a reload.\n\n## Verification\n\n${verification}\n\n## Findings\n\n${findings}\n`;
+}
+
+// A worktree where src/filter.ts has 40 lines and its test 20.
+const context: ReviewContext = {
+  criteria: ['AC1', 'AC2'],
+  earlierFindings: [],
+  lineCount: (file) => ({ 'src/filter.test.ts': 20, 'src/filter.ts': 40 })[file] ?? null,
+};
+
+const verified = [
+  '- AC1: verified — src/filter.ts:10-18; test "keeps the filter" in src/filter.test.ts:5',
+  '- AC2: not_verified — needs a real browser; covered by QA',
+].join('\n');
+
+function failuresOf(output: string, round = 1, given: ReviewContext = context): string {
+  const parsed = parseReview(output, round, REVIEW_CONTRACT, given);
+  assert.equal(parsed.kind, 'invalid');
+  return parsed.kind === 'invalid' ? parsed.failures.join('\n') : '';
+}
+
+test('a v5 approval records one verification line per criterion', () => {
+  const parsed = parseReview(reviewV5('approve', verified), 1, REVIEW_CONTRACT, context);
+  assert.equal(parsed.kind, 'valid');
+  assert.deepEqual(parsed.kind === 'valid' ? parsed.result.verification : null, [
+    {
+      evidence: 'src/filter.ts:10-18; test "keeps the filter" in src/filter.test.ts:5',
+      id: 'AC1',
+      status: 'verified',
+    },
+    { evidence: 'needs a real browser; covered by QA', id: 'AC2', status: 'not_verified' },
+  ]);
+});
+
+test('a v5 review without Verification is malformed', () => {
+  assert.match(
+    failuresOf(review('approve', 'none').replace('## Findings', '## Findings')),
+    /## Verification is missing/,
+  );
+});
+
+test('every criterion appears exactly once, and only known ids appear', () => {
+  assert.match(
+    failuresOf(reviewV5('approve', '- AC1: verified — src/filter.ts:3')),
+    /no line for AC2/,
+  );
+  assert.match(
+    failuresOf(reviewV5('approve', `${verified}\n- AC1: verified — src/filter.ts:4`)),
+    /AC1 appears twice/,
+  );
+  assert.match(
+    failuresOf(reviewV5('approve', `${verified}\n- AC7: verified — src/filter.ts:4`)),
+    /AC7 is not an acceptance criterion of this task/,
+  );
+});
+
+test('verified lines cite locations that exist in the worktree', () => {
+  assert.match(
+    failuresOf(reviewV5('approve', verified.replace('src/filter.ts:10-18', 'src/gone.ts:3'))),
+    /src\/gone\.ts:3, which does not exist in the worktree/,
+  );
+  assert.match(
+    failuresOf(reviewV5('approve', verified.replace('src/filter.ts:10-18', 'src/filter.ts:10-41'))),
+    /AC1 cites src\/filter\.ts:10-41, but src\/filter\.ts has 40 lines/,
+  );
+  assert.match(
+    failuresOf(
+      reviewV5('approve', verified.replace(/src\/filter\.ts:10-18;.*$/m, 'the tests pass')),
+    ),
+    /AC1 is verified but cites no path:line/,
+  );
+});
+
+test('citations may sit in brackets or backticks, and the evidence keeps its text', () => {
+  const parsed = parseReview(
+    reviewV5(
+      'approve',
+      [
+        '- AC1: verified — [src/filter.ts:10] and `src/filter.test.ts:5` cover src/**/filter.ts',
+        '- AC2: verified — (src/filter.ts:2-3)',
+      ].join('\n'),
+    ),
+    1,
+    REVIEW_CONTRACT,
+    context,
+  );
+  assert.equal(parsed.kind, 'valid');
+  assert.equal(
+    parsed.kind === 'valid' ? parsed.result.verification[0]?.evidence : null,
+    '[src/filter.ts:10] and src/filter.test.ts:5 cover src/**/filter.ts',
+  );
+});
+
+test('a not_verified line needs a reason', () => {
+  assert.match(
+    failuresOf(reviewV5('approve', verified.replace(/not_verified — .*$/m, 'not_verified'))),
+    /AC2 is not_verified without a reason/,
+  );
+});
+
+test('from round 2, earlier blocking findings are verified, and approve leaves none open', () => {
+  const round2 = { ...context, earlierFindings: ['R1-1', 'R1-2'] };
+  assert.match(
+    failuresOf(reviewV5('approve', `${verified}\n- R1-01: fixed — src/filter.ts:12`), 2, round2),
+    /no line for R1-2/,
+  );
+  const open = `${verified}\n- R1-01: fixed — src/filter.ts:12\n- R1-2: still_open — still unsorted`;
+  assert.match(
+    failuresOf(reviewV5('approve', open), 2, round2),
+    /approve cannot leave an earlier finding still_open: R1-2/,
+  );
+  const changes = parseReview(
+    reviewV5('changes_requested', open, major),
+    2,
+    REVIEW_CONTRACT,
+    round2,
+  );
+  assert.equal(changes.kind, 'valid');
+  assert.deepEqual(
+    changes.kind === 'valid' ? changes.result.verification.map((line) => line.id) : null,
+    ['AC1', 'AC2', 'R1-1', 'R1-2'],
+  );
+  assert.match(
+    failuresOf(reviewV5('approve', `${verified}\n- R1-1: verified — src/filter.ts:12`), 2, round2),
+    /R1-1 has status "verified"; use fixed or still_open/,
+  );
+});
+
+test('a v4 review from a run started before the upgrade still parses', () => {
+  const parsed = parseReview(review('approve'), 1, REVIEW_CONTRACT_V4, context);
+  assert.equal(parsed.kind, 'valid');
+  assert.deepEqual(parsed.kind === 'valid' ? parsed.result.verification : null, []);
 });
 
 const roots: Array<string> = [];
@@ -178,7 +347,10 @@ function diffHash(cwd: string): string {
   return sha256(collected.diff);
 }
 
-function validate(cwd: string, edit: (run: RunRecord, owner: SessionRecord) => void = () => {}) {
+function validate(
+  cwd: string,
+  edit: (run: RunRecord, owner: SessionRecord, snapshot: FactorySnapshot) => void = () => {},
+) {
   return reviewValidator.validate(
     validationContext('review', (snapshot, finished, owner) => {
       snapshot.execution.worktreePath = cwd;
@@ -186,7 +358,7 @@ function validate(cwd: string, edit: (run: RunRecord, owner: SessionRecord) => v
       finished.diffHash = diffHash(cwd);
       finished.resultError = null;
       finished.resultStatus = 'valid';
-      edit(finished, owner);
+      edit(finished, owner, snapshot);
     }),
   );
 }
@@ -239,6 +411,51 @@ test('isolation outranks a stale diff, which outranks a malformed result', async
   if (sameModel.status === 'failed') {
     assert.match(sameModel.failures[0] ?? '', /both use qwen3.8-max/);
   }
+});
+
+// A v5 review of task 01, whose one criterion is about the README the
+// worker changed to two lines.
+function validateV5(cwd: string, verification: string) {
+  const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-review-ticket-'));
+  roots.push(factoryDir);
+  writeFileSync(
+    path.join(factoryDir, '01-task.md'),
+    '# Demo\n\n## Acceptance criteria\n\n- [ ] The README says it changed.\n',
+  );
+  return validate(cwd, (run, _owner, snapshot) => {
+    addTasks(snapshot, 1);
+    task(snapshot, '01').taskFile = '01-task.md';
+    snapshot.execution.factoryDir = factoryDir;
+    run.resultContract = REVIEW_CONTRACT;
+    run.resultJson = JSON.stringify({ output: reviewV5('approve', verification) });
+  });
+}
+
+test('a v5 review is checked against the task file and the worktree', async () => {
+  const cwd = worktree();
+  const passed = await validateV5(cwd, '- AC1: verified — README.md:2');
+  assert.equal(passed.status, 'passed');
+  assert.equal(passed.checks[0]?.details, REVIEW_CONTRACT);
+  const beyond = await validateV5(cwd, '- AC1: verified — README.md:3');
+  assert.equal(beyond.status === 'failed' && beyond.detail.reason, 'malformed');
+  assert.deepEqual(beyond.status === 'failed' ? beyond.failures : null, [
+    'AC1 cites README.md:3, but README.md has 2 lines.',
+  ]);
+  const outside = await validateV5(cwd, '- AC1: verified — ../README.md:1');
+  assert.match(
+    outside.status === 'failed' ? outside.failures.join('\n') : '',
+    /cites \.\.\/README\.md:1, which does not exist in the worktree/,
+  );
+  writeFileSync(path.join(cwd, 'empty.ts'), '');
+  const empty = await validateV5(cwd, '- AC1: verified — empty.ts:1');
+  assert.deepEqual(empty.status === 'failed' ? empty.failures : null, [
+    'AC1 cites empty.ts:1, but empty.ts has 0 lines.',
+  ]);
+  const missing = await validateV5(cwd, 'none');
+  assert.match(
+    missing.status === 'failed' ? missing.failures.join('\n') : '',
+    /## Verification has no line for AC1/,
+  );
 });
 
 test('a review without a worktree is a validator error', async () => {

@@ -10,6 +10,7 @@ import type {
 } from '../domain.ts';
 import type { StageValidationReport, ValidationCheck } from '../validation/report.ts';
 import { childInstructions } from './prompt.ts';
+import type { Criterion } from './qa/criteria.ts';
 
 // What the driver shows a stage about the execution it runs in. Stages read
 // it and never change it.
@@ -20,8 +21,14 @@ export type StageView = {
 };
 
 // What a per-task stage passes to the next one when it accepts: the diff it
-// leaves in the worktree, the checks it passed, and its agent's response.
-export type Handoff = { checks: Array<ValidationCheck>; diff: string; output: string };
+// leaves in the worktree, the checks it passed, its agent's response, and the
+// task's acceptance criteria as its validator read them.
+export type Handoff = {
+  checks: Array<ValidationCheck>;
+  criteria: Array<Criterion>;
+  diff: string;
+  output: string;
+};
 
 // What a stage concludes from its validator's report on a finished run. The
 // driver carries it out: budgets, sessions, runs, and the order of stages
@@ -104,6 +111,7 @@ export type StageDefinition<
   autoExit: true;
   // Pure: what the stage concludes from a report that passed or failed.
   conclude: (view: StageView, run: RunRecord, report: Concluded<Name>) => Outcome;
+  // The contract new runs answer to, recorded on each run as it is created.
   contract: string;
   corrections: CorrectionPolicy;
   emoji: string;
@@ -118,13 +126,15 @@ export type StageDefinition<
   ) => Input;
   // The stage's name in prose, such as "Wrap-up".
   label: string;
+  // The contract of runs created before runs recorded theirs, if it differs.
+  legacyContract?: string;
   // The policy model this stage's agent runs on.
   model: keyof Policy['models'];
   name: Name;
   // An optional stage runs only when the project's configuration enables it.
   optional: boolean;
-  // Pure: the run's output read against the stage's contract.
-  parse: (output: string, round: number) => ParsedOutput;
+  // Pure: the run's output read against the contract its run recorded.
+  parse: (output: string, round: number, contract: string) => ParsedOutput;
   // Whether runs wait for the stage's input preparation (its effects).
   preparesInput: boolean;
   // Whether each first run or reentry of a task starts a new numbered round.
@@ -150,7 +160,7 @@ type StageSpec<Input, Name extends StageName, Prepared> = Omit<
   'autoExit' | 'optional' | 'parse' | 'rounds' | 'spawning' | 'turn'
 > & {
   optional?: boolean;
-  parse?: (output: string, round: number) => ParsedOutput;
+  parse?: (output: string, round: number, contract: string) => ParsedOutput;
   prompts: {
     correction: (failures: Array<string>) => string;
     initial: (input: Input) => string;

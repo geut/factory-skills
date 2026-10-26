@@ -38,7 +38,12 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
   conclude: (_view, run, report) =>
     report.status === 'passed'
       ? {
-          handoff: { checks: report.checks, diff: report.detail.diff, output: runOutput(run) },
+          handoff: {
+            checks: report.checks,
+            criteria: report.detail.criteria,
+            diff: report.detail.diff,
+            output: runOutput(run),
+          },
           kind: 'accept',
         }
       : { failures: report.failures, kind: 'correct' },

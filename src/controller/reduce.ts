@@ -146,7 +146,12 @@ function addRun(
     paneName: null,
     parentRunId: parent?.id ?? null,
     purpose,
-    resultContract: null,
+    // A correction or reply in the same session answers to its parent's
+    // contract; a run created before runs recorded one has none.
+    resultContract:
+      parent !== null && parent.sessionId === session.id
+        ? parent.resultContract
+        : stages[session.stage].contract,
     resultError: null,
     resultHash: null,
     resultJson: null,
@@ -587,15 +592,17 @@ function usageFor(run: RunRecord, terminal: TerminalOutcome): UsageWrite | null 
 
 function recordOutput(
   run: RunRecord,
-  stage: { contract: string; parse: StageDefinition['parse'] },
+  stage: Pick<StageDefinition, 'contract' | 'legacyContract' | 'parse'>,
   output: string,
 ): void {
-  const parsed = stage.parse(output, run.semanticRound);
+  // A run created before runs recorded their contract answers to the old one.
+  const contract = run.resultContract ?? stage.legacyContract ?? stage.contract;
+  run.resultContract = contract;
+  const parsed = stage.parse(output, run.semanticRound, contract);
   run.resultJson = parsed.json;
   if (parsed.kind === 'unchecked') {
     return;
   }
-  run.resultContract = stage.contract;
   if (parsed.kind === 'valid') {
     run.resultStatus = 'valid';
     run.resultHash = sha256(parsed.json);

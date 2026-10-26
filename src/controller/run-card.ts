@@ -10,7 +10,7 @@ import type {
 } from '../domain.ts';
 import { runStatusLabel } from '../runtime/policy.ts';
 import { stages } from '../stages/index.ts';
-import { parseReview } from '../stages/review/parse.ts';
+import { runReview, verificationSummary } from '../stages/review/parse.ts';
 import { card, encodeCard, type CardTone, type FactoryCard } from './card.ts';
 import {
   currentStep,
@@ -18,7 +18,6 @@ import {
   planItems,
   progressText,
   readyTasks,
-  runOutput,
   runTask,
   runVerdict,
   taskLabel,
@@ -251,17 +250,23 @@ export function firstSummaryLine(text: string): string {
   return line ?? '';
 }
 
+// What the criteria came to, then the findings that stop the task.
 function reviewItems(run: RunRecord, outcome: RunOutcome): Array<string> {
-  if (outcome !== 'changes requested' && outcome !== 'blocked' && outcome !== 'paused') {
+  if (run.status !== 'terminal' || run.terminalKind !== 'subagent_done') {
     return [];
   }
-  const parsed = parseReview(runOutput(run), run.semanticRound);
+  const parsed = runReview(run);
   if (parsed.kind === 'invalid') {
     return [];
   }
-  return parsed.result.findings
-    .filter((finding) => finding.blocking || outcome === 'blocked')
-    .map((finding) => `${finding.id} [${finding.severity}] ${finding.title}`);
+  const summary = verificationSummary(parsed.result);
+  const stopping = outcome === 'changes requested' || outcome === 'blocked' || outcome === 'paused';
+  return [
+    ...(summary === null ? [] : [summary]),
+    ...(stopping ? parsed.result.findings : [])
+      .filter((finding) => finding.blocking || outcome === 'blocked')
+      .map((finding) => `${finding.id} [${finding.severity}] ${finding.title}`),
+  ];
 }
 
 export function runCard(snapshot: FactorySnapshot, run: RunRecord, summary: string): FactoryCard {

@@ -81,6 +81,10 @@ Redoing a step that failed for infrastructure reasons, such as input preparation
 The reviewer agent's judgment on a task: approve, changes requested, or blocked. It is model judgment, unlike a validation report.
 _Avoid_: verdict, when a validation report is meant
 
+**Review verification**:
+The reviewer's `## Verification` lines: one per acceptance criterion (verified, with the code it read, or not verified, with why) and, from round 2, one per earlier blocking finding (fixed or still open). Validation checks that every expected line is there and every cited location exists; the judgment stays the reviewer's.
+_Avoid_: verification alone, which QA and validation also suggest
+
 ### Tracker and repository
 
 **Issue**:

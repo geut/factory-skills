@@ -1,4 +1,28 @@
-import type { ReviewFinding, ReviewResult, ReviewSeverity, ReviewVerdict } from '../../domain.ts';
+import type {
+  FactorySnapshot,
+  ReviewFinding,
+  RunRecord,
+  ReviewResult,
+  ReviewSeverity,
+  ReviewVerdict,
+  ReviewVerification,
+  VerificationStatus,
+} from '../../domain.ts';
+import { runOutput } from '../output.ts';
+
+export const REVIEW_CONTRACT = 'factory.review.v5';
+// Runs started before v5 keep their contract: their reviewer was never asked
+// for Verification.
+export const REVIEW_CONTRACT_V4 = 'factory.review.v4';
+
+// What a v5 review is checked against: the task's acceptance criterion ids,
+// the earlier blocking finding ids it must verify, and the worktree's files.
+export type ReviewContext = {
+  criteria: ReadonlyArray<string>;
+  earlierFindings: ReadonlyArray<string>;
+  // The file's line count, by worktree-relative path, or null when it is not there.
+  lineCount: (file: string) => number | null;
+};
 
 export type ParsedReview =
   | { kind: 'valid'; result: ReviewResult }
@@ -122,14 +146,134 @@ function parseFindings(body: string, round: number, failures: Array<string>): Ar
   return findings;
 }
 
-// Parses the factory.review.v4 Markdown template. The verdict drives a
-// transition, so a result that breaks the verdict rules is malformed.
-export function parseReview(output: string, round: number): ParsedReview {
+// `AC01` and `ac1` are AC1; `R1-02` is R1-2, the id the controller gave it.
+function verificationId(value: string): { id: string; kind: 'criterion' | 'finding' } | null {
+  const criterion = /^AC0*(\d+)$/i.exec(value);
+  if (criterion !== null) {
+    return { id: `AC${Number(criterion[1])}`, kind: 'criterion' };
+  }
+  const finding = /^R0*(\d+)-0*(\d+)$/i.exec(value);
+  return finding === null
+    ? null
+    : { id: `R${Number(finding[1])}-${Number(finding[2])}`, kind: 'finding' };
+}
+
+const statusesFor = {
+  criterion: ['verified', 'not_verified'],
+  finding: ['fixed', 'still_open'],
+} as const satisfies Record<string, ReadonlyArray<VerificationStatus>>;
+
+// The `path:line` and `path:start-end` locations an evidence text cites.
+function citations(
+  evidence: string,
+): Array<{ end: number; file: string; start: number; text: string }> {
+  const found = [];
+  for (const match of evidence.matchAll(
+    /(?<![^\s([`"'])([^\s:`"'()[\]]*[./][^\s:`"'()[\]]*):(\d+)(?:-(\d+))?(?![\w-])/g,
+  )) {
+    const start = Number(match[2]);
+    found.push({
+      end: match[3] === undefined ? start : Number(match[3]),
+      file: match[1] ?? '',
+      start,
+      text: match[0],
+    });
+  }
+  return found;
+}
+
+// The `- <id>: <status> — <evidence>` lines of ## Verification. Without a
+// context only their form is checked; with one, every expected id must appear
+// and every cited location must exist.
+function parseVerification(
+  body: string,
+  failures: Array<string>,
+  context: ReviewContext | null,
+): Array<ReviewVerification> {
+  const lines: Array<ReviewVerification> = [];
+  const text = body.trim();
+  for (const raw of /^none\.?$/i.test(text) ? [] : text.split('\n')) {
+    const line = raw.trim();
+    if (line.length === 0) {
+      continue;
+    }
+    const match = /^(?:[-*]\s+)?([\w-]+)\s*:\s*([a-z_]+)\s*(?:(?:—|–|--|-)\s*(.*))?$/i.exec(
+      // Bold and code marks are dropped; a glob's `*` in the evidence stays.
+      line.replaceAll('`', '').replaceAll(/\*\*([^*]+)\*\*/g, '$1'),
+    );
+    const id = match === null ? null : verificationId(match[1] ?? '');
+    if (match === null || id === null) {
+      failures.push(
+        `Verification line "${line}" must look like "- AC1: verified — path:line" or "- R1-2: fixed — path:line".`,
+      );
+      continue;
+    }
+    const status = (match[2] ?? '').toLowerCase();
+    const evidence = (match[3] ?? '').trim();
+    const allowed: ReadonlyArray<string> = statusesFor[id.kind];
+    if (!allowed.includes(status)) {
+      failures.push(`${id.id} has status "${status}"; use ${allowed.join(' or ')}.`);
+      continue;
+    }
+    if (lines.some((item) => item.id === id.id)) {
+      failures.push(`${id.id} appears twice in ## Verification.`);
+      continue;
+    }
+    if (status === 'not_verified' && evidence.length === 0) {
+      failures.push(`${id.id} is not_verified without a reason; say why it could not be verified.`);
+    }
+    if (status === 'verified' || status === 'fixed') {
+      const cited = citations(evidence);
+      if (cited.length === 0) {
+        failures.push(`${id.id} is ${status} but cites no path:line; cite the code that shows it.`);
+      }
+      for (const citation of context === null ? [] : cited) {
+        const count = context?.lineCount(citation.file) ?? null;
+        if (count === null) {
+          failures.push(`${id.id} cites ${citation.text}, which does not exist in the worktree.`);
+        } else if (citation.start < 1 || citation.end < citation.start || citation.end > count) {
+          failures.push(
+            `${id.id} cites ${citation.text}, but ${citation.file} has ${count} line${count === 1 ? '' : 's'}.`,
+          );
+        }
+      }
+    }
+    lines.push({ evidence, id: id.id, status: status as VerificationStatus });
+  }
+  if (context !== null) {
+    const expected = [...context.criteria, ...context.earlierFindings];
+    for (const id of expected.filter((item) => !lines.some((line) => line.id === item))) {
+      failures.push(`## Verification has no line for ${id}.`);
+    }
+    for (const line of lines.filter((item) => !expected.includes(item.id))) {
+      failures.push(
+        line.id.startsWith('AC')
+          ? `${line.id} is not an acceptance criterion of this task (${context.criteria.join(', ') || 'none'}).`
+          : `${line.id} is not an earlier blocking finding (${context.earlierFindings.join(', ') || 'none'}).`,
+      );
+    }
+  }
+  return lines;
+}
+
+// Parses the review Markdown template of `contract`: v4, or v5 with its
+// Verification lines checked against `context` when one is given. The
+// verdict drives a transition, so a result that breaks the verdict rules is
+// malformed.
+export function parseReview(
+  output: string,
+  round: number,
+  contract: string,
+  context: ReviewContext | null = null,
+): ParsedReview {
   const markdown = unfence(output);
   const failures: Array<string> = [];
   const verdictSection = section(markdown, 'Verdict');
   const summary = section(markdown, 'Summary');
   const findingsSection = section(markdown, 'Findings');
+  // A v4 reviewer was never asked for Verification.
+  const v4 = contract === REVIEW_CONTRACT_V4;
+  const verificationSection = v4 ? null : section(markdown, 'Verification');
   let verdict: ReviewVerdict | null = null;
   if (verdictSection === null) {
     failures.push('## Verdict is missing.');
@@ -148,6 +292,13 @@ export function parseReview(output: string, round: number): ParsedReview {
   if (findingsSection === null) {
     failures.push('## Findings is missing.');
   }
+  if (!v4 && verificationSection === null) {
+    failures.push(
+      '## Verification is missing. Add it between Summary and Findings, with one line per acceptance criterion and earlier blocking finding.',
+    );
+  }
+  const verification =
+    verificationSection === null ? [] : parseVerification(verificationSection, failures, context);
   const findings = findingsSection === null ? [] : parseFindings(findingsSection, round, failures);
   const blocking = findings.filter((finding) => finding.blocking);
   if (verdict === 'approve' && blocking.length > 0) {
@@ -158,10 +309,64 @@ export function parseReview(output: string, round: number): ParsedReview {
   if (verdict === 'changes_requested' && blocking.length === 0) {
     failures.push('changes_requested needs at least one Critical or Major finding.');
   }
+  const open = verification.filter((line) => line.status === 'still_open');
+  if (verdict === 'approve' && open.length > 0) {
+    failures.push(
+      `approve cannot leave an earlier finding still_open: ${open.map((line) => line.id).join(', ')}.`,
+    );
+  }
   if (failures.length > 0 || verdict === null || summary === null) {
     return { failures, kind: 'invalid' };
   }
-  return { kind: 'valid', result: { findings, round, summary, verdict } };
+  return { kind: 'valid', result: { findings, round, summary, verdict, verification } };
+}
+
+// A finished review run's result, read against the contract it recorded. A run
+// from before runs recorded one was a v4 review.
+export function runReview(run: RunRecord, output = runOutput(run)): ParsedReview {
+  return parseReview(output, run.semanticRound, run.resultContract ?? REVIEW_CONTRACT_V4);
+}
+
+// The blocking findings of the task's latest valid review before `round`,
+// which the review of `round` verifies.
+export function earlierFindings(
+  snapshot: FactorySnapshot,
+  taskId: string,
+  round: number,
+): Array<ReviewFinding> {
+  const sessions = new Set(
+    snapshot.sessions
+      .filter((item) => item.stage === 'review' && item.taskId === taskId)
+      .map((item) => item.id),
+  );
+  const earlier = snapshot.runs
+    .filter(
+      (run) =>
+        sessions.has(run.sessionId) && run.resultStatus === 'valid' && run.semanticRound < round,
+    )
+    .sort(
+      (left, right) => right.semanticRound - left.semanticRound || right.sequence - left.sequence,
+    );
+  for (const run of earlier) {
+    const parsed = runReview(run);
+    if (parsed.kind === 'valid') {
+      return parsed.result.findings.filter((finding) => finding.blocking);
+    }
+  }
+  return [];
+}
+
+// How many acceptance criteria a review verified, and which it could not:
+// `6/6 ACs verified` or `5/6 ACs verified · AC3 not verified`. Null for a
+// review without criterion lines.
+export function verificationSummary(result: ReviewResult): string | null {
+  const criteria = result.verification.filter((line) => line.id.startsWith('AC'));
+  if (criteria.length === 0) {
+    return null;
+  }
+  const missed = criteria.filter((line) => line.status === 'not_verified').map((line) => line.id);
+  const verified = `${criteria.length - missed.length}/${criteria.length} ACs verified`;
+  return missed.length === 0 ? verified : `${verified} · ${missed.join(', ')} not verified`;
 }
 
 export function formatFinding(finding: ReviewFinding): string {

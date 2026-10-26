@@ -1,6 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
+import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
   errorReport,
   failedReport,
@@ -197,6 +199,7 @@ async function validateWork(input: {
   allowsEmptyDiff: boolean;
   baseSha: string;
   commands: Array<WorkCommand>;
+  criteria: Array<Criterion>;
   cwd: string;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
@@ -240,20 +243,26 @@ async function validateWork(input: {
   if ('message' in final) {
     return errorReport(WORK_VALIDATOR_VERSION, final.message);
   }
-  return passedReport(WORK_VALIDATOR_VERSION, checks, { diff: final.diff });
+  return passedReport(WORK_VALIDATOR_VERSION, checks, {
+    criteria: input.criteria,
+    diff: final.diff,
+  });
 }
 
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
-  validate: ({ snapshot }) => {
-    const { policy, worktreeBaseSha, worktreePath } = snapshot.execution;
+  validate: ({ session, snapshot }) => {
+    const { factoryDir, policy, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
     }
+    const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     return validateWork({
       allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
       baseSha: worktreeBaseSha,
       commands: policy.validation.work.commands,
+      // Read for review; work itself does not check them.
+      criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
     });
   },

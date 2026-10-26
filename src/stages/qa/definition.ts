@@ -9,7 +9,7 @@ import type { Criterion } from './criteria.ts';
 // QA failed either because its own output is incomplete (a correction) or
 // because the product does not meet a criterion (a return to work).
 export type QaValidationReport = ValidationReport<
-  { diff: string; gaps: number; tested: number },
+  { criteria: Array<Criterion>; diff: string; gaps: number; tested: number },
   { reason: 'incomplete' | 'product' }
 >;
 
@@ -155,7 +155,12 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
         runOutput(run),
       ].join('\n');
       return {
-        handoff: { checks: report.checks, diff: report.detail.diff, output: output.trim() },
+        handoff: {
+          checks: report.checks,
+          criteria: report.detail.criteria,
+          diff: report.detail.diff,
+          output: output.trim(),
+        },
         kind: 'accept',
         summary: {
           counts: { gaps: report.detail.gaps, tested: report.detail.tested },
