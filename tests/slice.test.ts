@@ -1822,6 +1822,8 @@ test('QA corrects its own output, returns a failing product to work, then hands 
   const again = launchesOf(runtime, 'qa')[2];
   assert.equal(again?.mode, 'resume');
   assert.match(again?.prompt ?? '', /QA round: 2/);
+  // The worker's reply from this round, not "none".
+  assert.match(again?.prompt ?? '', /Worker summary:\nfixed\n/);
   runtime.emit(nth('qa', 2).runId, {
     kind: 'subagent_done',
     output: 'passed',
@@ -1833,6 +1835,8 @@ test('QA corrects its own output, returns a failing product to work, then hands 
   const review = launchesOf(runtime, 'review')[0];
   assert.match(review?.prompt ?? '', /filter\.e2e\.txt/);
   assert.match(review?.prompt ?? '', /screenshot AC1: passed/);
+  assert.match(review?.prompt ?? '', /Validation:\nQA:\n- test plan: passed/);
+  assert.match(review?.prompt ?? '', /Worker summary:\nfixed\n\nQA summary:\npassed/);
   runtime.emit(nth('review', 0).runId, {
     kind: 'subagent_done',
     output: reviewOutput('approve'),

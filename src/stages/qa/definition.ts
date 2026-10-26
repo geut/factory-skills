@@ -1,20 +1,32 @@
 import type { WorkCommand } from '../../config.ts';
-import type { FactorySnapshot, Policy } from '../../domain.ts';
-import type { ValidationReport } from '../../validation/report.ts';
+import type { Policy } from '../../domain.ts';
+import type { ValidationCheck, ValidationReport } from '../../validation/report.ts';
 import { defineStage, type LimitSpec, type SettingsResult } from '../definition.ts';
-import { runOutput } from '../output.ts';
+import { runOutput, workerSummary } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 import type { Criterion } from './criteria.ts';
 
 // QA failed either because its own output is incomplete (a correction) or
 // because the product does not meet a criterion (a return to work).
+// A passed report also splits its checks for review: QA's own, and the work
+// checks as they stand after QA (run again, or carried over from work validation).
 export type QaValidationReport = ValidationReport<
-  { criteria: Array<Criterion>; diff: string; gaps: number; tested: number },
+  {
+    criteria: Array<Criterion>;
+    diff: string;
+    gaps: number;
+    qaChecks: Array<ValidationCheck>;
+    tested: number;
+    workChecks: Array<ValidationCheck>;
+  },
   { reason: 'incomplete' | 'product' }
 >;
 
 // What QA's input preparation read from the task file and set up.
 export type QaPrepared = {
+  // The worktree as work left it and the work checks that passed (QaBaseline
+  // JSON), so validation can tell QA's files from the worker's.
+  baseline: string;
   // Files the worker changed, read from the worktree.
   changedFiles: Array<string>;
   // The task's work checks that passed, such as `test: passed`.
@@ -37,18 +49,11 @@ export type QaInput = {
   taskFile: string;
   taskId: string;
   title: string;
+  // The work commands QA validation runs again after the QA commands.
+  workCommands: Array<WorkCommand>;
   workerSummary: string;
   worktree: string;
 };
-
-// What the task's worker said when it last finished.
-function workerOutput(snapshot: FactorySnapshot, taskId: string): string {
-  const work = snapshot.sessions.find((item) => item.stage === 'work' && item.taskId === taskId);
-  const worker = [...snapshot.runs]
-    .reverse()
-    .find((item) => item.sessionId === work?.id && item.terminalKind === 'subagent_done');
-  return worker === undefined ? '' : runOutput(worker);
-}
 
 // The paths a unified diff touches, in order.
 export function changedFiles(diff: string): Array<string> {
@@ -62,7 +67,13 @@ export function changedFiles(diff: string): Array<string> {
   return [...files];
 }
 
-export type QaSettings = { commands: Array<WorkCommand>; enabled: boolean };
+// `workCommands` names the validation.work commands QA validation runs again;
+// null runs all of them.
+export type QaSettings = {
+  commands: Array<WorkCommand>;
+  enabled: boolean;
+  workCommands: Array<string> | null;
+};
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -89,8 +100,9 @@ function readCommand(value: unknown): WorkCommand | null {
   return { argv, name, timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS };
 }
 
-// FACTORY.json `stages.qa`: `{ "enabled": true, "commands": [{ name, argv, timeoutMs? }] }`.
-// QA is off unless enabled, and it needs at least one command to run.
+// FACTORY.json `stages.qa`: `{ "enabled": true, "commands": [{ name, argv, timeoutMs? }],
+// "workCommands"?: ["check", "lint"] }`. QA is off unless enabled, and it needs
+// at least one command to run.
 export function readQaSettings(raw: unknown): SettingsResult {
   if (raw === undefined) {
     return { kind: 'ok', settings: { commands: [], enabled: false } };
@@ -98,7 +110,7 @@ export function readQaSettings(raw: unknown): SettingsResult {
   const invalid = {
     kind: 'error' as const,
     message:
-      'FACTORY.json stages.qa must be { "enabled": boolean, "commands": [{ "name", "argv", "timeoutMs"? }] }.',
+      'FACTORY.json stages.qa must be { "enabled": boolean, "commands": [{ "name", "argv", "timeoutMs"? }], "workCommands"?: ["name"] }.',
   };
   if (!isRecord(raw) || (raw['enabled'] !== undefined && typeof raw['enabled'] !== 'boolean')) {
     return invalid;
@@ -111,13 +123,25 @@ export function readQaSettings(raw: unknown): SettingsResult {
   if (commands.some((command) => command === null)) {
     return invalid;
   }
+  const workCommands = raw['workCommands'];
+  if (
+    workCommands !== undefined &&
+    (!Array.isArray(workCommands) ||
+      workCommands.some((name) => typeof name !== 'string' || name.trim().length === 0))
+  ) {
+    return invalid;
+  }
   const enabled = raw['enabled'] === true;
   if (enabled && commands.length === 0) {
     return { kind: 'error', message: 'FACTORY.json stages.qa needs at least one command.' };
   }
   return {
     kind: 'ok',
-    settings: { commands: commands.filter((command) => command !== null), enabled },
+    settings: {
+      commands: commands.filter((command) => command !== null),
+      enabled,
+      ...(workCommands === undefined ? {} : { workCommands }),
+    },
   };
 }
 
@@ -125,12 +149,21 @@ export function readQaSettings(raw: unknown): SettingsResult {
 export function qaSettings(policy: Policy): QaSettings {
   const read = readQaSettings(policy.stages['qa']);
   if (read.kind === 'error' || !Array.isArray(read.settings['commands'])) {
-    return { commands: [], enabled: false };
+    return { commands: [], enabled: false, workCommands: null };
   }
+  const names = read.settings['workCommands'];
   return {
     commands: read.settings['commands'] as Array<WorkCommand>,
     enabled: read.settings.enabled,
+    workCommands: Array.isArray(names) ? (names as Array<string>) : null,
   };
+}
+
+// The work commands QA validation runs again after its own.
+export function qaWorkCommands(policy: Policy): Array<WorkCommand> {
+  const names = qaSettings(policy).workCommands;
+  const all = policy.validation.work.commands;
+  return names === null ? all : all.filter((command) => names.includes(command.name));
 }
 
 // The FACTORY.json limits this stage reads.
@@ -149,14 +182,18 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
     if (report.status === 'passed') {
       // Review reads what the worker said, then what QA proved.
       const output = [
-        workerOutput(snapshot, task?.taskId ?? ''),
+        workerSummary(snapshot, task?.taskId ?? ''),
         '',
         'QA summary:',
         runOutput(run),
       ].join('\n');
       return {
         handoff: {
-          checks: report.checks,
+          // The work checks as they stand after QA, then QA's own.
+          checks: [
+            ...report.detail.workChecks.map((check) => ({ ...check, stage: 'Work' })),
+            ...report.detail.qaChecks.map((check) => ({ ...check, stage: 'QA' })),
+          ],
           criteria: report.detail.criteria,
           diff: report.detail.diff,
           output: output.trim(),
@@ -215,7 +252,8 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
       title: task.title,
-      workerSummary: workerOutput(snapshot, task.taskId),
+      workCommands: qaWorkCommands(execution.policy),
+      workerSummary: workerSummary(snapshot, task.taskId),
       worktree: execution.worktreePath,
     };
   },
@@ -265,10 +303,19 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
         `Write ${input.dir}/ledger.md with a "- ACn: reason" line for every criterion the tests do not prove, and for any other gap.`,
         'The controller runs these commands in the worktree and fails QA when one fails:',
         ...input.commands.map((command) => `- ${command.name}: ${command.argv.join(' ')}`),
+        ...(input.workCommands.length === 0
+          ? []
+          : [
+              'Then it runs these work commands again, so your test files must pass them too; a failure in a file you changed comes back to you:',
+              ...input.workCommands.map(
+                (command) => `- ${command.name}: ${command.argv.join(' ')}`,
+              ),
+            ]),
         'Do not change product code. Leave the work uncommitted.',
       ].join('\n'),
   },
   rounds: true,
+  runBaseline: (prepared) => prepared.baseline,
   scope: 'task',
   settings: readQaSettings,
   skill,

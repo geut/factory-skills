@@ -1,5 +1,11 @@
 import type { ReviewFinding, ReviewResult } from '../../domain.ts';
-import { defineStage, type LimitSpec, type Outcome, type StageView } from '../definition.ts';
+import {
+  defineStage,
+  type LimitSpec,
+  type Outcome,
+  type StageCheck,
+  type StageView,
+} from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
 import type { Criterion } from '../qa/criteria.ts';
 import {
@@ -81,6 +87,18 @@ function verdictOutcome({ snapshot, task }: StageView, result: ReviewResult): Ou
   }
 }
 
+// The handed-on checks, grouped under the label of the stage they belong to.
+function validationGroups(checks: Array<StageCheck>): string {
+  const groups = new Map<string, Array<string>>();
+  for (const check of checks) {
+    groups.set(check.stage, [
+      ...(groups.get(check.stage) ?? []),
+      `- ${check.name}: ${check.status}`,
+    ]);
+  }
+  return [...groups].flatMap(([stage, lines]) => [`${stage}:`, ...lines]).join('\n');
+}
+
 const skill = 'factory-review';
 const contract = REVIEW_CONTRACT;
 
@@ -143,7 +161,7 @@ export const review = defineStage<ReviewInput, 'review'>({
       round,
       taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
       taskTitle: task.title,
-      validationSummary: handoff.checks.map((check) => `${check.name}: ${check.status}`).join('\n'),
+      validationSummary: validationGroups(handoff.checks),
     };
   },
   label: 'Review',

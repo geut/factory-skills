@@ -37,8 +37,11 @@ Launch failures and crashes use `limits.infrastructureRetries` and never spend a
 QA is an optional stage between work and review, on when `FACTORY.json` sets `stages.qa.enabled` and lists at least one `stages.qa.commands`. It reads the task file's `## Acceptance criteria` (AC1..ACn) and launches the `factory-qa` agent on `models.work` in the worktree. The agent writes one observable end-to-end test per criterion a user can observe, lists the others in the ledger with what covers them, and `test-plan.md`, `ledger.md`, and `screenshots/` under `tickets/<slug>/qa/<task>/`. The controller checks that every criterion is tested or in the ledger with a reason and that each screenshot exists, then runs the QA commands itself:
 
 - missing or incomplete QA output resumes the QA agent with the failures, up to `limits.qaCorrections` (default 2) per round;
-- a failing command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
-- a pass hands review the diff QA left, tests included, and wrap-up lists the screenshots for the pull request.
+- a failing QA command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
+- after the QA commands, the controller runs the `validation.work.commands` again (all of them, or the names in `stages.qa.workCommands`), so code QA wrote meets work's bar. A failure whose output names a file QA changed this round resumes the QA agent as a correction, ahead of any other failure; any other failure returns the task to work;
+- a pass hands review the diff QA left, tests included, and the checks behind it: the work checks as they stand after QA and QA's own, grouped under Work and QA in the review prompt. Wrap-up lists the screenshots for the pull request.
+
+Every stage after work is given the worker's latest reply for the task, in every round. When a later round's reply is empty, the last reply with text stands in, marked as such.
 
 With QA on, the plan must give every task at least one acceptance criterion. A task file opts out with `qa: none` in its frontmatter when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. With `qa: e2e`, QA runs.
 
@@ -275,7 +278,8 @@ The factory reads issues through a **tracker** and pull requests through a **cod
   "stages": {
     "qa": {
       "enabled": true,
-      "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }]
+      "commands": [{ "name": "e2e", "argv": ["npx", "playwright", "test"] }],
+      "workCommands": ["tests"]
     }
   },
   "worktree": {

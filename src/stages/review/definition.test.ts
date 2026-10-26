@@ -76,7 +76,23 @@ function prompt(round: number, earlier: Array<string>) {
     { snapshot, task: task(snapshot, '01') },
     {
       handoff: {
-        checks: [],
+        checks: [
+          {
+            details: 'npm run check',
+            kind: 'command',
+            name: 'check',
+            stage: 'Work',
+            status: 'passed',
+          },
+          {
+            details: 'npm run lint',
+            kind: 'command',
+            name: 'lint',
+            stage: 'Work',
+            status: 'passed',
+          },
+          { details: 'AC1', kind: 'schema', name: 'AC1 covered', stage: 'QA', status: 'passed' },
+        ],
         criteria: [
           { id: 'AC1', text: 'The filter survives a reload.' },
           { id: 'AC2', text: 'An empty filter shows every ticket.' },
@@ -104,6 +120,13 @@ test('the first review lists the criteria to verify', () => {
     /Acceptance criteria \(one Verification line each\):\n- AC1: The filter survives a reload\.\n- AC2: An empty filter shows every ticket\./,
   );
   assert.doesNotMatch(text, /Earlier blocking findings/);
+});
+
+test('the validation block groups the work checks and the QA checks', () => {
+  assert.match(
+    prompt(1, []),
+    /Validation:\nWork:\n- check: passed\n- lint: passed\nQA:\n- AC1 covered: passed\n/,
+  );
 });
 
 test('a later review asks to verify each earlier blocking finding, without claiming a fix', () => {

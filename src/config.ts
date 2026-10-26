@@ -322,6 +322,17 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
   if (settings.kind === 'error') {
     return settings;
   }
+  // QA runs these work commands again, so each must be one of them.
+  const again = settings.stages['qa']?.['workCommands'];
+  const unlisted = Array.isArray(again)
+    ? again.filter((name) => !commands.some((command) => command.name === name))
+    : [];
+  if (unlisted.length > 0) {
+    return {
+      kind: 'error',
+      message: `FACTORY.json stages.qa.workCommands names ${unlisted.join(', ')}, which validation.work.commands does not list.`,
+    };
+  }
 
   return {
     config: {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseFactoryConfig } from '../../config.ts';
+import { sessionId } from '../../domain.ts';
 import { addTasks, blank, run, session, task } from '../../stories/fixtures.ts';
 import { acceptanceCriteria, testGaps, testPlan } from './criteria.ts';
 import { changedFiles, qa, readQaSettings } from './definition.ts';
@@ -22,6 +23,19 @@ test('QA is off by default and needs a command to be on', () => {
     enabled: true,
   });
   assert.equal(parseFactoryConfig({ models, stages: { review: {} } }).kind, 'error');
+  const again = readQaSettings({ commands: [e2e], enabled: true, workCommands: ['lint'] });
+  assert.deepEqual(again.kind === 'ok' ? again.settings['workCommands'] : null, ['lint']);
+  assert.equal(readQaSettings({ commands: [e2e], workCommands: 'lint' }).kind, 'error');
+  const typo = parseFactoryConfig({
+    models,
+    stages: { qa: { commands: [e2e], enabled: true, workCommands: ['lnt'] } },
+    validation: { work: { commands: [{ argv: ['npm', 'run', 'lint'], name: 'lint' }] } },
+  });
+  assert.deepEqual(typo, {
+    kind: 'error',
+    message:
+      'FACTORY.json stages.qa.workCommands names lnt, which validation.work.commands does not list.',
+  });
 });
 
 test('criteria, test plan rows, and ledger lines are keyed AC1..ACn', () => {
@@ -88,5 +102,76 @@ test('QA reads the files the worker changed from its diff', () => {
       'diff --git a/src/a.ts b/src/a.ts\n+x\ndiff --git a/old.ts b/new.ts\n-y\ndiff --git a/src/a.ts b/src/a.ts\n',
     ),
     ['src/a.ts', 'new.ts'],
+  );
+});
+
+// The worker summary QA's prompt shows for task 01, after `build` adds work runs.
+function workerSummaryAfter(build: (snapshot: ReturnType<typeof blank>) => void): string {
+  const snapshot = blank();
+  addTasks(snapshot, 1);
+  snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
+  build(snapshot);
+  const input = qa.input?.(
+    { snapshot, task: task(snapshot, '01') },
+    {
+      handoff: null,
+      prepared: { baseline: '{}', changedFiles: [], checks: [], criteria: [], dir: '/qa' },
+      round: 2,
+    },
+  );
+  return input?.workerSummary ?? assert.fail('no input');
+}
+
+test('QA is given the worker’s latest reply, in every round', () => {
+  assert.equal(
+    workerSummaryAfter((snapshot) => {
+      run(snapshot, session(snapshot, 'work', '01'), { output: 'Round 1: stored the filter.' });
+    }),
+    'Round 1: stored the filter.',
+  );
+  assert.equal(
+    workerSummaryAfter((snapshot) => {
+      const work = session(snapshot, 'work', '01');
+      run(snapshot, work, { output: 'Round 1: stored the filter.' });
+      run(snapshot, work, { output: 'Round 2: fixed R1-1.', purpose: 'return_to_work', round: 1 });
+    }),
+    'Round 2: fixed R1-1.',
+  );
+  assert.equal(
+    workerSummaryAfter((snapshot) => {
+      const first = session(snapshot, 'work', '01');
+      run(snapshot, first, { output: 'Round 1: stored the filter.' });
+      const second = { ...first, id: sessionId('session-work:01-again') };
+      snapshot.sessions.push(second);
+      run(snapshot, second, { output: 'Round 2, new session.', round: 1 });
+    }),
+    'Round 2, new session.',
+  );
+  assert.equal(
+    workerSummaryAfter((snapshot) => {
+      const work = session(snapshot, 'work', '01');
+      run(snapshot, work, { output: 'Round 1: stored the filter.' });
+      run(snapshot, work, { output: 'Round 2: fixed R1-1.', purpose: 'return_to_work', round: 1 });
+      run(snapshot, work, { output: 'Fixed the lint error.', purpose: 'validation_correction' });
+      // Another task's worker is not this one.
+      addTasks(snapshot, 2);
+      run(snapshot, session(snapshot, 'work', '02'), { output: 'Task 02 summary.' });
+    }),
+    // The round's reply keeps its review responses; the correction follows it.
+    'Round 2: fixed R1-1.\n\nFixed the lint error.',
+  );
+});
+
+test('an empty latest reply falls back to the last one, and says so', () => {
+  const summary = workerSummaryAfter((snapshot) => {
+    const work = session(snapshot, 'work', '01');
+    run(snapshot, work, { output: 'Round 1: stored the filter.' });
+    run(snapshot, work, { output: '', purpose: 'return_to_work', round: 1 });
+  });
+  assert.match(summary, /^Round 1: stored the filter\.\n\n/);
+  assert.match(summary, /latest reply was empty/);
+  assert.equal(
+    workerSummaryAfter(() => {}),
+    '',
   );
 });
