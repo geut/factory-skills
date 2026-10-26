@@ -45,6 +45,12 @@ const Summary = z
     costUsd: z.number(),
     externalReviewRounds: z.object({
       bot: z.int(),
+      changesRequested: z.int().meta({
+        description: 'Rounds whose commit drew a review asking for changes.',
+      }),
+      commented: z.int().meta({
+        description: 'Rounds whose commit only drew comments with a body.',
+      }),
       distribution: z.record(z.string(), z.int()).meta({
         description: 'Tickets with a merged or abandoned pull request, by their number of rounds.',
       }),
@@ -119,7 +125,13 @@ const TicketRow = z
     costUsd: z.number(),
     displayRef: z.string(),
     execution: z.string(),
-    externalReviewRounds: z.object({ bot: z.int(), human: z.int(), total: z.int() }),
+    externalReviewRounds: z.object({
+      bot: z.int(),
+      changesRequested: z.int(),
+      commented: z.int(),
+      human: z.int(),
+      total: z.int(),
+    }),
     factoryMs: nullableNumber,
     factoryVersion: z.string().nullable(),
     followUpCommits: z.int(),

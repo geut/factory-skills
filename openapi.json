@@ -3204,6 +3204,18 @@
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991
               },
+              "changesRequested": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Rounds whose commit drew a review asking for changes."
+              },
+              "commented": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Rounds whose commit only drew comments with a body."
+              },
               "distribution": {
                 "type": "object",
                 "propertyNames": {
@@ -3230,6 +3242,8 @@
             },
             "required": [
               "bot",
+              "changesRequested",
+              "commented",
               "distribution",
               "human",
               "median"
@@ -3689,6 +3703,16 @@
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991
               },
+              "changesRequested": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "commented": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
               "human": {
                 "type": "integer",
                 "minimum": -9007199254740991,
@@ -3702,6 +3726,8 @@
             },
             "required": [
               "bot",
+              "changesRequested",
+              "commented",
               "human",
               "total"
             ],
