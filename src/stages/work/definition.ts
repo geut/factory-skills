@@ -1,5 +1,5 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
-import { runOutput } from '../output.ts';
+import { workerSummary } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 
 // What work's input preparation found in the factory files.
@@ -35,14 +35,14 @@ export const workLimits = { workCorrections: { default: 3, min: 0 } } as const s
 >;
 
 export const work = defineStage<WorkInput, 'work', WorkPrepared>({
-  conclude: (_view, run, report) =>
+  conclude: ({ snapshot, task }, _run, report) =>
     report.status === 'passed'
       ? {
           handoff: {
-            checks: report.checks,
+            checks: report.checks.map((check) => ({ ...check, stage: 'Work' })),
             criteria: report.detail.criteria,
             diff: report.detail.diff,
-            output: runOutput(run),
+            output: workerSummary(snapshot, task?.taskId ?? ''),
           },
           kind: 'accept',
         }
@@ -127,6 +127,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         ...problems.map((problem) => `- ${problem}`),
         '',
         'Change only what these findings require. Leave the work uncommitted.',
+        `Then return the complete ${contract} template, answering each finding under ## Review responses.`,
       ].join('\n'),
   },
   scope: 'task',

@@ -10,7 +10,11 @@ export function validationContext(
   deps: Partial<ValidationContext['deps']> = {},
 ): ValidationContext {
   const snapshot = blank();
-  const owner = session(snapshot, stage, stage === 'work' || stage === 'review' ? '01' : null);
+  const owner = session(
+    snapshot,
+    stage,
+    stage === 'work' || stage === 'review' || stage === 'qa' ? '01' : null,
+  );
   const finished = run(snapshot, owner);
   edit(snapshot, finished, owner);
   return {

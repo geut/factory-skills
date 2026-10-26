@@ -20,11 +20,15 @@ export type StageView = {
   task: TaskRecord | null;
 };
 
+// A check a stage hands on, with the label of the stage whose validation it
+// belongs to, such as "Work".
+export type StageCheck = ValidationCheck & { stage: string };
+
 // What a per-task stage passes to the next one when it accepts: the diff it
-// leaves in the worktree, the checks it passed, its agent's response, and the
-// task's acceptance criteria as its validator read them.
+// leaves in the worktree, the checks the code stands on, its agent's
+// response, and the task's acceptance criteria as its validator read them.
 export type Handoff = {
-  checks: Array<ValidationCheck>;
+  checks: Array<StageCheck>;
   criteria: Array<Criterion>;
   diff: string;
   output: string;
