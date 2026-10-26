@@ -58,6 +58,7 @@ function pendingPlanValidation() {
       baseBranch: 'main',
       baseSha: 'base-sha',
       branch: 'factory/demo',
+      context: { kind: 'read', missingSections: [] },
       kind: 'worktree_ready',
       worktreePath: path.join(root, 'worktrees/demo'),
     },

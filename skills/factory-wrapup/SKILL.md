@@ -13,7 +13,7 @@ Read the plan, task files, optional ADR, approved review verdict, diff, and fina
 
 ## Update durable knowledge
 
-Update `.factory/CONTEXT.md`, `.factory/PRD.md`, or project documentation only when implementation established knowledge useful beyond this ticket. Keep ticket-local detail in `plan.md`. Add to `.factory/learnings/` only when an observation could improve another ticket or a factory skill; do not create a learning for routine success.
+Update `.factory/CONTEXT.md`, `.factory/PRD.md`, or project documentation only when implementation established knowledge useful beyond this ticket. For CONTEXT.md, ask: did this ticket hit environment, tooling or test friction that the next ticket would hit again? A command that failed first, a port collision, a flake re-diagnosed, a fixture found late. If so, add the fact to the matching section (see [the CONTEXT.md sections](../factory-plan/references/context.md)), without rewriting what is there. Keep ticket-local detail in `plan.md`. Add to `.factory/learnings/` only when an observation could improve another ticket or a factory skill; do not create a learning for routine success.
 
 Do not create `wrapup.md` or a `visuals/` directory in the factory root by default. The wrap-up Pi session is the human handoff. Promote an artifact to project documentation only when it must survive the ticket session.
 

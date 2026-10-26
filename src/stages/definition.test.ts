@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { effects } from './effects.ts';
 import { stages } from './index.ts';
+import type { PlanInput } from './plan/definition.ts';
 
 test('every stage builds its prompts from its own skill and contract', () => {
   for (const stage of Object.values(stages)) {
@@ -49,4 +50,39 @@ test('a stage has FACTORY.json settings exactly when it is optional', () => {
   for (const stage of Object.values(stages)) {
     assert.equal(stage.optional, stage.settings !== undefined, stage.name);
   }
+});
+
+// The plan's first prompt for ticket #7, given what CONTEXT.md lacks.
+function initial(context: PlanInput['context']): string {
+  return stages.plan.turn({
+    input: {
+      body: 'Remember the filter.',
+      context,
+      displayRef: '#7',
+      factoryDir: '/repo/.factory/tickets/7',
+      title: 'Filter',
+    },
+    kind: 'initial',
+  });
+}
+
+test('the first plan in a factory root is asked to create CONTEXT.md', () => {
+  const missing = initial({ kind: 'missing' });
+  assert.match(missing, /Create \/repo\/\.factory\/CONTEXT\.md/);
+  for (const section of [
+    'Commands',
+    'Environment',
+    'Test layers',
+    'Servers and ports',
+    'Known flakes',
+    'Fixtures and fakes',
+    'Vocabulary',
+  ]) {
+    assert.ok(missing.includes(section), section);
+  }
+  assert.doesNotMatch(initial({ kind: 'read', missingSections: [] }), /CONTEXT\.md/);
+  // A hand-written file is completed, not rewritten.
+  const partial = initial({ kind: 'read', missingSections: ['Known flakes'] });
+  assert.doesNotMatch(partial, /Create .*CONTEXT\.md/);
+  assert.match(partial, /Add the ## Known flakes section to \/repo\/\.factory\/CONTEXT\.md/);
 });

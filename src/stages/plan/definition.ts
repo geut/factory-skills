@@ -1,8 +1,16 @@
 import { factoryRootOf } from '../../controller/keys.ts';
 import { defineStage, type LimitSpec } from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
+import { contextInstruction, type ContextGaps } from './context.ts';
 
-export type PlanInput = { body: string; displayRef: string; factoryDir: string; title: string };
+// `context`: what the factory root's CONTEXT.md still lacks.
+export type PlanInput = {
+  body: string;
+  context: ContextGaps;
+  displayRef: string;
+  factoryDir: string;
+  title: string;
+};
 
 const skill = 'factory-plan';
 const contract = 'factory.plan.v3';
@@ -39,7 +47,7 @@ export const plan = defineStage<PlanInput, 'plan'>({
       [
         childInstructions(skill, contract, handoff),
         '',
-        'Plan validation failed. plan.md must exist and at least one task file must be defined. Fix these exact problems:',
+        'Plan validation failed. plan.md, at least one task file and CONTEXT.md with its required sections must exist. Fix these exact problems:',
         ...failures.map((failure) => `- ${failure}`),
       ].join('\n'),
     initial: (input) =>
@@ -50,6 +58,9 @@ export const plan = defineStage<PlanInput, 'plan'>({
         `Title: ${input.title}`,
         `Factory root: ${factoryRootOf(input.factoryDir)}`,
         `Write plan.md and numbered task files in ${input.factoryDir}.`,
+        ...[contextInstruction(input.context, factoryRootOf(input.factoryDir))].filter(
+          (line) => line !== null,
+        ),
         '',
         input.body,
       ].join('\n'),
