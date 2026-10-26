@@ -13,7 +13,6 @@ import {
   formatFinding,
   parseReview,
   REVIEW_CONTRACT,
-  REVIEW_CONTRACT_V4,
   runReview,
 } from './parse.ts';
 
@@ -165,11 +164,10 @@ export const review = defineStage<ReviewInput, 'review'>({
     };
   },
   label: 'Review',
-  legacyContract: REVIEW_CONTRACT_V4,
   model: 'review',
   name: 'review',
-  parse: (output, round, recorded) => {
-    const parsed = parseReview(output, round, recorded);
+  parse: (output, round) => {
+    const parsed = parseReview(output, round);
     return parsed.kind === 'valid'
       ? { json: JSON.stringify({ output, review: parsed.result }), kind: 'valid' }
       : { error: parsed.failures.join('\n'), json: JSON.stringify({ output }), kind: 'invalid' };

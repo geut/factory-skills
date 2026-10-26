@@ -992,29 +992,6 @@ test('a review citing a line past the end of a file is corrected without spendin
   await closeWhenIdle(db);
 });
 
-test('a review started before v5 keeps the v4 template through its corrections', async () => {
-  const { db, review, runtime } = await reachReview();
-  // Created before runs recorded their contract.
-  db.prepare('UPDATE agent_runs SET result_contract = NULL WHERE id = ?').run(review.runId);
-  const v4 = reviewOutput('approve').replace(/## Verification\n\n.*\n\n/, '');
-  runtime.emit(review.runId, {
-    kind: 'subagent_done',
-    output: 'Looks good.',
-    usage: sampleUsage(),
-  });
-  await waitFor(() => launchesOf(runtime, 'review').length === 2);
-  const correction = launchesOf(runtime, 'review')[1];
-  assert.match(correction?.prompt ?? '', /## Verdict is missing/);
-  runtime.emit(correction?.runId ?? review.runId, {
-    kind: 'subagent_done',
-    output: v4,
-    usage: sampleUsage(),
-  });
-  await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);
-  assert.equal(taskRow(db)['review_verdict'], 'approve');
-  await closeWhenIdle(db);
-});
-
 // Each stage once per stretch, in order.
 const stagesOf = (steps: Array<string>): Array<string | undefined> =>
   steps.map((step) => step.split('/')[0]).filter((step, index, steps) => step !== steps[index - 1]);
