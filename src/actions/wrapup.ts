@@ -42,7 +42,9 @@ export async function openHandoffPane(
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
       if (action.kind === 'open_diff') {
-        const collected = collectWorkDiff(action.cwd);
+        // Wrap-up may have committed the work, so the diff runs from the
+        // commit the worktree started at.
+        const collected = collectWorkDiff(action.cwd, snapshot.execution.worktreeBaseSha ?? 'HEAD');
         const file = `${sessionFile}.diff`;
         mkdirSync(path.dirname(file), { recursive: true });
         writeFileSync(file, 'diff' in collected ? collected.diff : `# ${collected.message}\n`);

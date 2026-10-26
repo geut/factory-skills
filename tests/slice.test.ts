@@ -1472,6 +1472,36 @@ test('a valid handoff is ready for handoff, opens both panes, and complete finis
   await closeWhenIdle(db);
 });
 
+test('the diff pane shows the ticket’s changes after wrap-up commits them and opens the pull request', async () => {
+  const url = 'https://github.com/geut/factory-skills/pull/7';
+  let opened: PullRequestInfo | null = null;
+  const { branch, runtime, service, wrapup } = await reachWrapup({}, () => ({
+    ...codeHostWith('open', []),
+    pullRequest: () => opened,
+  }));
+  git(wrapup.cwd, ['add', '--', 'change.txt']);
+  git(wrapup.cwd, ['commit', '-m', 'Persist the filter']);
+  opened = {
+    ...(codeHostWith('open', []).findPullRequest(branch) as PullRequestInfo),
+    headSha: git(wrapup.cwd, ['rev-parse', 'HEAD']),
+  };
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch).replace(
+      /## Merge commands[\s\S]*$/,
+      `## Merge commands\n\n${url}\n`,
+    ),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await waitFor(() => runtime.panes.length === 2);
+  const diff = runtime.panes.find((pane) => pane.target.kind === 'diff');
+  assert.equal(diff?.target.kind, 'diff');
+  if (diff?.target.kind === 'diff') {
+    assert.match(readFileSync(diff.target.file, 'utf8'), /\+\+\+ b\/change\.txt/);
+  }
+});
+
 test('a failed handoff resumes the same wrap-up session with no correction limit', async () => {
   const { branch, db, runtime, service, wrapup } = await reachWrapup({
     limits: { infrastructureRetries: 1, workCorrections: 1 },
