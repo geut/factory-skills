@@ -4,6 +4,7 @@ import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ContextGaps } from './stages/plan/context.ts';
+import type { Criterion } from './stages/qa/criteria.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -253,7 +254,8 @@ export type PlanValidationReport = ValidationReport<{
 }>;
 
 // The diff is the worktree after the validation commands ran.
-export type WorkValidationReport = ValidationReport<{ diff: string }>;
+// A passed work run leaves its diff and the task's acceptance criteria for review.
+export type WorkValidationReport = ValidationReport<{ criteria: Array<Criterion>; diff: string }>;
 
 export type ReviewFinding = {
   blocking: boolean;
@@ -267,11 +269,19 @@ export type ReviewFinding = {
   title: string;
 };
 
+// A reviewer's line on one acceptance criterion (`AC<n>`: verified or
+// not_verified) or one earlier blocking finding (`R<round>-<n>`: fixed or
+// still_open), with the locations or reason behind it.
+export type VerificationStatus = 'verified' | 'not_verified' | 'fixed' | 'still_open';
+
+export type ReviewVerification = { evidence: string; id: string; status: VerificationStatus };
+
 export type ReviewResult = {
   findings: Array<ReviewFinding>;
   round: number;
   summary: string;
   verdict: ReviewVerdict;
+  verification: Array<ReviewVerification>;
 };
 
 // `malformed` resumes the reviewer, `stale` re-validates the worker's diff,

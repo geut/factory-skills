@@ -24,7 +24,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 
 When a worker finishes, the controller inspects the worktree diff and runs the trusted `validation.work.commands`. A failure resumes the same worker with the exact failures. A pass launches a read-only reviewer on `models.review` with the diff that was checked.
 
-The reviewer returns the `factory.review.v4` template. The controller parses the verdict and its findings, then checks that the reviewer was isolated and that the worktree diff has not changed since the reviewer received it.
+The reviewer returns the `factory.review.v5` template. Its `## Verification` section has a line per acceptance criterion and, from round 2, per earlier blocking finding, each citing the code it checked. The controller parses the verdict, findings, and Verification lines; checks that every expected id is there and every cited `path:line` exists in the worktree; then checks that the reviewer was isolated and that the worktree diff has not changed since the reviewer received it. A problem comes back to the reviewer as a correction.
 
 - `approve` marks the task done and starts the next dependency-ready task. After the last task, the controller launches wrap-up.
 - `changes_requested` resumes the same worker with only the blocking findings. Work validation runs again, then the same reviewer session reviews round 2. `limits.reviewRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the reviewer with your decision.

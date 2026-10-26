@@ -4,6 +4,7 @@ import {
   addTasks,
   blank,
   majorFinding,
+  minorFinding,
   review,
   run,
   session,
@@ -61,4 +62,61 @@ test('an unreadable verdict is corrected; a stale diff revalidates; isolation pa
   });
   const unsafe = concluded(review('approve'), 1).fail('unsafe');
   assert.equal(unsafe.kind === 'pause' && unsafe.reply, false);
+});
+
+function prompt(round: number, earlier: Array<string>) {
+  const snapshot = blank();
+  addTasks(snapshot, 1);
+  const owner = session(snapshot, 'review', '01');
+  for (const [index, output] of earlier.entries()) {
+    run(snapshot, owner, { output, round: index + 1 });
+  }
+  const input = reviewStage.input?.(
+    { snapshot, task: task(snapshot, '01') },
+    {
+      handoff: {
+        checks: [],
+        criteria: [
+          { id: 'AC1', text: 'The filter survives a reload.' },
+          { id: 'AC2', text: 'An empty filter shows every ticket.' },
+        ],
+        diff: 'diff --git a/src/filter.ts b/src/filter.ts',
+        output: 'Stored the filter.',
+      },
+      prepared: null,
+      round,
+    },
+  );
+  return reviewStage.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
+}
+
+const roundOneVerification = [
+  '- AC1: not_verified — the filter is never stored',
+  '- AC2: verified — src/filter.ts:3',
+].join('\n');
+
+test('the first review lists the criteria to verify', () => {
+  const text = prompt(1, []);
+  assert.match(text, /Return only the factory\.review\.v5 template/);
+  assert.match(
+    text,
+    /Acceptance criteria \(one Verification line each\):\n- AC1: The filter survives a reload\.\n- AC2: An empty filter shows every ticket\./,
+  );
+  assert.doesNotMatch(text, /Earlier blocking findings/);
+});
+
+test('a later review asks to verify each earlier blocking finding, without claiming a fix', () => {
+  const earlier = review(
+    'changes_requested',
+    `${majorFinding}\n\n${minorFinding}`,
+    undefined,
+    roundOneVerification,
+  );
+  const text = prompt(2, [earlier]);
+  assert.doesNotMatch(text, /addressed/);
+  assert.match(text, /Verify each earlier blocking finding below and report it in Verification/);
+  const listed = text.split('Earlier blocking findings (one Verification line each):\n')[1] ?? '';
+  assert.match(listed, /^- R1-1 \[major\] Missing DB_URL bypasses the typed error page/);
+  // Minor findings do not block, so they are not re-verified.
+  assert.doesNotMatch(listed, /R1-3/);
 });

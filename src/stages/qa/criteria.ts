@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // One acceptance criterion of a task, numbered AC1..ACn in the order the task
@@ -32,6 +33,15 @@ export function acceptanceCriteria(taskMarkdown: string): Array<Criterion> {
     }
   }
   return items.map((text, index) => ({ id: `AC${index + 1}`, text }));
+}
+
+// The acceptance criteria of the task file at `file`; none when it cannot be read.
+export function taskCriteria(file: string): Array<Criterion> {
+  try {
+    return acceptanceCriteria(readFileSync(file, 'utf8'));
+  } catch {
+    return [];
+  }
 }
 
 // One row of the test plan: the criterion, the test that proves it, and the

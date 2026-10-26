@@ -27,7 +27,9 @@ Do not force lenses that do not apply. A documentation-only task does not need p
 5. Check that the change can be logged, diagnosed, and instrumented without redesign when that is operationally relevant.
 6. Confirm that scope contains no unrelated cleanup or hidden behavior change.
 
-For later rounds, verify claimed fixes and regressions first. Keep the same finding number when the underlying problem is the same. Add a new finding only when the fix caused it or it was missed previously. Do not restart stylistic review from zero.
+Report each criterion in `## Verification` with the code that satisfies it: the line the checks in step 2 led you to.
+
+For later rounds, the prompt lists the earlier blocking findings. Do not assume they were fixed: check each one in the code and report it in `## Verification` as `fixed` with its location or `still_open`. Then look for regressions. Keep the same finding number when the underlying problem is the same. Add a new finding only when the fix caused it or it was missed previously. Do not restart stylistic review from zero.
 
 ## What makes a good finding
 
@@ -46,7 +48,7 @@ For later rounds, verify claimed fixes and regressions first. Keep the same find
 
 ## Output
 
-Return only the template in [output.md](output.md). No JSON object, no Markdown fence around the whole result, no recap after it. `factory.review.v4`. Verdict and severity lookup is in [review-contract.md](review-contract.md).
+Return only the template in [output.md](output.md). No JSON object, no Markdown fence around the whole result, no recap after it. `factory.review.v5`. Verdict and severity lookup is in [review-contract.md](review-contract.md).
 
 Verdict is `approve`, `changes_requested`, or `blocked`:
 

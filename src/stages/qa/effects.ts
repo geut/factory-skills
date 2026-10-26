@@ -173,6 +173,7 @@ async function validateQa(input: {
     return errorReport(QA_VALIDATOR_VERSION, collected.message);
   }
   return passedReport(QA_VALIDATOR_VERSION, checks, {
+    criteria,
     diff: collected.diff,
     gaps: gaps.size,
     tested: plan.length,

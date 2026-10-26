@@ -1,12 +1,21 @@
-import type { ReviewResult } from '../../domain.ts';
+import type { ReviewFinding, ReviewResult } from '../../domain.ts';
 import { defineStage, type LimitSpec, type Outcome, type StageView } from '../definition.ts';
-import { runOutput } from '../output.ts';
 import { childInstructions } from '../prompt.ts';
-import { formatFinding, parseReview } from './parse.ts';
+import type { Criterion } from '../qa/criteria.ts';
+import {
+  earlierFindings,
+  formatFinding,
+  parseReview,
+  REVIEW_CONTRACT,
+  runReview,
+} from './parse.ts';
 
 export type ReviewInput = {
+  criteria: Array<Criterion>;
   diff: string;
   displayRef: string;
+  // From round 2: the blocking findings of the previous review, to verify.
+  earlierFindings: Array<ReviewFinding>;
   planPath: string;
   rawOutput: string;
   round: number;
@@ -72,7 +81,7 @@ function verdictOutcome({ snapshot, task }: StageView, result: ReviewResult): Ou
 }
 
 const skill = 'factory-review';
-const contract = 'factory.review.v4';
+const contract = REVIEW_CONTRACT;
 
 // The FACTORY.json limits this stage reads.
 export const reviewLimits = {
@@ -83,7 +92,7 @@ export const reviewLimits = {
 export const review = defineStage<ReviewInput, 'review'>({
   conclude: (view, run, report) => {
     if (report.status === 'passed') {
-      const parsed = parseReview(runOutput(run), run.semanticRound);
+      const parsed = runReview(run);
       return parsed.kind === 'invalid'
         ? { failures: parsed.failures, kind: 'correct' }
         : verdictOutcome(view, parsed.result);
@@ -124,8 +133,10 @@ export const review = defineStage<ReviewInput, 'review'>({
       throw new Error('Review runs for a task with the diff its previous stage left.');
     }
     return {
+      criteria: handoff.criteria,
       diff: handoff.diff,
       displayRef: snapshot.ticket.displayRef,
+      earlierFindings: earlierFindings(snapshot, task.taskId, round),
       planPath: snapshot.execution.planPath ?? '',
       rawOutput: handoff.output,
       round,
@@ -150,7 +161,7 @@ export const review = defineStage<ReviewInput, 'review'>({
       [
         childInstructions(skill, contract),
         '',
-        `The controller could not read your verdict. Fix these exact problems and return the complete ${contract} template again:`,
+        `The controller could not accept your review. Fix these exact problems and return the complete ${contract} template again:`,
         ...failures.map((failure) => `- ${failure}`),
       ].join('\n'),
     initial: (input) =>
@@ -163,10 +174,24 @@ export const review = defineStage<ReviewInput, 'review'>({
         `Plan: ${input.planPath}`,
         `Review round: ${input.round}`,
         input.round > 1
-          ? 'The worker addressed your earlier blocking findings. Verify those fixes first and keep the same finding numbers for problems that remain.'
+          ? 'Verify each earlier blocking finding below and report it in Verification. Keep the same finding number for a problem that remains.'
           : 'This is the first review of this task.',
         'Read only. Do not edit files.',
         '',
+        'Acceptance criteria (one Verification line each):',
+        ...(input.criteria.length === 0
+          ? ['none']
+          : input.criteria.map((criterion) => `- ${criterion.id}: ${criterion.text}`)),
+        '',
+        ...(input.round > 1
+          ? [
+              'Earlier blocking findings (one Verification line each):',
+              ...(input.earlierFindings.length === 0
+                ? ['none']
+                : input.earlierFindings.map((finding) => `- ${formatFinding(finding)}`)),
+              '',
+            ]
+          : []),
         'Validation:',
         input.validationSummary,
         '',

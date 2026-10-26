@@ -822,8 +822,18 @@ const minorFinding = `### 2. [Minor] Unclear name
 **Finding:** The variable f hides what it holds.
 **Evidence:** It is read in three places.`;
 
-function reviewOutput(verdict: string, findings = 'none', summary = 'Checked the diff.'): string {
-  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Findings\n\n${findings}\n`;
+// A factory.review.v5 result. Every task file has one criterion, and every
+// worker writes change.txt; a later round also verifies `earlier` findings.
+function reviewOutput(
+  verdict: string,
+  findings = 'none',
+  summary = 'Checked the diff.',
+  earlier: Array<string> = [],
+): string {
+  const verification = ['AC1', ...earlier]
+    .map((id) => `- ${id}: ${id.startsWith('AC') ? 'verified' : 'fixed'} — change.txt:1`)
+    .join('\n');
+  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Verification\n\n${verification}\n\n## Findings\n\n${findings}\n`;
 }
 
 type ReviewHarness = {
@@ -968,6 +978,20 @@ test('an approving review marks the task done and launches one wrap-up run', asy
   await closeWhenIdle(db);
 });
 
+test('a review citing a line past the end of a file is corrected without spending a round', async () => {
+  const { db, review, runtime } = await reachReview();
+  runtime.emit(review.runId, {
+    kind: 'subagent_done',
+    output: reviewOutput('approve').replace('change.txt:1', 'change.txt:9'),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const correction = launchesOf(runtime, 'review')[1];
+  assert.equal(correction?.purpose, 'validation_correction');
+  assert.match(correction?.prompt ?? '', /AC1 cites change\.txt:9, but change\.txt has 1 line\./);
+  await closeWhenIdle(db);
+});
+
 // Each stage once per stretch, in order.
 const stagesOf = (steps: Array<string>): Array<string | undefined> =>
   steps.map((step) => step.split('/')[0]).filter((step, index, steps) => step !== steps[index - 1]);
@@ -1003,11 +1027,16 @@ test('changes requested resume the same worker, then round 2 resumes the same re
   assert.equal(second?.mode, 'resume');
   assert.match(second?.prompt ?? '', /Review round: 2/);
   assert.match(second?.prompt ?? '', /\+stored/);
+  assert.match(
+    second?.prompt ?? '',
+    /Earlier blocking findings \(one Verification line each\):\n- R1-1 \[major\] Filter resets on reload/,
+  );
+  assert.doesNotMatch(second?.prompt ?? '', /addressed/);
   await waitFor(() => service.status('proj-123').includes('Launched'));
 
   runtime.emit(second?.runId ?? review.runId, {
     kind: 'subagent_done',
-    output: reviewOutput('approve'),
+    output: reviewOutput('approve', 'none', 'Checked the diff.', ['R1-1']),
     usage: sampleUsage(),
   });
   await waitFor(() => launchesOf(runtime, 'wrapup').length === 1);

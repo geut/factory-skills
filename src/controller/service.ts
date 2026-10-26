@@ -29,7 +29,7 @@ import type { IssueLink, Tracker } from '../ports/tracker.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { stages } from '../stages/index.ts';
-import { parseReview } from '../stages/review/parse.ts';
+import { runReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -987,7 +987,7 @@ export function terminalSummary(
     return terminal.question;
   }
   if (terminal.kind === 'subagent_done' && runStage(snapshot, run) === 'review') {
-    const parsed = parseReview(terminal.output, run.semanticRound);
+    const parsed = runReview(run, terminal.output);
     if (parsed.kind === 'valid') {
       return parsed.result.summary;
     }

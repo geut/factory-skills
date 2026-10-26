@@ -10,6 +10,7 @@ import type {
 } from '../domain.ts';
 import type { StageValidationReport, ValidationCheck } from '../validation/report.ts';
 import { childInstructions } from './prompt.ts';
+import type { Criterion } from './qa/criteria.ts';
 
 // What the driver shows a stage about the execution it runs in. Stages read
 // it and never change it.
@@ -20,8 +21,14 @@ export type StageView = {
 };
 
 // What a per-task stage passes to the next one when it accepts: the diff it
-// leaves in the worktree, the checks it passed, and its agent's response.
-export type Handoff = { checks: Array<ValidationCheck>; diff: string; output: string };
+// leaves in the worktree, the checks it passed, its agent's response, and the
+// task's acceptance criteria as its validator read them.
+export type Handoff = {
+  checks: Array<ValidationCheck>;
+  criteria: Array<Criterion>;
+  diff: string;
+  output: string;
+};
 
 // What a stage concludes from its validator's report on a finished run. The
 // driver carries it out: budgets, sessions, runs, and the order of stages

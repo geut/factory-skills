@@ -1,9 +1,8 @@
 import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
-import { runOutput } from '../output.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
-import { formatFinding, parseReview } from '../review/parse.ts';
+import { formatFinding, runReview } from '../review/parse.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
@@ -31,6 +30,8 @@ export type WrapupInput = {
   model: string;
   planPath: string;
   pullRequests: boolean;
+  // Each task's Verification lines from its latest valid review.
+  reviewVerification: Array<string>;
   screenshots: WrapupPrepared['screenshots'];
   tasks: Array<{
     status: string;
@@ -45,9 +46,14 @@ export type WrapupInput = {
   worktreeBranch: string;
 };
 
-// Every task's non-blocking review findings, from its latest valid review.
-function minorFindings(snapshot: FactorySnapshot): Array<string> {
+// Every task's non-blocking review findings and Verification lines, from its
+// latest valid review.
+function reviewNotes(snapshot: FactorySnapshot): {
+  findings: Array<string>;
+  verification: Array<string>;
+} {
   const findings: Array<string> = [];
+  const verification: Array<string> = [];
   for (const session of snapshot.sessions) {
     if (session.stage !== 'review') {
       continue;
@@ -58,17 +64,23 @@ function minorFindings(snapshot: FactorySnapshot): Array<string> {
     if (latest === undefined) {
       continue;
     }
-    const parsed = parseReview(runOutput(latest), latest.semanticRound);
+    const parsed = runReview(latest);
     // Finding ids restart in every task's review, so name the task.
     if (parsed.kind === 'valid') {
+      const label = `Task ${session.taskId ?? '?'}`;
       findings.push(
         ...parsed.result.findings
           .filter((item) => !item.blocking)
-          .map((item) => `Task ${session.taskId ?? '?'} ${formatFinding(item)}`),
+          .map((item) => `${label} ${formatFinding(item)}`),
+      );
+      verification.push(
+        ...parsed.result.verification.map(
+          (line) => `${label} ${line.id}: ${line.status} — ${line.evidence}`,
+        ),
       );
     }
   }
-  return findings;
+  return { findings, verification };
 }
 
 const skill = 'factory-wrapup';
@@ -98,6 +110,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
     if (execution.worktreePath === null) {
       throw new Error('Wrap-up runs in a ready worktree.');
     }
+    const notes = reviewNotes(snapshot);
     return {
       adrPath: prepared.adrPath,
       baseBranch: execution.worktreeBaseBranch,
@@ -105,11 +118,12 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
       factoryRoot: factoryRootOf(execution.factoryDir),
-      minorFindings: minorFindings(snapshot),
+      minorFindings: notes.findings,
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
       planPath: execution.planPath ?? '',
       pullRequests: execution.policy.pullRequests,
+      reviewVerification: notes.verification,
       screenshots: prepared.screenshots,
       tasks: snapshot.tasks.map((task) => ({
         status: task.status,
@@ -187,6 +201,11 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
               ),
               '',
             ]),
+        'Review verification:',
+        ...(input.reviewVerification.length === 0
+          ? ['none']
+          : input.reviewVerification.map((line) => `- ${line}`)),
+        '',
         'Non-blocking review findings:',
         ...(input.minorFindings.length === 0
           ? ['none']

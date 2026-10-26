@@ -315,8 +315,9 @@ export function review(
   verdict: string,
   findings = 'none',
   summary = 'Checked the diff against the task file.',
+  verification = 'none',
 ): string {
-  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Findings\n\n${findings}\n`;
+  return `## Verdict\n\n${verdict}\n\n## Summary\n\n${summary}\n\n## Verification\n\n${verification}\n\n## Findings\n\n${findings}\n`;
 }
 
 export const majorFinding = `### 1. [Major] Missing DB_URL bypasses the typed error page
