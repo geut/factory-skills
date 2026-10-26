@@ -288,6 +288,10 @@ export function renderLaunchScript(input: {
   sessionFile: string;
   thinking: string;
   tools: string;
+  // The agent's cwd. Exported as FACTORY_WORKTREE, with FACTORY_RUN_ID, it marks
+  // every process the agent starts, even after its pane is gone, so the stray
+  // sweep can find it.
+  worktree: string;
 }): string {
   const session = shellQuote(input.sessionFile);
   const runId = shellQuote(input.runId);
@@ -296,6 +300,8 @@ trap '' TSTP
 ${exportLines(input.env)}export PI_SUBAGENT_SESSION=${session}
 export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
+export FACTORY_WORKTREE=${shellQuote(input.worktree)}
+export FACTORY_RUN_ID=${runId}
 ${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
@@ -304,7 +310,9 @@ exit "$code"
 }
 
 // The script behind a handoff pane. It execs the TUI so the pane closes with
-// it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi.
+// it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi. The
+// pane outlives its ticket in the worktree, so FACTORY_WORKTREE names no
+// worktree: the stray sweep leaves it, and what the human starts there, alone.
 export function renderPaneScript(input: {
   cwd: string;
   env: ForwardedEnv;
@@ -319,6 +327,7 @@ export function renderPaneScript(input: {
   return `#!/usr/bin/env bash
 trap '' TSTP
 ${exportLines(input.env)}export FACTORY_CHILD=1
+export FACTORY_WORKTREE=handoff
 cd ${shellQuote(input.cwd)} || exit 1
 exec ${command}
 `;
@@ -859,6 +868,7 @@ export function createPiHerdrRuntime(options?: {
         sessionFile: spec.sessionFile,
         thinking: spec.thinking,
         tools: spec.tools,
+        worktree: spec.cwd,
       }),
       { mode: 0o755 },
     );

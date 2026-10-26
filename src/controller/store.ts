@@ -442,6 +442,59 @@ export function recordCard(db: DatabaseSync, card: string, now: string): number 
   return Number(inserted.lastInsertRowid);
 }
 
+// A process the stray sweep stopped, or failed to stop, before one of this
+// execution's runs: kept as a domain event on the ticket for audit.
+export function recordStrayProcess(
+  db: DatabaseSync,
+  input: {
+    command: string;
+    detail: string;
+    executionId: ExecutionId;
+    kind: 'stray_process_stopped' | 'stray_process_stop_failed';
+    now: string;
+    pid: number;
+    runId: RunId;
+    worktree: string;
+  },
+): void {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO events
+      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json,
+       processing_status, received_at, processed_at)
+     VALUES (?, ?, ?, 'domain', 'controller', ?, ?, ?, 'processed', ?, ?)`,
+  ).run(
+    id,
+    input.executionId,
+    input.runId,
+    input.kind,
+    `stray:${id}`,
+    JSON.stringify({
+      command: input.command,
+      detail: input.detail,
+      pid: input.pid,
+      worktree: input.worktree,
+    }),
+    input.now,
+    input.now,
+  );
+}
+
+// The worktrees of current executions that are not finished. A paused or
+// failed ticket keeps its worktree: retry may still use it.
+export function activeWorktrees(db: DatabaseSync): Set<string> {
+  return new Set(
+    db
+      .prepare(
+        `SELECT worktree_path FROM ticket_executions
+         WHERE is_current = 1 AND status NOT IN ('complete', 'cancelled')
+           AND worktree_path IS NOT NULL`,
+      )
+      .all()
+      .map((item) => text(row(item), 'worktree_path')),
+  );
+}
+
 export function cardsSince(
   db: DatabaseSync,
   revision: number,
