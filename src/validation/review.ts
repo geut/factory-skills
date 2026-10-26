@@ -99,7 +99,7 @@ function reviewChecks(input: {
 
 // The line count of a file in the worktree, or null when it is missing or
 // outside it.
-function worktreeLines(cwd: string): ReviewContext['lineCount'] {
+export function worktreeLines(cwd: string): ReviewContext['lineCount'] {
   return (file) => {
     const resolved = path.resolve(cwd, file);
     if (!resolved.startsWith(`${path.resolve(cwd)}${path.sep}`)) {

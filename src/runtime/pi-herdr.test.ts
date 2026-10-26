@@ -254,7 +254,7 @@ test('the diff pane opens the patch in Hunk when it is installed, else in Fresh'
   viewer('fresh');
   const file = path.join(directory, 'run.jsonl.diff');
   const script = path.join(directory, 'diff.sh');
-  const render = () =>
+  const render = (notes: string | null = null) =>
     writeFileSync(
       script,
       renderPaneScript({
@@ -263,7 +263,7 @@ test('the diff pane opens the patch in Hunk when it is installed, else in Fresh'
         freshBin: 'fresh',
         hunkBin: 'hunk',
         piBin: 'pi',
-        target: { file, kind: 'diff' },
+        target: { file, kind: 'diff', notes },
       }),
       { mode: 0o755 },
     );
@@ -277,6 +277,15 @@ test('the diff pane opens the patch in Hunk when it is installed, else in Fresh'
   assert.equal(
     readFileSync(path.join(directory, 'seen'), 'utf8'),
     `hunk patch ${file} --agent-notes `,
+  );
+
+  // Wrap-up's notes on the diff go to Hunk as its agent context.
+  const notes = path.join(directory, 'run.jsonl.notes.json');
+  render(notes);
+  execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
+  assert.equal(
+    readFileSync(path.join(directory, 'seen'), 'utf8'),
+    `hunk patch ${file} --agent-notes --agent-context ${notes} `,
   );
 });
 

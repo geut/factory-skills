@@ -21,6 +21,10 @@ Do not create `wrapup.md` or a `visuals/` directory in the factory root by defau
 
 The prompt lists the issue's open checklist items as `B1`..`Bn`, each task's review Verification lines, QA test plan rows, and the open review findings. Judge each box against that evidence and record it under `## Issue checklist`: `met` with the task criterion (verified by review or tested by QA) or file that proves it, or `not_met` with the reason. A box an open finding contradicts, even a minor one, stays `not_met`. Under `## Decisions`, list the choices that changed the issue's approach, such as a different API or a dropped requirement. Do not edit the issue yourself: the controller ticks the boxes and posts the comment after it accepts the handoff.
 
+## Annotate the diff
+
+The human reviews the ticket's diff in [Hunk](https://hunk.dev), with notes the controller takes from your handoff: what each `## Files` line says about its path appears above that file, each decision appears on the lines it cites, and each open review finding appears at its location. Say what changed in each file and why, in one line. End a decision with the lines that show it, as `(src/filter.ts:12-40)`. Leave out a location when no lines of the diff show the decision.
+
 ## Build the handoff
 
 The session handoff is the Output template. Do not wrap it in a recap.

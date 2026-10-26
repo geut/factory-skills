@@ -1472,7 +1472,7 @@ test('a valid handoff is ready for handoff, opens both panes, and complete finis
   await closeWhenIdle(db);
 });
 
-test('the diff pane shows the ticket’s changes after wrap-up commits them and opens the pull request', async () => {
+test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after wrap-up commits them and opens the pull request', async () => {
   const url = 'https://github.com/geut/factory-skills/pull/7';
   let opened: PullRequestInfo | null = null;
   const { branch, runtime, service, wrapup } = await reachWrapup({}, () => ({
@@ -1487,10 +1487,13 @@ test('the diff pane shows the ticket’s changes after wrap-up commits them and 
   };
   runtime.emit(wrapup.runId, {
     kind: 'subagent_done',
-    output: handoff(wrapup.cwd, branch).replace(
-      /## Merge commands[\s\S]*$/,
-      `## Merge commands\n\n${url}\n`,
-    ),
+    output: handoff(wrapup.cwd, branch)
+      .replace('- `change.txt`', '- `change.txt` — holds the persisted filter')
+      .replace(
+        '## Decisions\n\nnone',
+        '## Decisions\n\n- Wrote the filter to a file, not the URL (change.txt:1)',
+      )
+      .replace(/## Merge commands[\s\S]*$/, `## Merge commands\n\n${url}\n`),
     usage: sampleUsage(30),
   });
   await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
@@ -1499,6 +1502,22 @@ test('the diff pane shows the ticket’s changes after wrap-up commits them and 
   assert.equal(diff?.target.kind, 'diff');
   if (diff?.target.kind === 'diff') {
     assert.match(readFileSync(diff.target.file, 'utf8'), /\+\+\+ b\/change\.txt/);
+    assert.deepEqual(JSON.parse(readFileSync(diff.target.notes ?? '', 'utf8')), {
+      files: [
+        {
+          annotations: [
+            { author: 'wrap-up', summary: 'holds the persisted filter' },
+            {
+              author: 'wrap-up',
+              newRange: [1, 1],
+              summary: 'Decision: Wrote the filter to a file, not the URL',
+            },
+          ],
+          path: 'change.txt',
+        },
+      ],
+      version: 1,
+    });
   }
 });
 

@@ -44,13 +44,16 @@ export type ActiveWatch = {
 };
 
 // A human-facing pane that runs no model turn: the finished wrap-up session
-// reopened for reading, or the ticket's diff in Hunk or Fresh.
+// reopened for reading, or the ticket's diff in Hunk or Fresh. `notes` is
+// Hunk's agent-context file for the diff, when there is one.
 export type PaneSpec = {
   cwd: string;
   name: string;
   scriptFile: string;
   tab?: TicketTab | null;
-  target: { file: string; kind: 'diff' } | { kind: 'session'; sessionFile: string };
+  target:
+    | { file: string; kind: 'diff'; notes: string | null }
+    | { kind: 'session'; sessionFile: string };
 };
 
 export type FactorySubagentRuntime = {

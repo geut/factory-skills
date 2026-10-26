@@ -234,7 +234,8 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'Usage so far (the controller adds wrap-up after you finish; do not estimate it):',
         input.usage,
         '',
-        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, and you must not change product code or merge.',
+        'The human reviews the diff with notes taken from your handoff. Write each ## Files line as - `path` — what changed there and why, backticking only the path, and end a decision with the lines that show it, as `(src/filter.ts:12-40)`.',
+        'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, a decision may cite only lines of a changed file, and you must not change product code or merge.',
         input.pullRequests
           ? 'codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD.'
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',

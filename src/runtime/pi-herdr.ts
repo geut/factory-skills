@@ -326,7 +326,7 @@ export function renderPaneScript(input: {
   const command =
     input.target.kind === 'session'
       ? `${shellQuote(input.piBin)} --session ${shellQuote(input.target.sessionFile)}`
-      : `command -v ${hunk} >/dev/null 2>&1 && exec ${hunk} patch ${shellQuote(input.target.file)} --agent-notes
+      : `command -v ${hunk} >/dev/null 2>&1 && exec ${hunk} patch ${shellQuote(input.target.file)} --agent-notes${input.target.notes === null ? '' : ` --agent-context ${shellQuote(input.target.notes)}`}
 exec ${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
   return `#!/usr/bin/env bash
 trap '' TSTP

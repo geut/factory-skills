@@ -13,7 +13,15 @@ Plain pull-request summary. Explicit non-goals.
 
 ## Files
 
-Added, modified, and removed paths.
+Added:
+
+- `src/filter.ts` — keeps the filter in the URL, so a reload restores it
+
+Modified:
+
+- `src/catalog.ts` — reads the filter on load
+
+Removed: none.
 
 ## Tests
 
@@ -26,7 +34,7 @@ Commands, results, and anything not run. Include E2E or the human path.
 
 ## Decisions
 
-- Streamed events with fetch instead of EventSource, to send the auth header.
+- Streamed events with fetch instead of EventSource, to send the auth header (src/lib/events.ts:12-40).
 
 ## Operations
 
@@ -43,10 +51,12 @@ When the pull request was opened or updated, its URL. Otherwise, exact commit, p
 
 `## Issue checklist` has one line per open box the prompt lists (`B1`, `B2`, ...), or `none` when it lists none. A box is `met` only with evidence: a task criterion that proves it, as `Task 01 AC2`, which review verified or QA's test plan covers, or a file in the worktree. Leave a box `not_met`, with the reason, when it is not done or an open review finding names a criterion it rests on, minor findings included.
 
-`## Decisions` is `none` or bullet points: choices made during the ticket that changed the issue's approach, as a reader of the issue needs them. Not a recap of the work.
+`## Decisions` is `none` or bullet points: choices made during the ticket that changed the issue's approach, as a reader of the issue needs them. Not a recap of the work. End a decision with the changed lines that show it, as `(path:start-end)`, when there are some.
+
+`## Files` names each path in backticks, then a dash and what changed there and why, in one line. Backtick only the path. The human reads these lines, and each decision, as notes beside the diff.
 
 The controller ticks the met boxes on the issue and posts one comment with the decisions and the boxes left open. It only ticks boxes; the rest of the issue stays as it is.
 
-In a controller run, the controller validates this handoff against the repository before the ticket is ready for handoff: every heading is present, every open box has one `## Issue checklist` line backed as above, `## Files` lists every changed path in the worktree and no other, `## Tests` names each configured validation command, and `## Merge commands` holds a pull-request URL or commands with the real worktree path and branch. With `codeHost.pullRequests` on, a commit holds only `## Files` paths, sits on top of the commit wrap-up started from with no merge, leaves the worktree clean, and is the head of the reported pull request. A failed check comes back to you with the exact failures.
+In a controller run, the controller validates this handoff against the repository before the ticket is ready for handoff: every heading is present, every open box has one `## Issue checklist` line backed as above, `## Files` lists every changed path in the worktree and no other, a decision cites only lines of a changed file, `## Tests` names each configured validation command, and `## Merge commands` holds a pull-request URL or commands with the real worktree path and branch. With `codeHost.pullRequests` on, a commit holds only `## Files` paths, sits on top of the commit wrap-up started from with no merge, leaves the worktree clean, and is the head of the reported pull request. A failed check comes back to you with the exact failures.
 
 After the template, call `subagent_done` and emit nothing else.
