@@ -494,7 +494,9 @@ test('github umbrella issues do not create an execution', async () => {
       updatedAt: null,
       url: 'https://github.com/geut/factory-skills/issues/6',
     }),
-    listSubIssues: () => [{ body: '', number: 7, title: 'Concrete slice', url: null }],
+    listSubIssues: () => [
+      { body: '', number: 7, state: 'open' as const, title: 'Concrete slice', url: null },
+    ],
   };
   const service = createFactoryService({ codeRoot, factoryRoot, github: umbrella, runtime });
   const text = await service.command('start #6');

@@ -75,6 +75,7 @@ async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
               {
                 body: '',
                 number: 3,
+                state: 'open',
                 title: 'Schema first',
                 url: 'https://github.com/geut/factory-skills/issues/3',
               },
@@ -85,7 +86,9 @@ async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
         return issues;
       },
       listSubIssues: (input) =>
-        input.number === 9 ? [{ body: '', number: 10, title: 'Slice', url: null }] : [],
+        input.number === 9
+          ? [{ body: '', number: 10, state: 'open' as const, title: 'Slice', url: null }]
+          : [],
       ...github,
     },
     out: () => undefined,

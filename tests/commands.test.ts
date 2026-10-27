@@ -177,7 +177,9 @@ test('repeating a command with the same Idempotency-Key applies it once', async 
 
 test('problems found before anything starts come back as typed 4xx', async () => {
   const umbrella = await factory({
-    listSubIssues: () => [{ body: '', number: 8, title: 'Child', url: null }],
+    listSubIssues: () => [
+      { body: '', number: 8, state: 'open' as const, title: 'Child', url: null },
+    ],
   });
   const refused = await post(umbrella, '/v1/tickets', { ref: 'geut/factory-skills#7' });
   assert.equal(refused.status, 422);
