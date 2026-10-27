@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
+  RUN_PURPOSES,
   actionId,
   attentionId,
   executionId,
@@ -255,15 +256,6 @@ function optionalOneOf<T extends string>(
 
 const taskStatuses = ['pending', 'active', 'done', 'blocked', 'cancelled'] as const;
 const sessionStatuses = ['prepared', 'open', 'completed', 'abandoned'] as const;
-const runPurposes = [
-  'initial',
-  'validation_correction',
-  'human_reply',
-  'return_to_work',
-  'reentry',
-  'manual_continue',
-  'infrastructure_retry',
-] as const;
 const resultStatuses = ['pending', 'valid', 'invalid'] as const;
 const runStatuses = ['prepared', 'starting', 'running', 'terminal'] as const;
 const terminalKinds = [
@@ -731,7 +723,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
         paneId: nullableText(record, 'pane_id'),
         paneName: nullableText(record, 'pane_name'),
         parentRunId: parent === null ? null : runId(parent),
-        purpose: oneOf(text(record, 'purpose'), runPurposes, 'run purpose'),
+        purpose: oneOf(text(record, 'purpose'), RUN_PURPOSES, 'run purpose'),
         resultContract: nullableText(record, 'result_contract'),
         resultError: nullableText(record, 'result_error'),
         resultHash: nullableText(record, 'result_hash'),

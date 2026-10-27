@@ -15,10 +15,9 @@ import {
   type ExecutionStatus,
   type FactorySnapshot,
   type RunRecord,
-  type StageName,
 } from '../domain.ts';
 import { runAssistantText } from '../runtime/session-activity.ts';
-import { stages } from '../stages/index.ts';
+import { stageNames } from '../stages/index.ts';
 import { ProblemError } from './problem.ts';
 import { defineRoute, type ApiContext } from './route.ts';
 import { TicketKey, TicketParams } from './schemas.ts';
@@ -39,7 +38,6 @@ const executionStatuses = [
   'cancelled',
 ] as const satisfies ReadonlyArray<ExecutionStatus>;
 
-const stageNames = Object.keys(stages) as [StageName, ...Array<StageName>];
 const ticketStages = [...stageNames, 'done'] as const;
 
 const DEFAULT_LIMIT = 50;

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { RUN_PURPOSES, type StageName } from '../domain.ts';
-import { stages } from '../stages/index.ts';
+import { RUN_PURPOSES } from '../domain.ts';
+import { stageNames } from '../stages/index.ts';
 import {
   factoryVersionsSeen,
   runFacts,
@@ -172,10 +172,8 @@ const TicketRow = z
   })
   .meta({ id: 'StatsTicketRow' });
 
-const stageNames = Object.keys(stages) as [StageName, ...Array<StageName>];
-
-// The lines of /v1/stats/export. NDJSON has no schema of its own in OpenAPI,
-// so these are named components clients type their parsed lines with.
+// The lines of /v1/stats/export, named so clients can type the lines they
+// parse.
 export const StatsExportTicketLine = TicketRow.extend({
   definitions: Envelope.definitions,
   factoryId: Envelope.factoryId,
@@ -399,9 +397,11 @@ const exportRoute = defineRoute({
   responses: {
     200: {
       description:
-        'NDJSON: one StatsExportTicketLine per ticket (`type: "ticket"`), then one StatsExportRunLine per run (`type: "run"`); both are in components.schemas. Run lines carry `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
+        'NDJSON: one StatsExportTicketLine per ticket (`type: "ticket"`), then one StatsExportRunLine per run (`type: "run"`); the schema is that of one line. Run lines carry `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
       mediaType: 'application/x-ndjson',
-      schema: z.string(),
+      // NDJSON has no item schema in OpenAPI 3.1; by convention this is the
+      // schema of one line.
+      schema: z.discriminatedUnion('type', [StatsExportTicketLine, StatsExportRunLine]),
     },
   },
   scope: 'read',
