@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { RUN_PURPOSES } from '../domain.ts';
+import { stageNames } from '../stages/index.ts';
 import {
   factoryVersionsSeen,
   runFacts,
@@ -170,6 +172,47 @@ const TicketRow = z
   })
   .meta({ id: 'StatsTicketRow' });
 
+// The lines of /v1/stats/export, named so clients can type the lines they
+// parse.
+export const StatsExportTicketLine = TicketRow.extend({
+  definitions: Envelope.definitions,
+  factoryId: Envelope.factoryId,
+  type: z.literal('ticket'),
+}).meta({ id: 'StatsExportTicketLine' });
+
+export const StatsExportRunLine = z
+  .object({
+    agentMs: nullableNumber,
+    configuration: z
+      .string()
+      .meta({ description: "The run's ticket configuration, as on its ticket line." }),
+    costUsd: z.number(),
+    definitions: Envelope.definitions,
+    execution: z.string(),
+    factoryId: Envelope.factoryId,
+    factoryVersion: z.string().nullable(),
+    infrastructureLost: z.boolean(),
+    model: z.string(),
+    passed: z.boolean().nullable().meta({
+      description: "Whether validation accepted the run's output; null when not validated.",
+    }),
+    purpose: z.enum(RUN_PURPOSES),
+    returnedFrom: z
+      .enum(stageNames)
+      .nullable()
+      .meta({ description: 'For a return to work, the stage that sent the task back.' }),
+    round: z.int(),
+    run: z.string(),
+    setup: z.string().meta({ description: 'The model setup: model and thinking level.' }),
+    stage: z.enum(stageNames),
+    task: z.string().nullable(),
+    thinking: z.string(),
+    tokens: z.int(),
+    ...tokenCategoryFields,
+    type: z.literal('run'),
+  })
+  .meta({ id: 'StatsExportRunLine' });
+
 function database(context: ApiContext): DatabaseSync {
   if (context.db === null) {
     throw new ProblemError('internal_error', 'The server has no database.');
@@ -323,22 +366,25 @@ const exportRoute = defineRoute({
       stream: (response) => {
         response.writeHead(200, { 'content-type': 'application/x-ndjson' });
         for (const ticket of tickets) {
-          response.write(
-            `${JSON.stringify({ definitions: envelope.definitions, factoryId: envelope.factoryId, type: 'ticket', ...ticket })}\n`,
-          );
+          const line: z.input<typeof StatsExportTicketLine> = {
+            definitions: STATS_DEFINITIONS,
+            factoryId: envelope.factoryId,
+            type: 'ticket',
+            ...ticket,
+          };
+          response.write(`${JSON.stringify(line)}\n`);
         }
         for (const run of runs) {
           const ticket = byExecution.get(run.execution);
-          response.write(
-            `${JSON.stringify({
-              configuration: ticket?.configuration ?? '',
-              definitions: envelope.definitions,
-              factoryId: envelope.factoryId,
-              factoryVersion: ticket?.factoryVersion ?? null,
-              type: 'run',
-              ...run,
-            })}\n`,
-          );
+          const line: z.input<typeof StatsExportRunLine> = {
+            configuration: ticket?.configuration ?? '',
+            definitions: STATS_DEFINITIONS,
+            factoryId: envelope.factoryId,
+            factoryVersion: ticket?.factoryVersion ?? null,
+            type: 'run',
+            ...run,
+          };
+          response.write(`${JSON.stringify(line)}\n`);
         }
         response.end();
       },
@@ -351,9 +397,11 @@ const exportRoute = defineRoute({
   responses: {
     200: {
       description:
-        'NDJSON: one StatsTicketRow per line with `type: "ticket"`, then one run row per line with `type: "run"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
+        'NDJSON: one StatsExportTicketLine per ticket (`type: "ticket"`), then one StatsExportRunLine per run (`type: "run"`); the schema is that of one line. Run lines carry `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
       mediaType: 'application/x-ndjson',
-      schema: z.string(),
+      // NDJSON has no item schema in OpenAPI 3.1; by convention this is the
+      // schema of one line.
+      schema: z.discriminatedUnion('type', [StatsExportTicketLine, StatsExportRunLine]),
     },
   },
   scope: 'read',

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { factoryIdentity } from '../controller/facts.ts';
 import { keyOfFactoryDir } from '../controller/keys.ts';
+import type { RunPurpose, StageName } from '../domain.ts';
 
 // Fact rows for factory stats, `stats.v1`, computed on every read from the raw
 // tables (status history, runs, usage, pull requests). Nothing is stored
@@ -26,13 +27,14 @@ export type RunFacts = {
   model: string;
   // Whether validation accepted this run's output.
   passed: boolean | null;
-  purpose: string;
-  returnedFrom: string | null;
+  purpose: RunPurpose;
+  // For a return to work, the stage that sent the task back.
+  returnedFrom: StageName | null;
   round: number;
   run: string;
   // `model` plus thinking level, such as `anthropic/claude · high`.
   setup: string;
-  stage: string;
+  stage: StageName;
   task: string | null;
   thinking: string;
   tokens: number;
@@ -163,12 +165,13 @@ export function runFacts(db: DatabaseSync, executions: Array<string>): Array<Run
           (terminal !== null && INFRASTRUCTURE.has(terminal)),
         model,
         passed: validation === null ? null : validation === 'passed',
-        purpose: String(item['purpose']),
-        returnedFrom: item['purpose'] === 'return_to_work' ? str(item['origin']) : null,
+        purpose: String(item['purpose']) as RunPurpose,
+        returnedFrom:
+          item['purpose'] === 'return_to_work' ? (str(item['origin']) as StageName | null) : null,
         round: Number(item['semantic_round']),
         run: String(item['id']),
         setup: setupOf(model, thinking),
-        stage: String(item['stage']),
+        stage: String(item['stage']) as StageName,
         task: str(item['task_id']),
         thinking,
         tokens: Number(item['tokens_total'] ?? 0),

@@ -17,6 +17,9 @@ export const stages = { plan, qa, review, work, wrapup } satisfies {
   [S in StageName]: { name: S };
 };
 
+// The stage names, in registry order, for enums.
+export const stageNames = Object.keys(stages) as [StageName, ...Array<StageName>];
+
 // Every stage's FACTORY.json limits, by key.
 export const stageLimits = { ...planLimits, ...qaLimits, ...reviewLimits, ...workLimits };
 

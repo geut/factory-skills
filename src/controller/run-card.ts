@@ -24,23 +24,47 @@ import {
   taskNumber,
 } from './progress.ts';
 
-// Words for what a finished run led to, not for the run itself: a review run
-// that ended is `approved`, never `done`.
-export type RunOutcome =
-  | 'approved'
-  | 'blocked'
-  | 'changes requested'
-  | 'correcting'
-  | 'diff changed'
-  | 'failed'
-  | 'finished'
-  | 'paused'
-  | 'planned'
-  | 'ready for handoff'
-  | 'ready for review'
-  | 'retrying'
-  | 'running'
-  | 'waiting for you';
+// What a finished run led to, not the run itself: a review run that ended is
+// `approved`, never `done`. These are stable keys; `outcomeLabel` words them.
+export const RUN_OUTCOMES = [
+  'approved',
+  'blocked',
+  'changes_requested',
+  'correcting',
+  'diff_changed',
+  'failed',
+  'finished',
+  'paused',
+  'planned',
+  'ready_for_handoff',
+  'ready_for_review',
+  'retrying',
+  'running',
+  'waiting_for_user',
+] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
+
+const outcomeLabels: Record<RunOutcome, string> = {
+  approved: 'approved',
+  blocked: 'blocked',
+  changes_requested: 'changes requested',
+  correcting: 'correcting',
+  diff_changed: 'diff changed',
+  failed: 'failed',
+  finished: 'finished',
+  paused: 'paused',
+  planned: 'planned',
+  ready_for_handoff: 'ready for handoff',
+  ready_for_review: 'ready for review',
+  retrying: 'retrying',
+  running: 'running',
+  waiting_for_user: 'waiting for you',
+};
+
+// The words a status card uses for an outcome.
+export function outcomeLabel(outcome: RunOutcome): string {
+  return outcomeLabels[outcome];
+}
 
 export type RunStage = StageName;
 
@@ -56,7 +80,7 @@ export function purposeSegment(run: Pick<RunRecord, 'purpose' | 'semanticRound'>
 const verdictOutcomes: Record<ReviewVerdict, RunOutcome> = {
   approve: 'approved',
   blocked: 'blocked',
-  changes_requested: 'changes requested',
+  changes_requested: 'changes_requested',
 };
 
 export function classifyRun(input: {
@@ -75,7 +99,7 @@ export function classifyRun(input: {
     return 'running';
   }
   if (input.terminalKind === 'caller_ping') {
-    return 'waiting for you';
+    return 'waiting_for_user';
   }
   if (input.terminalKind !== 'subagent_done') {
     return input.retryScheduled ? 'retrying' : 'failed';
@@ -84,7 +108,7 @@ export function classifyRun(input: {
     return 'correcting';
   }
   if (input.stale) {
-    return 'diff changed';
+    return 'diff_changed';
   }
   if (input.limitPaused) {
     return 'paused';
@@ -93,11 +117,11 @@ export function classifyRun(input: {
     case 'plan':
       return 'planned';
     case 'work':
-      return 'ready for review';
+      return 'ready_for_review';
     case 'review':
       return input.verdict === null ? 'correcting' : verdictOutcomes[input.verdict];
     case 'wrapup':
-      return input.handoff === true ? 'ready for handoff' : 'finished';
+      return input.handoff === true ? 'ready_for_handoff' : 'finished';
     default:
       return 'finished';
   }
@@ -108,17 +132,17 @@ export function outcomeTone(outcome: RunOutcome): CardTone {
     case 'approved':
     case 'finished':
     case 'planned':
-    case 'ready for handoff':
-    case 'ready for review':
+    case 'ready_for_handoff':
+    case 'ready_for_review':
       return 'done';
     case 'blocked':
-    case 'diff changed':
+    case 'diff_changed':
     case 'paused':
-    case 'waiting for you':
+    case 'waiting_for_user':
       return 'attention';
     case 'failed':
       return 'failed';
-    case 'changes requested':
+    case 'changes_requested':
     case 'correcting':
     case 'retrying':
     case 'running':
@@ -236,7 +260,7 @@ export function runListLabel(snapshot: FactorySnapshot, run: RunRecord): string 
     task === null ? null : taskNumber(snapshot, task),
     round === null ? null : `r${round}`,
     purposeSegment(run),
-    runOutcome(snapshot, run),
+    outcomeLabel(runOutcome(snapshot, run)),
   ]
     .filter((part) => part !== null && part.length > 0)
     .join(' · ');
@@ -260,7 +284,7 @@ function reviewItems(run: RunRecord, outcome: RunOutcome): Array<string> {
     return [];
   }
   const summary = verificationSummary(parsed.result);
-  const stopping = outcome === 'changes requested' || outcome === 'blocked' || outcome === 'paused';
+  const stopping = outcome === 'changes_requested' || outcome === 'blocked' || outcome === 'paused';
   return [
     ...(summary === null ? [] : [summary]),
     ...(stopping ? parsed.result.findings : [])
@@ -285,7 +309,7 @@ export function runCard(snapshot: FactorySnapshot, run: RunRecord, summary: stri
     displayRef: snapshot.ticket.displayRef,
     items: planned ? planItems(snapshot) : stage === 'review' ? reviewItems(run, outcome) : [],
     next: tone === 'attention' || tone === 'failed' ? nextAction(snapshot) : null,
-    outcome: purpose === null ? outcome : `${purpose} · ${outcome}`,
+    outcome: purpose === null ? outcomeLabel(outcome) : `${purpose} · ${outcomeLabel(outcome)}`,
     progress: progressText(snapshot),
     round: runRound(snapshot, run),
     stage,

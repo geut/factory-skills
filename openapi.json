@@ -1069,11 +1069,26 @@
         ],
         "responses": {
           "200": {
-            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
+            "description": "NDJSON: one StatsExportTicketLine per ticket (`type: \"ticket\"`), then one StatsExportRunLine per run (`type: \"run\"`); the schema is that of one line. Run lines carry `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/StatsExportTicketLine"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StatsExportRunLine"
+                    }
+                  ],
+                  "type": "object",
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "ticket": "#/components/schemas/StatsExportTicketLine",
+                      "run": "#/components/schemas/StatsExportRunLine"
+                    }
+                  }
                 }
               }
             }
@@ -2656,10 +2671,39 @@
           },
           "outcome": {
             "type": "string",
-            "description": "What the run led to, as the status cards say it."
+            "description": "What the run led to, as the status cards say it. Display text: map on outcomeKind."
+          },
+          "outcomeKind": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "blocked",
+              "changes_requested",
+              "correcting",
+              "diff_changed",
+              "failed",
+              "finished",
+              "paused",
+              "planned",
+              "ready_for_handoff",
+              "ready_for_review",
+              "retrying",
+              "running",
+              "waiting_for_user"
+            ],
+            "description": "What the run led to, as a stable key."
           },
           "purpose": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "initial",
+              "validation_correction",
+              "human_reply",
+              "return_to_work",
+              "reentry",
+              "manual_continue",
+              "infrastructure_retry"
+            ]
           },
           "review": {
             "anyOf": [
@@ -2759,6 +2803,7 @@
           "id",
           "model",
           "outcome",
+          "outcomeKind",
           "purpose",
           "review",
           "round",
@@ -3964,6 +4009,444 @@
           "tokensInput",
           "tokensOutput",
           "waitingMs"
+        ],
+        "additionalProperties": false
+      },
+      "StatsExportTicketLine": {
+        "type": "object",
+        "properties": {
+          "agentMs": {
+            "type": "number"
+          },
+          "configuration": {
+            "type": "string"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "displayRef": {
+            "type": "string"
+          },
+          "execution": {
+            "type": "string"
+          },
+          "externalReviewRounds": {
+            "type": "object",
+            "properties": {
+              "bot": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "changesRequested": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "commented": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "human": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "bot",
+              "changesRequested",
+              "commented",
+              "human",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "factoryMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "factoryVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "followUpCommits": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "handedOffAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoffToMergeMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "interventions": {
+            "$ref": "#/components/schemas/Interventions"
+          },
+          "key": {
+            "type": "string"
+          },
+          "leadMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mergedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "abandoned",
+              "cancelled",
+              "merged",
+              "open",
+              "unknown"
+            ]
+          },
+          "overheadMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stageMs": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "startToHandoffMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Output tokens; null when usage is unknown."
+          },
+          "waitingMs": {
+            "type": "number"
+          },
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "ticket"
+          }
+        },
+        "required": [
+          "agentMs",
+          "configuration",
+          "costUsd",
+          "displayRef",
+          "execution",
+          "externalReviewRounds",
+          "factoryMs",
+          "factoryVersion",
+          "followUpCommits",
+          "handedOffAt",
+          "handoffToMergeMs",
+          "interventions",
+          "key",
+          "leadMs",
+          "mergedAt",
+          "outcome",
+          "overheadMs",
+          "stageMs",
+          "startedAt",
+          "startToHandoffMs",
+          "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
+          "waitingMs",
+          "definitions",
+          "factoryId",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "StatsExportRunLine": {
+        "type": "object",
+        "properties": {
+          "agentMs": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "configuration": {
+            "type": "string",
+            "description": "The run's ticket configuration, as on its ticket line."
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "definitions": {
+            "type": "string",
+            "const": "stats.v1"
+          },
+          "execution": {
+            "type": "string"
+          },
+          "factoryId": {
+            "type": "string"
+          },
+          "factoryVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "infrastructureLost": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "passed": {
+            "description": "Whether validation accepted the run's output; null when not validated.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "validation_correction",
+              "human_reply",
+              "return_to_work",
+              "reentry",
+              "manual_continue",
+              "infrastructure_retry"
+            ]
+          },
+          "returnedFrom": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "plan",
+                  "qa",
+                  "review",
+                  "work",
+                  "wrapup"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For a return to work, the stage that sent the task back."
+          },
+          "round": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "string"
+          },
+          "setup": {
+            "type": "string",
+            "description": "The model setup: model and thinking level."
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup"
+            ]
+          },
+          "task": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Output tokens; null when usage is unknown."
+          },
+          "type": {
+            "type": "string",
+            "const": "run"
+          }
+        },
+        "required": [
+          "agentMs",
+          "configuration",
+          "costUsd",
+          "definitions",
+          "execution",
+          "factoryId",
+          "factoryVersion",
+          "infrastructureLost",
+          "model",
+          "passed",
+          "purpose",
+          "returnedFrom",
+          "round",
+          "run",
+          "setup",
+          "stage",
+          "task",
+          "thinking",
+          "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
+          "type"
         ],
         "additionalProperties": false
       },

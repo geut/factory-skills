@@ -144,16 +144,18 @@ export type ExecutionStatus =
 export type TaskStatus = 'pending' | 'active' | 'done' | 'blocked' | 'cancelled';
 export type SessionStatus = 'prepared' | 'open' | 'completed' | 'abandoned';
 export type RunStatus = 'prepared' | 'starting' | 'running' | 'terminal';
-export type RunPurpose =
-  | 'initial'
-  | 'validation_correction'
-  | 'human_reply'
+export const RUN_PURPOSES = [
+  'initial',
+  'validation_correction',
+  'human_reply',
   // Work fixing what a later stage found; `origin` names that stage.
-  | 'return_to_work'
+  'return_to_work',
   // A later stage running again on a task whose work was returned.
-  | 'reentry'
-  | 'manual_continue'
-  | 'infrastructure_retry';
+  'reentry',
+  'manual_continue',
+  'infrastructure_retry',
+] as const;
+export type RunPurpose = (typeof RUN_PURPOSES)[number];
 export type TerminalKind =
   | 'subagent_done'
   | 'caller_ping'
