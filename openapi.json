@@ -1069,7 +1069,7 @@
         ],
         "responses": {
           "200": {
-            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`. Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
+            "description": "NDJSON: one StatsTicketRow per line with `type: \"ticket\"`, then one run row per line with `type: \"run\"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory's export can be compared row by row.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
@@ -3524,6 +3524,63 @@
           "thinking": {
             "type": "string"
           },
+          "tokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Output tokens; null when usage is unknown."
+          },
           "tokensPerAcceptedOutput": {
             "type": [
               "number",
@@ -3545,6 +3602,11 @@
           "setup",
           "stage",
           "thinking",
+          "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
           "tokensPerAcceptedOutput"
         ],
         "additionalProperties": false
@@ -3819,6 +3881,58 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
+          "tokensCacheRead": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cached input read, in tokens; null when usage is unknown."
+          },
+          "tokensCacheWrite": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input written to the cache, in tokens; null when usage is unknown."
+          },
+          "tokensInput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Input tokens, excluding cached input; null when usage is unknown."
+          },
+          "tokensOutput": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Output tokens; null when usage is unknown."
+          },
           "waitingMs": {
             "type": "number"
           }
@@ -3845,6 +3959,10 @@
           "startedAt",
           "startToHandoffMs",
           "tokens",
+          "tokensCacheRead",
+          "tokensCacheWrite",
+          "tokensInput",
+          "tokensOutput",
           "waitingMs"
         ],
         "additionalProperties": false

@@ -1,4 +1,4 @@
-import type { RunFacts, TicketFacts } from './facts.ts';
+import type { RunFacts, TicketFacts, TokenCategories } from './facts.ts';
 
 // Aggregates over fact rows. See docs/stats-v1.md for each definition.
 
@@ -109,6 +109,11 @@ export function stageMeasures(runs: Array<RunFacts>) {
       const accepted = group.filter((run) => run.passed === true).length;
       const corrections = group.filter((run) => run.purpose === 'validation_correction').length;
       const tokens = group.reduce((sum, run) => sum + run.tokens, 0);
+      // A category totals the runs whose usage is known; null when none is.
+      const category = (key: keyof TokenCategories) => {
+        const known = group.flatMap((run) => (run[key] === null ? [] : [run[key]]));
+        return known.length === 0 ? null : known.reduce((sum, value) => sum + value, 0);
+      };
       const cost = group.reduce((sum, run) => sum + run.costUsd, 0);
       const returns: Record<string, number> = {};
       for (const run of group) {
@@ -146,6 +151,11 @@ export function stageMeasures(runs: Array<RunFacts>) {
         setup: first?.setup ?? '',
         stage: first?.stage ?? '',
         thinking: first?.thinking ?? '',
+        tokens,
+        tokensCacheRead: category('tokensCacheRead'),
+        tokensCacheWrite: category('tokensCacheWrite'),
+        tokensInput: category('tokensInput'),
+        tokensOutput: category('tokensOutput'),
         tokensPerAcceptedOutput: ratio(tokens, accepted),
       };
     })

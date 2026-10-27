@@ -36,6 +36,15 @@ export type RunFacts = {
   task: string | null;
   thinking: string;
   tokens: number;
+} & TokenCategories;
+
+// Token usage by category, null when the usage was never recorded. See
+// docs/stats-v1.md for how they relate to `tokens`.
+export type TokenCategories = {
+  tokensCacheRead: number | null;
+  tokensCacheWrite: number | null;
+  tokensInput: number | null;
+  tokensOutput: number | null;
 };
 
 export type TicketFacts = {
@@ -75,7 +84,7 @@ export type TicketFacts = {
   startToHandoffMs: number | null;
   tokens: number;
   waitingMs: number;
-};
+} & TokenCategories;
 
 type Interval = {
   endedAt: string | null;
@@ -105,6 +114,19 @@ export function setupOf(model: string, thinking: string): string {
   return thinking.length > 0 ? `${model} · ${thinking}` : model;
 }
 
+// The token categories of a usage row (`tokens_input` and so on), or nulls when
+// it has no `tokens_total`: no usage was recorded.
+function tokenCategories(row: Record<string, unknown>): TokenCategories {
+  const known = row['tokens_total'] !== null && row['tokens_total'] !== undefined;
+  const count = (column: string) => (known ? Number(row[column] ?? 0) : null);
+  return {
+    tokensCacheRead: count('tokens_cache_read'),
+    tokensCacheWrite: count('tokens_cache_write'),
+    tokensInput: count('tokens_input'),
+    tokensOutput: count('tokens_output'),
+  };
+}
+
 export function runFacts(db: DatabaseSync, executions: Array<string>): Array<RunFacts> {
   if (executions.length === 0) {
     return [];
@@ -114,7 +136,10 @@ export function runFacts(db: DatabaseSync, executions: Array<string>): Array<Run
     .prepare(
       `SELECT r.id, r.execution_id, r.purpose, r.origin, r.semantic_round, r.terminal_kind,
               r.started_at, r.ended_at, s.stage, s.task_id, s.model, s.thinking,
-              u.delta_tokens_total, u.delta_cost_usd_micros,
+              u.delta_tokens_input AS tokens_input, u.delta_tokens_output AS tokens_output,
+              u.delta_tokens_cache_read AS tokens_cache_read,
+              u.delta_tokens_cache_write AS tokens_cache_write,
+              u.delta_tokens_total AS tokens_total, u.delta_cost_usd_micros,
               (SELECT v.status FROM validation_runs AS v WHERE v.run_id = r.id
                ORDER BY v.attempt DESC LIMIT 1) AS validation
        FROM agent_runs AS r
@@ -146,7 +171,8 @@ export function runFacts(db: DatabaseSync, executions: Array<string>): Array<Run
         stage: String(item['stage']),
         task: str(item['task_id']),
         thinking,
-        tokens: Number(item['delta_tokens_total'] ?? 0),
+        tokens: Number(item['tokens_total'] ?? 0),
+        ...tokenCategories(item),
       };
     });
 }
@@ -196,6 +222,7 @@ export function ticketFacts(
       `SELECT e.id, e.stage, e.status, e.status_reason_code, e.created_at, e.factory_dir,
               e.factory_version, t.source_payload,
               pr.state AS pr_state, pr.merged_at, pr.author AS pr_author,
+              u.tokens_input, u.tokens_output, u.tokens_cache_read, u.tokens_cache_write,
               u.tokens_total, u.cost_usd_micros
        FROM ticket_executions AS e
        JOIN tickets AS t ON t.id = e.ticket_id
@@ -338,6 +365,7 @@ export function ticketFacts(
       startedAt,
       startToHandoffMs,
       tokens: Number(row['tokens_total'] ?? 0),
+      ...tokenCategories(row),
       waitingMs,
     };
   });

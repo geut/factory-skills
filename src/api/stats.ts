@@ -28,6 +28,22 @@ const Envelope = {
 
 const nullableNumber = z.number().nullable();
 
+const nullableInt = z.int().nullable();
+
+// The token categories beside `tokens`, as docs/stats-v1.md defines them.
+const tokenCategoryFields = {
+  tokensCacheRead: nullableInt.meta({
+    description: 'Cached input read, in tokens; null when usage is unknown.',
+  }),
+  tokensCacheWrite: nullableInt.meta({
+    description: 'Input written to the cache, in tokens; null when usage is unknown.',
+  }),
+  tokensInput: nullableInt.meta({
+    description: 'Input tokens, excluding cached input; null when usage is unknown.',
+  }),
+  tokensOutput: nullableInt.meta({ description: 'Output tokens; null when usage is unknown.' }),
+};
+
 const Interventions = z
   .object({
     limitPauses: z.int(),
@@ -99,6 +115,8 @@ const StageRow = z
     setup: z.string().meta({ description: 'The model setup: model and thinking level.' }),
     stage: z.string(),
     thinking: z.string(),
+    tokens: z.int(),
+    ...tokenCategoryFields,
     tokensPerAcceptedOutput: nullableNumber,
   })
   .meta({ id: 'StatsStageRow' });
@@ -147,6 +165,7 @@ const TicketRow = z
     startedAt: z.string(),
     startToHandoffMs: nullableNumber,
     tokens: z.int(),
+    ...tokenCategoryFields,
     waitingMs: z.number(),
   })
   .meta({ id: 'StatsTicketRow' });
@@ -332,7 +351,7 @@ const exportRoute = defineRoute({
   responses: {
     200: {
       description:
-        'NDJSON: one StatsTicketRow per line with `type: "ticket"`, then one run row per line with `type: "run"`. Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
+        'NDJSON: one StatsTicketRow per line with `type: "ticket"`, then one run row per line with `type: "run"`, carrying `tokens` and its categories (`tokensInput`, `tokensOutput`, `tokensCacheRead`, `tokensCacheWrite`, null when usage is unknown). Every line carries factoryId and definitions, so another factory\'s export can be compared row by row.',
       mediaType: 'application/x-ndjson',
       schema: z.string(),
     },

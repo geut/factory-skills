@@ -29,6 +29,7 @@ import {
   type Policy,
   type ResolvedTicket,
   type RunId,
+  zeroUsage,
 } from '../src/domain.ts';
 import { sha256 } from '../src/hash.ts';
 import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
@@ -36,7 +37,7 @@ import type { GithubClient } from '../src/ports/github.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
-import { runFacts, ticketFacts } from '../src/stats/facts.ts';
+import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
 import { git, initRepo } from './git-repo.ts';
 
@@ -2074,6 +2075,48 @@ test('external review rounds split commits that drew changes requested from thos
   const summary = summarize(facts);
   assert.equal(summary.externalReviewRounds.changesRequested, 1);
   assert.equal(summary.externalReviewRounds.commented, 1);
+  await closeWhenIdle(db);
+});
+
+// A row's token categories, in input, output, cache read, cache write order.
+function categories(row: TokenCategories | undefined) {
+  return [row?.tokensInput, row?.tokensOutput, row?.tokensCacheRead, row?.tokensCacheWrite];
+}
+
+test('stats facts break tokens into input, output, cache read, and cache write, and leave unknown usage null', async () => {
+  const { branch, db, runtime, service, wrapup } = await reachWrapup();
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: {
+      ...zeroUsage(),
+      cacheReadTokens: 11,
+      cacheWriteTokens: 13,
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 36,
+    },
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  const execution = ticket?.execution ?? '';
+  const wrapupRun = () => runFacts(db, [execution]).find((run) => run.run === wrapup.runId);
+  const stage = () =>
+    stageMeasures(runFacts(db, [execution])).find((row) => row.stage === 'wrapup');
+  // The categories are disjoint, so they add up to the run's tokens.
+  assert.deepEqual(categories(wrapupRun()), [5, 7, 11, 13]);
+  assert.equal(wrapupRun()?.tokens, 36);
+  assert.deepEqual(categories(stage()), [5, 7, 11, 13]);
+  assert.equal(stage()?.tokens, 36);
+  assert.equal(
+    categories(ticket).reduce((sum: number, value) => sum + (value ?? 0), 0),
+    ticket?.tokens,
+  );
+
+  // A run whose usage was never recorded has no categories, not zeros.
+  db.prepare('DELETE FROM usage_snapshots WHERE run_id = ?').run(wrapup.runId);
+  assert.deepEqual(categories(wrapupRun()), [null, null, null, null]);
+  assert.deepEqual(categories(stage()), [null, null, null, null]);
   await closeWhenIdle(db);
 });
 
