@@ -26,21 +26,23 @@ import {
 
 // Words for what a finished run led to, not for the run itself: a review run
 // that ended is `approved`, never `done`.
-export type RunOutcome =
-  | 'approved'
-  | 'blocked'
-  | 'changes requested'
-  | 'correcting'
-  | 'diff changed'
-  | 'failed'
-  | 'finished'
-  | 'paused'
-  | 'planned'
-  | 'ready for handoff'
-  | 'ready for review'
-  | 'retrying'
-  | 'running'
-  | 'waiting for you';
+export const RUN_OUTCOMES = [
+  'approved',
+  'blocked',
+  'changes requested',
+  'correcting',
+  'diff changed',
+  'failed',
+  'finished',
+  'paused',
+  'planned',
+  'ready for handoff',
+  'ready for review',
+  'retrying',
+  'running',
+  'waiting for you',
+] as const;
+export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
 export type RunStage = StageName;
 

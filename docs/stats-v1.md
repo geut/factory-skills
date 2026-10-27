@@ -59,12 +59,12 @@ All times are in milliseconds.
 
 ## Routes
 
-| Route                           | Returns                                                                            |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET /v1/stats/summary`         | Totals and medians for the window.                                                 |
-| `GET /v1/stats/stages`          | One row per stage and model setup.                                                 |
-| `GET /v1/stats/configurations`  | Ticket outcomes per factory configuration.                                         |
-| `GET /v1/stats/tickets?cursor=` | One fact row per ticket, paged.                                                    |
-| `GET /v1/stats/export`          | NDJSON: one `type: "ticket"` line per ticket, then one `type: "run"` line per run. |
+| Route                           | Returns                                                                                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/stats/summary`         | Totals and medians for the window.                                                                                                                                            |
+| `GET /v1/stats/stages`          | One row per stage and model setup.                                                                                                                                            |
+| `GET /v1/stats/configurations`  | Ticket outcomes per factory configuration.                                                                                                                                    |
+| `GET /v1/stats/tickets?cursor=` | One fact row per ticket, paged.                                                                                                                                               |
+| `GET /v1/stats/export`          | NDJSON: one `type: "ticket"` line per ticket, then one `type: "run"` line per run. Their shapes are `StatsExportTicketLine` and `StatsExportRunLine` in the OpenAPI document. |
 
 The export carries raw facts, not aggregates, so another factory's export can be compared row by row.

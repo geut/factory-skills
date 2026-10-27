@@ -15,6 +15,7 @@ import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createRouter } from '../src/api/router.ts';
 import { apiRoutes } from '../src/api/routes.ts';
+import { StatsExportRunLine, StatsExportTicketLine } from '../src/api/stats.ts';
 import { unusedCommands } from '../src/api/testing.ts';
 import { DEFAULT_LIMITS } from '../src/config.ts';
 import { factoryRootOf } from '../src/controller/keys.ts';
@@ -2189,6 +2190,10 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as { factoryId: string; type: string });
+  // Each line is exactly the schema the OpenAPI document publishes for it.
+  for (const line of lines) {
+    (line.type === 'ticket' ? StatsExportTicketLine : StatsExportRunLine).strict().parse(line);
+  }
   assert.equal(lines.filter((line) => line.type === 'ticket').length, 1);
   assert.ok(lines.filter((line) => line.type === 'run').length > 1);
   assert.ok(lines.every((line) => line.factoryId === summary.factoryId));

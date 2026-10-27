@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { needsUser, runVerdict, ticketProgress } from '../controller/progress.ts';
-import { runOutcome } from '../controller/run-card.ts';
+import { RUN_OUTCOMES, runOutcome } from '../controller/run-card.ts';
 import {
   listCurrentTicketRefs,
   loadCurrentByFactoryKey,
@@ -10,7 +10,13 @@ import {
   loadCurrentByTicketKey,
   ticketKeyOf,
 } from '../controller/store.ts';
-import type { ExecutionStatus, FactorySnapshot, RunRecord, StageName } from '../domain.ts';
+import {
+  RUN_PURPOSES,
+  type ExecutionStatus,
+  type FactorySnapshot,
+  type RunRecord,
+  type StageName,
+} from '../domain.ts';
 import { runAssistantText } from '../runtime/session-activity.ts';
 import { stages } from '../stages/index.ts';
 import { ProblemError } from './problem.ts';
@@ -238,8 +244,10 @@ const Run = z
     endedAt: z.string().nullable(),
     id: z.string(),
     model: z.string(),
-    outcome: z.string().meta({ description: 'What the run led to, as the status cards say it.' }),
-    purpose: z.string(),
+    outcome: z
+      .enum(RUN_OUTCOMES)
+      .meta({ description: 'What the run led to, as the status cards say it.' }),
+    purpose: z.enum(RUN_PURPOSES),
     review: Review.nullable(),
     round: z.int(),
     sequence: z.int(),

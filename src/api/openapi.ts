@@ -2,6 +2,7 @@ import { createDocument, type ZodOpenApiPathsObject } from 'zod-openapi';
 import { EventPayload } from './events.ts';
 import { Problem, PROBLEM_MEDIA_TYPE } from './problem.ts';
 import type { Route } from './route.ts';
+import { StatsExportRunLine, StatsExportTicketLine } from './stats.ts';
 
 // The API contract version. Breaking changes move to a new path prefix.
 export const API_VERSION = '1.0.0';
@@ -58,9 +59,9 @@ export function buildOpenApiDocument(routes: Array<Route>): Record<string, unkno
   }
   return createDocument({
     components: {
-      // OpenAPI 3.1 cannot type an event stream's items, so the payload is a
-      // named schema clients import by name.
-      schemas: { EventPayload },
+      // OpenAPI 3.1 cannot type an event stream's items or NDJSON lines, so
+      // they are named schemas clients import by name.
+      schemas: { EventPayload, StatsExportRunLine, StatsExportTicketLine },
       securitySchemes: {
         bearer: {
           description:
