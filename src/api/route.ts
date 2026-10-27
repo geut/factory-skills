@@ -31,7 +31,11 @@ export type Webhooks = {
 
 // `read` routes only look; `act` routes change tickets and include `read`.
 // A route without a scope needs no token.
-export type Scope = 'act' | 'read';
+export const SCOPES = ['act', 'read'] as const;
+export type Scope = (typeof SCOPES)[number];
+
+// Who a scoped request comes from, and what its token may do.
+export type Authorized = { actor: Actor; tokenScope: Scope };
 
 export type Method = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
 
@@ -60,8 +64,8 @@ export type RouteInput<
   // The body's bytes, for routes that ask for them with `raw`.
   rawBody: Buffer | null;
   request: IncomingMessage;
-  // The scope of the request's token; null on routes that need no token.
-  scope: Scope | null;
+  // What the request's token may do; null on routes that need no token.
+  tokenScope: Scope | null;
 };
 
 // A JSON answer, or a stream that writes the response itself, such as SSE.

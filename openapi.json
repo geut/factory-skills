@@ -1778,8 +1778,8 @@
           "scope": {
             "type": "string",
             "enum": [
-              "read",
-              "act"
+              "act",
+              "read"
             ],
             "description": "What the token may do: `read`, or `act`, which includes read. Routes still check it."
           }

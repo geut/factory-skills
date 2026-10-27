@@ -8,7 +8,7 @@ import {
   type Problem,
   type ProblemType,
 } from './problem.ts';
-import type { ApiContext, Route, Scope } from './route.ts';
+import type { ApiContext, Authorized, Route, Scope } from './route.ts';
 
 // Request bodies are small JSON commands.
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -17,10 +17,7 @@ export type RouterOptions = {
   // Decides who sent a request to a route with a scope: the actor and its
   // token's scope, or the problem to answer with. Without it, scoped routes
   // have no actor.
-  authorize?: (
-    request: IncomingMessage,
-    scope: Scope,
-  ) => { actor: Actor; scope: Scope } | { problem: Problem };
+  authorize?: (request: IncomingMessage, scope: Scope) => Authorized | { problem: Problem };
   context: ApiContext;
   // Unexpected errors, already answered with internal_error.
   onError?: (error: unknown) => void;
@@ -147,7 +144,7 @@ export function createRouter(
     const { route } = match.item;
 
     let actor: Actor | null = null;
-    let scope: Scope | null = null;
+    let tokenScope: Scope | null = null;
     if (route.scope !== null && options.authorize !== undefined) {
       const decided = options.authorize(request, route.scope);
       if ('problem' in decided) {
@@ -157,7 +154,7 @@ export function createRouter(
         return;
       }
       actor = decided.actor;
-      scope = decided.scope;
+      tokenScope = decided.tokenScope;
     }
 
     const rawParams = Object.fromEntries(
@@ -222,7 +219,7 @@ export function createRouter(
         query: query as Record<string, unknown>,
         rawBody: bytes,
         request,
-        scope,
+        tokenScope,
       });
     } catch (error: unknown) {
       if (error instanceof ProblemError) {
