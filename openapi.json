@@ -1847,7 +1847,7 @@
             "items": {
               "$ref": "#/components/schemas/FactoryStage"
             },
-            "description": "Every stage, in pipeline order."
+            "description": "Every stage, in flow order."
           }
         },
         "required": [
@@ -1872,7 +1872,8 @@
               "review",
               "work",
               "wrapup"
-            ]
+            ],
+            "description": "The stage. The stages array gives the order."
           },
           "optional": {
             "type": "boolean",

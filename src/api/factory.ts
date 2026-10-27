@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { factoryIdentity } from '../controller/facts.ts';
-import { pipeline, stageEnabled } from '../stages/flow.ts';
+import { flowOrder, stageEnabled } from '../stages/flow.ts';
 import { stageNames, stages } from '../stages/index.ts';
 import { ProblemError } from './problem.ts';
-import { defineRoute, type Route } from './route.ts';
+import { database, defineRoute, type Route } from './route.ts';
 
 // GET /v1/factory: what this factory is and which stages it runs, read from
 // FACTORY.json when asked, so a client can show only the stages that are on.
@@ -14,7 +14,7 @@ const FactoryStage = z
     enabled: z.boolean().meta({
       description: 'Whether new tickets run this stage: always for a required stage.',
     }),
-    name: z.enum(stageNames),
+    name: z.enum(stageNames).meta({ description: 'The stage. The stages array gives the order.' }),
     optional: z
       .boolean()
       .meta({ description: 'An optional stage runs only when FACTORY.json turns it on.' }),
@@ -26,28 +26,29 @@ const Factory = z
   .object({
     factoryId: z.string(),
     name: z.string().nullable().meta({ description: 'FACTORY.json `name`, when set.' }),
-    stages: z.array(FactoryStage).meta({ description: 'Every stage, in pipeline order.' }),
+    stages: z.array(FactoryStage).meta({ description: 'Every stage, in flow order.' }),
   })
   .meta({ id: 'Factory' });
 
 const factory = defineRoute({
   handler: ({ context }) => {
-    const read = context.factoryConfig?.() ?? null;
-    if (read === null || context.db === null) {
-      throw new ProblemError('internal_error', 'The server has no factory.');
+    if (context.factoryConfig === null) {
+      throw new ProblemError('internal_error', 'The server has no FACTORY.json.');
     }
+    const read = context.factoryConfig();
     if (read.kind === 'error') {
-      throw new ProblemError('internal_error', read.message);
+      // The message names the server's paths; the server log keeps it.
+      throw new Error(`GET /v1/factory: ${read.message}`);
     }
     return {
       body: {
-        factoryId: factoryIdentity(context.db).factoryId,
+        factoryId: factoryIdentity(database(context)).factoryId,
         name: read.config.name,
-        stages: pipeline.map(({ perTask, stage }) => ({
+        stages: flowOrder.map((stage) => ({
           enabled: stageEnabled(read.config, stage),
           name: stage,
           optional: stages[stage].optional,
-          perTask,
+          perTask: stages[stage].scope === 'task',
         })),
       },
       status: 200,

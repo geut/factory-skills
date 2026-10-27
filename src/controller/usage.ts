@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ExecutionId } from '../domain.ts';
-import { flow } from '../stages/flow.ts';
+import { flowOrder } from '../stages/flow.ts';
 import { stages as definitions } from '../stages/index.ts';
 
 // The all-stage usage table. Stage rows sum per-run deltas; the total comes
@@ -22,7 +22,7 @@ export type UsageRow = {
 };
 
 // Rows follow the flow, so every stage with sessions gets one.
-const stages = [...flow.ticket, ...flow.task, ...flow.closing].map((stage) => ({
+const stages = flowOrder.map((stage) => ({
   label: definitions[stage].label,
   stage,
 }));

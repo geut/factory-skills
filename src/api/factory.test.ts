@@ -51,7 +51,7 @@ const qa = (enabled: boolean) => ({
   qa: { commands: [{ argv: ['npm', 'run', 'e2e'], name: 'e2e' }], enabled },
 });
 
-test('the factory route lists every stage in pipeline order, and which are on', async () => {
+test('the factory route lists every stage in flow order, and which are on', async () => {
   const { base, factoryId } = await serveWith(config({ name: 'catalog', stages: qa(false) }));
   const response = await fetch(`${base}/v1/factory`);
   assert.equal(response.status, 200);
@@ -86,9 +86,12 @@ test('QA is on only when FACTORY.json enables it; with no settings it is off', a
   assert.deepEqual(await qaOf(config({})), { enabled: false, name: null });
 });
 
-test('a FACTORY.json the server cannot read is a problem, not a guess', async () => {
-  const { base } = await serveWith({ kind: 'error', message: 'FACTORY.json is not valid JSON.' });
+test('a FACTORY.json the server cannot read is a problem that keeps its paths in the server', async () => {
+  const { base } = await serveWith({
+    kind: 'error',
+    message: 'Missing /srv/app/.factory/FACTORY.json.',
+  });
   const response = await fetch(`${base}/v1/factory`);
   assert.equal(response.status, 500);
-  assert.match(((await response.json()) as { detail: string }).detail, /not valid JSON/);
+  assert.doesNotMatch(JSON.stringify(await response.json()), /\/srv\/app/);
 });

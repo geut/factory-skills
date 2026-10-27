@@ -6,6 +6,7 @@ import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { EventHub } from '../server/events.ts';
+import { ProblemError } from './problem.ts';
 
 // What a route may ask for while it handles a request.
 export type ApiContext = {
@@ -22,6 +23,14 @@ export type ApiContext = {
   // The code host side of webhooks; null where the server has none.
   webhooks: Webhooks | null;
 };
+
+// The server's connection, for routes that read it.
+export function database(context: ApiContext): DatabaseSync {
+  if (context.db === null) {
+    throw new ProblemError('internal_error', 'The server has no database.');
+  }
+  return context.db;
+}
 
 export type Webhooks = {
   // Updates the ticket of a pull request the code host reported changed, and

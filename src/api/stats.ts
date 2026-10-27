@@ -11,7 +11,7 @@ import {
 } from '../stats/facts.ts';
 import { configurationMeasures, stageMeasures, summarize } from '../stats/measures.ts';
 import { ProblemError } from './problem.ts';
-import { defineRoute, type ApiContext } from './route.ts';
+import { database, defineRoute } from './route.ts';
 
 // GET /v1/stats/*: factory stats, `stats.v1`. Every response names the
 // factory, the factory versions its tickets ran on, and the definitions, so
@@ -212,13 +212,6 @@ export const StatsExportRunLine = z
     type: z.literal('run'),
   })
   .meta({ id: 'StatsExportRunLine' });
-
-function database(context: ApiContext): DatabaseSync {
-  if (context.db === null) {
-    throw new ProblemError('internal_error', 'The server has no database.');
-  }
-  return context.db;
-}
 
 function facts(db: DatabaseSync, query: { from?: string | undefined; to?: string | undefined }) {
   const tickets = ticketFacts(db, {

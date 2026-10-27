@@ -18,12 +18,8 @@ export type Step =
   // Every stage is done: the person takes the ticket from here.
   | { kind: 'handoff' };
 
-// Every stage in the order a ticket meets it, and whether it runs per task.
-export const pipeline: ReadonlyArray<{ perTask: boolean; stage: StageName }> = [
-  ...flow.ticket.map((stage) => ({ perTask: false, stage })),
-  ...flow.task.map((stage) => ({ perTask: true, stage })),
-  ...flow.closing.map((stage) => ({ perTask: false, stage })),
-];
+// Every stage in the order a ticket meets it.
+export const flowOrder: ReadonlyArray<StageName> = [...flow.ticket, ...flow.task, ...flow.closing];
 
 // An optional stage runs only when the policy (an execution's, or the
 // factory's FACTORY.json) turns it on.
