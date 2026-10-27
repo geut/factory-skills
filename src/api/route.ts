@@ -1,10 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
+import type { ConfigResult } from '../config.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { EventHub } from '../server/events.ts';
+import { ProblemError } from './problem.ts';
 
 // What a route may ask for while it handles a request.
 export type ApiContext = {
@@ -14,11 +16,21 @@ export type ApiContext = {
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;
   events: EventHub | null;
+  // The factory's FACTORY.json, read when asked; null where the server has none.
+  factoryConfig: (() => ConfigResult) | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
   // The code host side of webhooks; null where the server has none.
   webhooks: Webhooks | null;
 };
+
+// The server's connection, for routes that read it.
+export function database(context: ApiContext): DatabaseSync {
+  if (context.db === null) {
+    throw new ProblemError('internal_error', 'The server has no database.');
+  }
+  return context.db;
+}
 
 export type Webhooks = {
   // Updates the ticket of a pull request the code host reported changed, and

@@ -18,8 +18,12 @@ export type Step =
   // Every stage is done: the person takes the ticket from here.
   | { kind: 'handoff' };
 
-// An optional stage runs only when the execution's policy turns it on.
-export function stageEnabled(policy: Policy, stage: StageName): boolean {
+// Every stage in the order a ticket meets it.
+export const flowOrder: ReadonlyArray<StageName> = [...flow.ticket, ...flow.task, ...flow.closing];
+
+// An optional stage runs only when the policy (an execution's, or the
+// factory's FACTORY.json) turns it on.
+export function stageEnabled(policy: Pick<Policy, 'stages'>, stage: StageName): boolean {
   return !stages[stage].optional || policy.stages[stage]?.enabled === true;
 }
 

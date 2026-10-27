@@ -108,6 +108,44 @@
         }
       }
     },
+    "/v1/factory": {
+      "get": {
+        "operationId": "getFactory",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "See which stages this factory runs, in order",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "The factory and its stages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Factory"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "operationId": "listTickets",
@@ -1788,6 +1826,69 @@
           "name",
           "onBehalfOf",
           "scope"
+        ],
+        "additionalProperties": false
+      },
+      "Factory": {
+        "type": "object",
+        "properties": {
+          "factoryId": {
+            "type": "string"
+          },
+          "name": {
+            "description": "FACTORY.json `name`, when set.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactoryStage"
+            },
+            "description": "Every stage, in flow order."
+          }
+        },
+        "required": [
+          "factoryId",
+          "name",
+          "stages"
+        ],
+        "additionalProperties": false
+      },
+      "FactoryStage": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether new tickets run this stage: always for a required stage."
+          },
+          "name": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "qa",
+              "review",
+              "work",
+              "wrapup"
+            ],
+            "description": "The stage. The stages array gives the order."
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "An optional stage runs only when FACTORY.json turns it on."
+          },
+          "perTask": {
+            "type": "boolean",
+            "description": "Whether the stage runs once per task."
+          }
+        },
+        "required": [
+          "enabled",
+          "name",
+          "optional",
+          "perTask"
         ],
         "additionalProperties": false
       },

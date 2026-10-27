@@ -225,6 +225,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         commands,
         db,
         events,
+        factoryConfig: () => readFactoryConfig(factoryRoot),
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
         webhooks: {

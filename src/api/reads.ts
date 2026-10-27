@@ -19,7 +19,7 @@ import {
 import { runAssistantText } from '../runtime/session-activity.ts';
 import { stageNames } from '../stages/index.ts';
 import { ProblemError } from './problem.ts';
-import { defineRoute, type ApiContext } from './route.ts';
+import { database, defineRoute } from './route.ts';
 import { TicketKey, TicketParams } from './schemas.ts';
 
 // Read routes: what the command center shows. They read the server's own
@@ -44,13 +44,6 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 // Activity text is a glimpse of what an agent is doing, not its transcript.
 const ACTIVITY_MAX = 2000;
-
-function database(context: ApiContext): DatabaseSync {
-  if (context.db === null) {
-    throw new ProblemError('internal_error', 'The server has no database.');
-  }
-  return context.db;
-}
 
 // A query value may repeat; a repeated value means OR.
 function many<T extends z.ZodType>(item: T) {
