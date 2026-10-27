@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
+import type { ConfigResult } from '../config.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
@@ -14,6 +15,8 @@ export type ApiContext = {
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;
   events: EventHub | null;
+  // The factory's FACTORY.json, read when asked; null where the server has none.
+  factoryConfig: (() => ConfigResult) | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
   // The code host side of webhooks; null where the server has none.

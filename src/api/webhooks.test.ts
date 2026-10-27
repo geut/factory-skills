@@ -24,6 +24,7 @@ async function serveWith(secret: string | null, changed: Array<PullRequestInfo>)
         commands: unusedCommands,
         db: null,
         events: null,
+        factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
         webhooks: {

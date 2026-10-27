@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { backlogRoutes } from './backlog.ts';
 import { commandRoutes } from './commands.ts';
 import { eventRoutes } from './events.ts';
+import { factoryRoutes } from './factory.ts';
 import { readRoutes } from './reads.ts';
 import { defineRoute, SCOPES, type Route } from './route.ts';
 import { statsRoutes } from './stats.ts';
@@ -85,6 +86,7 @@ export const apiRoutes: Array<Route> = [
   health,
   openapi,
   me,
+  ...factoryRoutes,
   ...readRoutes,
   ...backlogRoutes,
   ...eventRoutes,

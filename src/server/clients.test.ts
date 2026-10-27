@@ -126,6 +126,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
         commands: unusedCommands,
         db: null,
         events: null,
+        factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
         webhooks: null,

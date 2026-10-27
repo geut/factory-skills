@@ -2158,6 +2158,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
         commands: unusedCommands,
         db,
         events: null,
+        factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
         webhooks: null,
