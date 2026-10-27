@@ -38,14 +38,16 @@ function schemas(): Record<string, Schema> {
   return document.components.schemas;
 }
 
-test('a run’s purpose lists every purpose the database accepts, and its outcome is an enum', () => {
+test('a run’s purpose lists every purpose the database accepts, and its outcome kind is an enum', () => {
   const sql = readFileSync(new URL('../state/schema.sql', import.meta.url), 'utf8');
   const check = /purpose\s+TEXT NOT NULL CHECK \(\s*purpose IN \(([^)]*)\)/.exec(sql)?.[1] ?? '';
   const stored = [...check.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
   assert.ok(stored.length > 0);
   const run = schemas()['Run']?.properties;
   assert.deepEqual([...(run?.['purpose']?.enum ?? [])].sort(), [...stored].sort());
-  assert.ok(run?.['outcome']?.enum?.includes('ready for handoff'));
+  // The outcome is display text; its stable key is the enum clients map on.
+  assert.equal(run?.['outcome']?.enum, undefined);
+  assert.ok(run?.['outcomeKind']?.enum?.includes('ready_for_handoff'));
 });
 
 test('the stats export names the schema of each line it writes', () => {

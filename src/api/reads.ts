@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { needsUser, runVerdict, ticketProgress } from '../controller/progress.ts';
-import { RUN_OUTCOMES, runOutcome } from '../controller/run-card.ts';
+import { outcomeLabel, RUN_OUTCOMES, runOutcome } from '../controller/run-card.ts';
 import {
   listCurrentTicketRefs,
   loadCurrentByFactoryKey,
@@ -242,9 +242,13 @@ const Run = z
     endedAt: z.string().nullable(),
     id: z.string(),
     model: z.string(),
-    outcome: z
+    outcome: z.string().meta({
+      description:
+        'What the run led to, as the status cards say it. Display text: map on outcomeKind.',
+    }),
+    outcomeKind: z
       .enum(RUN_OUTCOMES)
-      .meta({ description: 'What the run led to, as the status cards say it.' }),
+      .meta({ description: 'What the run led to, as a stable key.' }),
     purpose: z.enum(RUN_PURPOSES),
     review: Review.nullable(),
     round: z.int(),
@@ -571,7 +575,8 @@ function runOf(db: DatabaseSync, snapshot: FactorySnapshot, run: RunRecord): z.i
     endedAt: run.endedAt,
     id: run.id,
     model: session?.model ?? '',
-    outcome: runOutcome(snapshot, run),
+    outcome: outcomeLabel(runOutcome(snapshot, run)),
+    outcomeKind: runOutcome(snapshot, run),
     purpose: run.purpose,
     review: reviewOf(run),
     round: run.semanticRound,

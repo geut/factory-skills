@@ -35,16 +35,16 @@ test('retries, replies, and corrections are named; first runs and review rounds 
 
 test('outcomes describe what a run led to, never a bare "done"', () => {
   assert.equal(classifyRun({ ...finished, stage: 'plan' }), 'planned');
-  assert.equal(classifyRun({ ...finished, stage: 'work' }), 'ready for review');
+  assert.equal(classifyRun({ ...finished, stage: 'work' }), 'ready_for_review');
   assert.equal(classifyRun({ ...finished, stage: 'review', verdict: 'approve' }), 'approved');
   assert.equal(
     classifyRun({ ...finished, stage: 'review', verdict: 'changes_requested' }),
-    'changes requested',
+    'changes_requested',
   );
   assert.equal(classifyRun({ ...finished, stage: 'review', verdict: 'blocked' }), 'blocked');
   assert.equal(
     classifyRun({ ...finished, stage: 'review', stale: true, verdict: 'approve' }),
-    'diff changed',
+    'diff_changed',
   );
   assert.equal(classifyRun({ ...finished, stage: 'wrapup' }), 'finished');
   assert.equal(
@@ -54,7 +54,7 @@ test('outcomes describe what a run led to, never a bare "done"', () => {
   assert.equal(classifyRun({ ...finished, limitPaused: true, stage: 'work' }), 'paused');
   assert.equal(
     classifyRun({ ...finished, stage: 'review', terminalKind: 'caller_ping' }),
-    'waiting for you',
+    'waiting_for_user',
   );
   assert.equal(classifyRun({ ...finished, stage: 'work', terminalKind: 'crashed' }), 'failed');
   assert.equal(
@@ -125,7 +125,7 @@ test('only the run a pause is about reads as paused', () => {
 test('a review whose diff changed is not reported as approved', () => {
   const { run, snapshot } = staleDiff();
   assert.ok(run !== null);
-  assert.equal(runOutcome(snapshot, run), 'diff changed');
+  assert.equal(runOutcome(snapshot, run), 'diff_changed');
 });
 
 test('ticket runs follow start time, not the per-session sequence', () => {

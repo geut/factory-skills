@@ -2671,23 +2671,27 @@
           },
           "outcome": {
             "type": "string",
+            "description": "What the run led to, as the status cards say it. Display text: map on outcomeKind."
+          },
+          "outcomeKind": {
+            "type": "string",
             "enum": [
               "approved",
               "blocked",
-              "changes requested",
+              "changes_requested",
               "correcting",
-              "diff changed",
+              "diff_changed",
               "failed",
               "finished",
               "paused",
               "planned",
-              "ready for handoff",
-              "ready for review",
+              "ready_for_handoff",
+              "ready_for_review",
               "retrying",
               "running",
-              "waiting for you"
+              "waiting_for_user"
             ],
-            "description": "What the run led to, as the status cards say it."
+            "description": "What the run led to, as a stable key."
           },
           "purpose": {
             "type": "string",
@@ -2799,6 +2803,7 @@
           "id",
           "model",
           "outcome",
+          "outcomeKind",
           "purpose",
           "review",
           "round",
