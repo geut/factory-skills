@@ -159,8 +159,11 @@ test('scoped routes need a live token whose scope covers them', async () => {
   assert.equal((await fetch(`${base}/health`)).status, 200);
   assert.equal((await fetch(`${base}/openapi.json`)).status, 200);
 
+  // A client learns its token's scope before trying a command.
   const me = await fetch(`${base}/v1/me`, bearer(reader));
-  assert.deepEqual(await me.json(), { name: 'stats', onBehalfOf: null });
+  assert.deepEqual(await me.json(), { name: 'stats', onBehalfOf: null, scope: 'read' });
+  const acting = await fetch(`${base}/v1/me`, bearer(actor));
+  assert.deepEqual(await acting.json(), { name: 'dashboard', onBehalfOf: null, scope: 'act' });
 
   const denied = await fetch(`${base}/v1/act`, { method: 'POST', ...bearer(reader) });
   assert.equal(denied.status, 403);

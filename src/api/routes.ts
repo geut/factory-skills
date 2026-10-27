@@ -3,7 +3,7 @@ import { backlogRoutes } from './backlog.ts';
 import { commandRoutes } from './commands.ts';
 import { eventRoutes } from './events.ts';
 import { readRoutes } from './reads.ts';
-import { defineRoute, type Route } from './route.ts';
+import { defineRoute, SCOPES, type Route } from './route.ts';
 import { statsRoutes } from './stats.ts';
 import { webhookRoutes } from './webhooks.ts';
 
@@ -53,12 +53,22 @@ const Me = z
       .string()
       .nullable()
       .meta({ description: 'The X-Factory-On-Behalf-Of header, as sent. Never verified.' }),
+    scope: z.enum(SCOPES).meta({
+      description:
+        'What the token may do: `read`, or `act`, which includes read. Routes still check it.',
+    }),
   })
   .meta({ id: 'Me' });
 
 const me = defineRoute({
-  handler: ({ actor }) => ({
-    body: { name: actor?.client ?? '', onBehalfOf: actor?.onBehalfOf ?? null },
+  // Without an authorizer (a bare router in tests) no token was checked, so
+  // the answer falls back to the least the client could do.
+  handler: ({ actor, tokenScope }) => ({
+    body: {
+      name: actor?.client ?? '',
+      onBehalfOf: actor?.onBehalfOf ?? null,
+      scope: tokenScope ?? 'read',
+    },
     status: 200,
   }),
   method: 'GET',

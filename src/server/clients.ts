@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { problem, type Problem } from '../api/problem.ts';
-import type { Scope } from '../api/route.ts';
+import { SCOPES, type Authorized, type Scope } from '../api/route.ts';
 import type { Actor } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { immediateTransaction } from '../state/database.ts';
@@ -29,7 +29,7 @@ const TOKEN_PREFIX = 'fct_';
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export function isScope(value: string): value is Scope {
-  return value === 'read' || value === 'act';
+  return SCOPES.some((scope) => scope === value);
 }
 
 // `act` includes `read`.
@@ -177,7 +177,7 @@ export function ensureLocalClient(db: DatabaseSync, factoryRoot: string, now: st
 export function createAuthorizer(
   db: DatabaseSync,
   now: () => string,
-): (request: IncomingMessage, scope: Scope) => { actor: Actor } | { problem: Problem } {
+): (request: IncomingMessage, scope: Scope) => Authorized | { problem: Problem } {
   return (request, scope) => {
     const token = bearerToken(request);
     if (token === null) {
@@ -195,6 +195,6 @@ export function createAuthorizer(
         ),
       };
     }
-    return { actor: actorFor(request, client) };
+    return { actor: actorFor(request, client), tokenScope: client.scope };
   };
 }
