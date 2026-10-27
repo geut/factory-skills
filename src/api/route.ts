@@ -60,6 +60,8 @@ export type RouteInput<
   // The body's bytes, for routes that ask for them with `raw`.
   rawBody: Buffer | null;
   request: IncomingMessage;
+  // The scope of the request's token; null on routes that need no token.
+  scope: Scope | null;
 };
 
 // A JSON answer, or a stream that writes the response itself, such as SSE.

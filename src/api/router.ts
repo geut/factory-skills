@@ -14,9 +14,13 @@ import type { ApiContext, Route, Scope } from './route.ts';
 export const MAX_BODY_BYTES = 1024 * 1024;
 
 export type RouterOptions = {
-  // Decides who sent a request to a route with a scope: the actor, or the
-  // problem to answer with. Without it, scoped routes have no actor.
-  authorize?: (request: IncomingMessage, scope: Scope) => { actor: Actor } | { problem: Problem };
+  // Decides who sent a request to a route with a scope: the actor and its
+  // token's scope, or the problem to answer with. Without it, scoped routes
+  // have no actor.
+  authorize?: (
+    request: IncomingMessage,
+    scope: Scope,
+  ) => { actor: Actor; scope: Scope } | { problem: Problem };
   context: ApiContext;
   // Unexpected errors, already answered with internal_error.
   onError?: (error: unknown) => void;
@@ -143,6 +147,7 @@ export function createRouter(
     const { route } = match.item;
 
     let actor: Actor | null = null;
+    let scope: Scope | null = null;
     if (route.scope !== null && options.authorize !== undefined) {
       const decided = options.authorize(request, route.scope);
       if ('problem' in decided) {
@@ -152,6 +157,7 @@ export function createRouter(
         return;
       }
       actor = decided.actor;
+      scope = decided.scope;
     }
 
     const rawParams = Object.fromEntries(
@@ -216,6 +222,7 @@ export function createRouter(
         query: query as Record<string, unknown>,
         rawBody: bytes,
         request,
+        scope,
       });
     } catch (error: unknown) {
       if (error instanceof ProblemError) {

@@ -53,12 +53,20 @@ const Me = z
       .string()
       .nullable()
       .meta({ description: 'The X-Factory-On-Behalf-Of header, as sent. Never verified.' }),
+    scope: z.enum(['read', 'act']).meta({
+      description:
+        'What the token may do: `read`, or `act`, which includes read. Routes still check it.',
+    }),
   })
   .meta({ id: 'Me' });
 
 const me = defineRoute({
-  handler: ({ actor }) => ({
-    body: { name: actor?.client ?? '', onBehalfOf: actor?.onBehalfOf ?? null },
+  handler: ({ actor, scope }) => ({
+    body: {
+      name: actor?.client ?? '',
+      onBehalfOf: actor?.onBehalfOf ?? null,
+      scope: scope ?? 'read',
+    },
     status: 200,
   }),
   method: 'GET',

@@ -122,6 +122,6 @@ test('serve gives Pi a private local token that the API accepts', async () => {
   assert.equal(statSync(file).mode & 0o777, 0o600);
   const token = readFileSync(file, 'utf8').trim();
   const me = await fetch(`${server.url}/v1/me`, { headers: { authorization: `Bearer ${token}` } });
-  assert.deepEqual(await me.json(), { name: 'local', onBehalfOf: null });
+  assert.deepEqual(await me.json(), { name: 'local', onBehalfOf: null, scope: 'act' });
   assert.equal((await fetch(`${server.url}/v1/me`)).status, 401);
 });

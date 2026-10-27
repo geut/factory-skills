@@ -177,7 +177,10 @@ export function ensureLocalClient(db: DatabaseSync, factoryRoot: string, now: st
 export function createAuthorizer(
   db: DatabaseSync,
   now: () => string,
-): (request: IncomingMessage, scope: Scope) => { actor: Actor } | { problem: Problem } {
+): (
+  request: IncomingMessage,
+  scope: Scope,
+) => { actor: Actor; scope: Scope } | { problem: Problem } {
   return (request, scope) => {
     const token = bearerToken(request);
     if (token === null) {
@@ -195,6 +198,6 @@ export function createAuthorizer(
         ),
       };
     }
-    return { actor: actorFor(request, client) };
+    return { actor: actorFor(request, client), scope: client.scope };
   };
 }

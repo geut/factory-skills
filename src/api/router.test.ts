@@ -187,7 +187,7 @@ test('authorize can refuse a route by its scope', async () => {
     authorize: (_request, scope) =>
       scope === 'act'
         ? { problem: problem('insufficient_scope', 'Needs act.') }
-        : { actor: { client: 'reader', onBehalfOf: null } },
+        : { actor: { client: 'reader', onBehalfOf: null }, scope: 'read' },
   });
   const refused = await fetch(`${guarded}/v1/things/t1`, {
     body: JSON.stringify({ ref: 'x' }),

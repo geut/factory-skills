@@ -1774,11 +1774,20 @@
               "string",
               "null"
             ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "read",
+              "act"
+            ],
+            "description": "What the token may do: `read`, or `act`, which includes read. Routes still check it."
           }
         },
         "required": [
           "name",
-          "onBehalfOf"
+          "onBehalfOf",
+          "scope"
         ],
         "additionalProperties": false
       },
