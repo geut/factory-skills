@@ -16,6 +16,8 @@ import {
 export type RelatedIssue = {
   body: string;
   number: number;
+  // Unknown reads as open, so a blocker is never dropped by mistake.
+  state: 'closed' | 'open';
   title: string;
   url: string | null;
 };
@@ -88,6 +90,7 @@ function relatedIssues(path: string): Array<RelatedIssue> {
           {
             body: typeof item['body'] === 'string' ? item['body'] : '',
             number: item['number'],
+            state: item['state'] === 'closed' ? ('closed' as const) : ('open' as const),
             title: typeof item['title'] === 'string' ? item['title'] : '',
             updatedAt: textOrNull(item['updatedAt']),
             url: typeof item['html_url'] === 'string' ? item['html_url'] : null,
@@ -382,7 +385,10 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
         throw new UnsupportedOperation('github', 'blocking links');
       }
       const at = locate(issue);
-      return listBlockedBy(at).map((related) => linkOf(at.owner, at.repo, related));
+      // GitHub keeps the link after the blocker closes; only an open one blocks.
+      return listBlockedBy(at)
+        .filter((related) => related.state === 'open')
+        .map((related) => linkOf(at.owner, at.repo, related));
     },
     capabilities: new Set(capabilities),
     // GitHub keeps an issue's checklist as Markdown boxes in its body.

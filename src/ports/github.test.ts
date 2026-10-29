@@ -103,3 +103,33 @@ test('a replacing comment updates the comment of its key, found by a hidden mark
   tracker.comment(issue, 'Something else.', 'handoff:T1', 'once');
   assert.equal(comments.length, 2);
 });
+
+test('only an open blocker blocks: GitHub keeps the link after the blocker closes', () => {
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    listBlockedBy: () => [
+      {
+        body: '',
+        number: 32,
+        state: 'closed',
+        title: 'Stats: time, quality, and configurations',
+        url: 'https://github.com/geut/factory-skills/issues/32',
+      },
+      {
+        body: '',
+        number: 40,
+        state: 'open',
+        title: 'Stats page shell',
+        url: 'https://github.com/geut/factory-skills/issues/40',
+      },
+    ],
+    listSubIssues: () => [],
+  });
+  assert.deepEqual(tracker.blockedBy(issue), [
+    {
+      displayRef: 'geut/factory-skills#40',
+      title: 'Stats page shell',
+      url: 'https://github.com/geut/factory-skills/issues/40',
+    },
+  ]);
+});

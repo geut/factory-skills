@@ -68,6 +68,7 @@ test('an issue with native sub-issues is an umbrella and is refused', () => {
         {
           body: '',
           number: 8,
+          state: 'open',
           title: 'First slice',
           url: 'https://github.com/geut/other/issues/8',
         },
@@ -106,6 +107,7 @@ test('blocking links come from GitHub, and without them the operation is unsuppo
         {
           body: '',
           number: 3,
+          state: 'open',
           title: 'Schema first',
           url: 'https://github.com/geut/factory-skills/issues/3',
         },
