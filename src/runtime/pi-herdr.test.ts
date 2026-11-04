@@ -104,7 +104,7 @@ test('classifies pi-herdr sidecars into one terminal kind', () => {
   );
 });
 
-test('herdr launch uses the generic argv pane contract', () => {
+test('herdr launch opens the factory plugin argv pane', () => {
   assert.deepEqual(
     herdrPaneArgs({ cwd: '/repo', launchScript: '/tmp/run.sh', targetPaneId: 'pane-parent' }),
     [
@@ -112,7 +112,7 @@ test('herdr launch uses the generic argv pane contract', () => {
       'pane',
       'open',
       '--plugin',
-      'pi-herdr-subagents',
+      'geut.factory',
       '--entrypoint',
       'argv',
       '--placement',
@@ -124,7 +124,7 @@ test('herdr launch uses the generic argv pane contract', () => {
       '--cwd',
       '/repo',
       '--env',
-      'PI_HERDR_LAUNCH_SCRIPT=/tmp/run.sh',
+      'FACTORY_LAUNCH_SCRIPT=/tmp/run.sh',
       '--no-focus',
     ],
   );
@@ -898,4 +898,60 @@ test('a tab that cannot be made falls back to the server pane', async () => {
   });
   const plugin = calls.find((args) => args[0] === 'plugin') ?? [];
   assert.equal(plugin[plugin.indexOf('--target-pane') + 1], 'server');
+});
+
+test('a pane that fails to open closes the tab made for it', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-tabs-'));
+  const tabsFile = path.join(directory, 'runtime', 'tabs.json');
+  const calls: Array<Array<string>> = [];
+  let tabs = 0;
+  const runtime = createPiHerdrRuntime({
+    run: async (args) => {
+      calls.push(args);
+      if (args[0] === 'tab' && args[1] === 'create') {
+        tabs += 1;
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            result: { root_pane: { pane_id: `root-${tabs}` }, tab: { tab_id: `tab-${tabs}` } },
+          }),
+        };
+      }
+      if (args[0] === 'plugin') {
+        return { code: 1, stderr: 'plugin not found', stdout: '' };
+      }
+      return { code: 0, stderr: '', stdout: '' };
+    },
+    tabsFile,
+    targetPaneId: 'server',
+  });
+  const launch = (id: string) =>
+    runtime.launch({
+      cwd: directory,
+      mode: 'launch',
+      model: 'm',
+      paneName: 'x',
+      previousPaneId: null,
+      prompt: 'p',
+      purpose: 'initial',
+      runId: runId(id),
+      sessionFile: path.join(directory, `${id}.jsonl`),
+      sessionId: sessionId(id),
+      stage: 'plan',
+      tab: { key: 'k', label: 'repo#1' },
+      taskLabel: null,
+      thinking: 'medium',
+      tools: 'read',
+    });
+
+  // Each failed launch, a retry included, leaves no tab behind.
+  await assert.rejects(launch('r1'), /plugin not found/);
+  await assert.rejects(launch('r2'), /plugin not found/);
+  const closed = calls.filter((args) => args[0] === 'tab' && args[1] === 'close');
+  assert.deepEqual(closed, [
+    ['tab', 'close', 'tab-1'],
+    ['tab', 'close', 'tab-2'],
+  ]);
+  assert.equal(JSON.parse(readFileSync(tabsFile, 'utf8'))['k'], undefined);
 });

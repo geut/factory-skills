@@ -10,6 +10,7 @@ import {
   type UsageTotals,
 } from '../domain.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
+import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
 import type {
   FactorySubagentRuntime,
@@ -230,9 +231,9 @@ export function herdrPaneArgs(input: {
     'pane',
     'open',
     '--plugin',
-    'pi-herdr-subagents',
+    HERDR_PLUGIN_ID,
     '--entrypoint',
-    'argv',
+    HERDR_PLUGIN_ENTRYPOINT,
     '--placement',
     'split',
     '--target-pane',
@@ -242,7 +243,7 @@ export function herdrPaneArgs(input: {
     '--cwd',
     input.cwd,
     '--env',
-    `PI_HERDR_LAUNCH_SCRIPT=${input.launchScript}`,
+    `${LAUNCH_SCRIPT_ENV}=${input.launchScript}`,
     '--no-focus',
   ];
 }
@@ -500,9 +501,9 @@ function paneIdFromJson(text: string): string | null {
 }
 
 type CommandResult = { code: number; stderr: string; stdout: string };
-type CommandRunner = (args: Array<string>) => Promise<CommandResult>;
+export type CommandRunner = (args: Array<string>) => Promise<CommandResult>;
 
-function defaultRunner(args: Array<string>): Promise<CommandResult> {
+export function defaultRunner(args: Array<string>): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn('herdr', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -771,13 +772,25 @@ export function createPiHerdrRuntime(options?: {
     script: string,
   ): Promise<string> {
     const { root, target } = await splitTarget(tab, cwd);
-    const opened = await run(herdrPaneArgs({ cwd, launchScript: script, targetPaneId: target }));
-    if (opened.code !== 0) {
-      throw new Error(opened.stderr.trim() || 'herdr pane open failed');
+    let paneId: string | null = null;
+    let failure = 'herdr did not return a pane id';
+    try {
+      const opened = await run(herdrPaneArgs({ cwd, launchScript: script, targetPaneId: target }));
+      if (opened.code === 0) {
+        paneId = parsePaneId(opened.stdout);
+      } else {
+        failure = opened.stderr.trim() || 'herdr pane open failed';
+      }
+    } catch (error: unknown) {
+      failure = error instanceof Error ? error.message : String(error);
     }
-    const paneId = parsePaneId(opened.stdout);
     if (paneId === null) {
-      throw new Error('herdr did not return a pane id');
+      // A tab made for this pane holds only its empty shell, so close it
+      // rather than leave one behind for every failed launch.
+      if (root !== null && tab !== null && tab !== undefined) {
+        await closeTab(tab.key).catch(() => undefined);
+      }
+      throw new Error(failure);
     }
     const known = tab === null || tab === undefined ? undefined : tabs.get(tab.key);
     if (known !== undefined) {
