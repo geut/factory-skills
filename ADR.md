@@ -449,7 +449,7 @@ Commit, push, pull-request creation or update, ticket mutation, merge, branch de
 
 The controller depends on a `FactorySubagentRuntime` interface rather than a specific subagent package.
 
-`pi-herdr-subagents` is the initial integration candidate because it has a narrow Herdr-native launch/watch path. The adapter must call the programmatic launch/watch machinery and consume events itself; the package's normal parent-model steering path must not own Factory children.
+`pi-herdr-subagents` was the initial integration candidate because it has a narrow Herdr-native launch/watch path. The factory ended up building that machinery itself: launch scripts, the child handshake extension, exit detection from Herdr events, and pane naming, tabs and closing with plain `herdr` commands. The one thing plain `herdr` cannot do is run a given program as a new pane's process without going through the user's shell, so the factory ships its own Herdr plugin (`geut.factory`) with one argv pane entrypoint, and `factory serve` links it on every start.
 
 `edxeth/pi-subagents` is a useful alternative and design reference. It offers separate internal launch/watch/steer layers, typed results, stronger pane visibility, timeouts, policy controls, and resume metadata. It is not adopted directly yet because it lacks a supported controller-facing API, its interactive `subagent_done`/`caller_ping` behavior does not match the Factory contract, normal-run restart adoption is incomplete, and its current Herdr integration relies on shell readiness and polling.
 
@@ -512,7 +512,7 @@ Budget is a first-class operational concern:
 
 These items are intentionally not resolved by this ADR:
 
-1. **Runtime backend:** whether the first production adapter uses a pinned internal `pi-herdr-subagents` boundary, an upstream API, or a modified `pi-subagents` runtime.
+1. **Runtime backend:** resolved for Herdr: the adapter is the factory's own (`src/runtime/pi-herdr.ts`), and its panes open through the factory's own Herdr plugin, not `pi-herdr-subagents`. Still open: whether a later backend moves to herdr-core (`hc run` launches argv directly and reports exit codes in its events).
 2. **Restart adoption:** how a restarted parent reconciles running panes, closes the event gap, re-arms exactly one watcher, and safely reclaims expired actions.
 3. **Notification sink:** how `notify_attention` surfaces a persisted question without a model turn in interactive and future headless environments.
 4. **Initialization:** whether `.factory/` and the database are created by `/factory init` or lazily by the first `start`.

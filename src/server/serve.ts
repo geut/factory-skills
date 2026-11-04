@@ -17,7 +17,12 @@ import {
 } from '../controller/service.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
 import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
-import { createPiHerdrRuntime, handshakeExtensionPath } from '../runtime/pi-herdr.ts';
+import { ensureHerdrPlugin, herdrPluginDir } from '../runtime/herdr-plugin.ts';
+import {
+  createPiHerdrRuntime,
+  defaultRunner,
+  handshakeExtensionPath,
+} from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
@@ -158,8 +163,15 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       message: 'Cannot find pi. Put it on PATH or set FACTORY_PI_BIN to its absolute path.',
     };
   }
-  if (input.runtime === undefined && findOnPath('herdr', input.env) === null) {
-    return { kind: 'error', message: 'Cannot find herdr on PATH.' };
+  if (input.runtime === undefined) {
+    if (findOnPath('herdr', input.env) === null) {
+      return { kind: 'error', message: 'Cannot find herdr on PATH.' };
+    }
+    // Agent and handoff panes open through the factory's own Herdr plugin.
+    const plugin = await ensureHerdrPlugin({ dir: herdrPluginDir(input.env), run: defaultRunner });
+    if (plugin.kind === 'error') {
+      return plugin;
+    }
   }
   const config = readFactoryConfig(factoryRoot);
   if (config.kind === 'error') {
