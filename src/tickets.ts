@@ -94,14 +94,14 @@ function titleFromBody(body: string, fallback: string): string {
   return match?.[1]?.trim() || fallback;
 }
 
-export function resolveTicket(input: {
+export async function resolveTicket(input: {
   codeRoot: string;
   factoryRoot: string;
   fetchedAt: string;
   source: TicketSource;
   // Resolves every ref that is not a local file.
   tracker: Tracker;
-}): ResolveResult {
+}): Promise<ResolveResult> {
   if (input.source.kind === 'text') {
     return {
       kind: 'ticket',
@@ -162,7 +162,7 @@ export function resolveTicket(input: {
     };
   }
 
-  const resolved = input.tracker.resolve(ref);
+  const resolved = await input.tracker.resolve(ref);
   if (resolved === null) {
     return {
       kind: 'error',
@@ -175,7 +175,7 @@ export function resolveTicket(input: {
   const { issue } = resolved;
   let children: Array<IssueLink>;
   try {
-    children = input.tracker.children(issue);
+    children = await input.tracker.children(issue);
   } catch (error: unknown) {
     return {
       kind: 'error',

@@ -28,7 +28,7 @@ import type {
   TerminalOutcome,
   WrapupValidationDetail,
 } from '../domain.ts';
-import type { Tracker } from '../ports/tracker.ts';
+import type { ConfiguredTracker } from '../ports/trackers.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
 import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
@@ -127,7 +127,7 @@ export async function dispatchPending(input: {
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
-  tracker: () => Tracker | null;
+  tracker: () => ConfiguredTracker | null;
 }): Promise<void> {
   for (;;) {
     if (input.stopped()) {
@@ -178,7 +178,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
-    tracker: () => Tracker | null;
+    tracker: () => ConfiguredTracker | null;
   },
   action: ActionRecord,
   snapshot: FactorySnapshot,
@@ -401,20 +401,27 @@ function validatorFor(snapshot: FactorySnapshot, runId: RunId) {
 // Writes a tracker update. A tracker that keeps failing leaves the action
 // failed, which the API shows as a warning; the ticket goes on either way.
 async function updateTicketSource(
-  input: { db: DatabaseSync; now: () => string; tracker: () => Tracker | null },
+  input: { db: DatabaseSync; now: () => string; tracker: () => ConfiguredTracker | null },
   action: Extract<ActionRecord, { kind: 'update_ticket_source' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
-  const tracker = input.tracker();
-  if (tracker === null) {
+  const configured = input.tracker();
+  if (configured === null) {
     finishLeasedAction(input.db, action.id, input.now(), 'failed', 'FACTORY.json has no tracker.');
+    return null;
+  }
+  const { tracker, updates } = configured;
+  // An update for an issue in another tracker would go to the wrong place.
+  const mismatch = trackerMismatch(snapshot, tracker.kind);
+  if (mismatch !== null) {
+    finishLeasedAction(input.db, action.id, input.now(), 'failed', `Skipped: ${mismatch}`);
     return null;
   }
   const issue = trackerIssueOf(snapshot.ticket);
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
-      const { conflicts } = applyTicketUpdate(tracker, issue, action);
+      const { conflicts } = await applyTicketUpdate(tracker, issue, action, updates);
       // A box someone changed stays unticked: a warning, never a retry.
       finishLeasedAction(
         input.db,
@@ -499,30 +506,37 @@ async function runValidation(
 
 // Prepares a stage's input outside the controller transaction and hands the
 // reducer what it found, or why the stage cannot start.
-function prepareInput(
+async function prepareInput(
   input: {
     db: DatabaseSync;
     ids: IdSource;
     now: () => string;
-    tracker: () => Tracker | null;
+    tracker: () => ConfiguredTracker | null;
   },
   action: Extract<ActionRecord, { kind: 'prepare_input' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
   const executionId = snapshot.execution.id;
-  const result = effects[action.stage].prepareInput({
+  const result = await effects[action.stage].prepareInput({
     action,
     deps: {
       // Null when the ticket has no issue or its tracker keeps no checklist.
-      checklistItems: () => {
-        const tracker = input.tracker();
+      checklistItems: async () => {
+        const tracker = input.tracker()?.tracker ?? null;
         const { ticket } = snapshot;
-        return tracker === null ||
+        if (
+          tracker === null ||
           ticket.sourceKind === 'file' ||
           ticket.sourceKind === 'text' ||
           !tracker.capabilities.has('checklist')
-          ? null
-          : tracker.checklistItems(trackerIssueOf(ticket));
+        ) {
+          return null;
+        }
+        const mismatch = trackerMismatch(snapshot, tracker.kind);
+        if (mismatch !== null) {
+          throw new Error(mismatch);
+        }
+        return tracker.checklistItems(trackerIssueOf(ticket));
       },
       executionCurrent: executionIsCurrent(input.db, executionId),
       passedChecks: (stage) =>
@@ -549,7 +563,17 @@ function prepareInput(
       `input-ready:${action.id}`,
     );
   }
-  return Promise.resolve(null);
+  return null;
+}
+
+// Why a ticket's issue is out of reach of the configured tracker, or null when
+// it is not: the ticket came from another tracker, and FACTORY.json has since
+// switched.
+function trackerMismatch(snapshot: FactorySnapshot, trackerKind: string): string | null {
+  const { displayRef, sourceKind } = snapshot.ticket;
+  return sourceKind === trackerKind
+    ? null
+    : `${displayRef} came from ${sourceKind}; the configured tracker is ${trackerKind}.`;
 }
 
 export function watchRun(input: {

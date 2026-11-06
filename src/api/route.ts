@@ -11,7 +11,7 @@ import { ProblemError } from './problem.ts';
 // What a route may ask for while it handles a request.
 export type ApiContext = {
   // The tracker's backlog, cached; null where the server has none.
-  backlog: ((refresh: boolean) => BacklogResult) | null;
+  backlog: ((refresh: boolean) => Promise<BacklogResult>) | null;
   commands: FactoryCommands;
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;

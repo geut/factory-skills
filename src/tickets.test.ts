@@ -10,6 +10,7 @@ const tracker = {
   owner: 'geut',
   repo: 'factory-skills',
   status: {},
+  updates: { checklist: true, comments: true },
 };
 
 const issue = {
@@ -41,14 +42,14 @@ function resolve(ref: string, github: GithubClient = client()) {
   });
 }
 
-test('GitHub refs resolve to the same tracked ticket', () => {
+test('GitHub refs resolve to the same tracked ticket', async () => {
   for (const ref of [
     'https://github.com/geut/factory-skills/issues/7',
     'geut/factory-skills#7',
     '#7',
     '7',
   ]) {
-    const resolved = resolve(ref);
+    const resolved = await resolve(ref);
     assert.equal(resolved.kind, 'ticket', ref);
     if (resolved.kind !== 'ticket') {
       continue;
@@ -60,8 +61,8 @@ test('GitHub refs resolve to the same tracked ticket', () => {
   }
 });
 
-test('an issue with native sub-issues is an umbrella and is refused', () => {
-  const resolved = resolve(
+test('an issue with native sub-issues is an umbrella and is refused', async () => {
+  const resolved = await resolve(
     '#7',
     client({
       listSubIssues: () => [
@@ -83,12 +84,12 @@ test('an issue with native sub-issues is an umbrella and is refused', () => {
   assert.match(resolved.message, /geut\/other#8 First slice/);
 });
 
-test('issue keys are not GitHub refs, and a tracker failure says so', () => {
-  const keyed = resolve('PROJ-7');
+test('issue keys are not GitHub refs, and a tracker failure says so', async () => {
+  const keyed = await resolve('PROJ-7');
   assert.equal(keyed.kind, 'error');
   assert.equal(keyed.kind === 'error' ? keyed.reason : 'none', undefined);
 
-  const down = resolve(
+  const down = await resolve(
     '#7',
     client({
       fetchIssue: () => {
@@ -99,7 +100,7 @@ test('issue keys are not GitHub refs, and a tracker failure says so', () => {
   assert.equal(down.kind === 'error' ? down.reason : 'none', 'tracker_unavailable');
 });
 
-test('blocking links come from GitHub, and without them the operation is unsupported', () => {
+test('blocking links come from GitHub, and without them the operation is unsupported', async () => {
   const linked = createGithubTracker(
     tracker,
     client({
@@ -114,12 +115,12 @@ test('blocking links come from GitHub, and without them the operation is unsuppo
       ],
     }),
   );
-  const resolved = linked.resolve('#7');
+  const resolved = await linked.resolve('#7');
   assert.equal(resolved?.kind, 'issue');
   if (resolved?.kind !== 'issue') {
     return;
   }
-  assert.deepEqual(linked.blockedBy(resolved.issue), [
+  assert.deepEqual(await linked.blockedBy(resolved.issue), [
     {
       displayRef: 'geut/factory-skills#3',
       title: 'Schema first',
@@ -130,5 +131,5 @@ test('blocking links come from GitHub, and without them the operation is unsuppo
 
   const plain = createGithubTracker(tracker, client());
   assert.equal(plain.capabilities.has('blockedBy'), false);
-  assert.throws(() => plain.blockedBy(resolved.issue), /does not support blocking links/);
+  await assert.rejects(() => plain.blockedBy(resolved.issue), /does not support blocking links/);
 });

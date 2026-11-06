@@ -89,9 +89,9 @@ function options(
 }
 
 const startTicket = defineRoute({
-  handler: ({ actor, body, context, headers }) =>
+  handler: async ({ actor, body, context, headers }) =>
     answer(
-      context.commands.start(
+      await context.commands.start(
         'ref' in body
           ? { kind: 'ref', value: body.ref }
           : { body: body.text, id: body.id, kind: 'text' },
@@ -171,8 +171,8 @@ const cancelTicket = defineRoute({
 });
 
 const rerunTicket = defineRoute({
-  handler: ({ actor, context, headers, params }) =>
-    answer(context.commands.rerun(params.key, options(actor, headers))),
+  handler: async ({ actor, context, headers, params }) =>
+    answer(await context.commands.rerun(params.key, options(actor, headers))),
   method: 'POST',
   operationId: 'rerunTicket',
   path: '/v1/tickets/{key}/reruns',

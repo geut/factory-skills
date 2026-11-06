@@ -40,11 +40,11 @@ const BacklogPage = z
   .meta({ id: 'BacklogPage' });
 
 const listBacklog = defineRoute({
-  handler: ({ context, query }) => {
+  handler: async ({ context, query }) => {
     if (context.backlog === null) {
       throw new ProblemError('internal_error', 'The server has no backlog.');
     }
-    const result = context.backlog(query.refresh);
+    const result = await context.backlog(query.refresh);
     if (result.kind === 'error') {
       throw new ProblemError('tracker_unavailable', result.message);
     }

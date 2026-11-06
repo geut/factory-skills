@@ -14,8 +14,8 @@ export type InputContext = {
   action: Extract<ActionRecord, { kind: 'prepare_input' }>;
   deps: {
     // The ticket's issue checklist through its tracker; null when it has none.
-    // Throws when the tracker cannot be read.
-    checklistItems: () => Array<ChecklistItem> | null;
+    // Rejects when the tracker cannot be read.
+    checklistItems: () => Promise<Array<ChecklistItem> | null>;
     // Whether the action's execution is still the ticket's current one.
     executionCurrent: boolean;
     // The checks of each task's latest passed validation by `stage`.
@@ -35,7 +35,12 @@ export type InputResult<Prepared> =
 export type StageEffects<S extends StageName> = {
   validator: Validator<S>;
 } & (S extends InputStage
-  ? { prepareInput: (context: InputContext) => InputResult<PreparedInput[S]> }
+  ? {
+      // Async only where it reads the tracker.
+      prepareInput: (
+        context: InputContext,
+      ) => InputResult<PreparedInput[S]> | Promise<InputResult<PreparedInput[S]>>;
+    }
   : unknown);
 
 // The impure half of every stage. Only the action worker reads it; the

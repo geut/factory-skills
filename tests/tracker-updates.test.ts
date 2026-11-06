@@ -44,7 +44,7 @@ type Tracked = {
   labels: Array<{ add: Array<string>; remove: Array<string> }>;
 };
 
-function repository(): string {
+function repository(tracker: Record<string, unknown> = {}): string {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-updates-'));
   roots.push(codeRoot);
   initRepo(codeRoot);
@@ -61,6 +61,7 @@ function repository(): string {
           in_progress: { label: 'factory:in-progress' },
           in_review: { label: 'factory:in-review' },
         },
+        ...tracker,
       },
     }),
   );
@@ -224,4 +225,64 @@ test('a tracker that cannot show statuses refuses a status mapping at startup', 
   });
   assert.equal(result.kind, 'error');
   assert.match(result.kind === 'error' ? result.message : '', /cannot show statuses/);
+});
+
+test('with comments off, the factory writes no comment but still shows the status', async () => {
+  const codeRoot = repository({ updates: { comments: false } });
+  const tracked: Tracked = { comments: [], labels: [] };
+  const { base, token } = await start(codeRoot, client(tracked), new FakeRuntime());
+  await startTicket(base, token);
+  await until(() => action(codeRoot)['status'] === 'succeeded', 400);
+  assert.deepEqual(tracked.comments, []);
+  assert.deepEqual(tracked.labels, [
+    { add: ['factory:in-progress'], remove: ['factory:in-review'] },
+  ]);
+});
+
+test('a ticket from a tracker FACTORY.json no longer names gets no updates and cannot be rerun', async () => {
+  const codeRoot = repository();
+  const tracked: Tracked = { comments: [], labels: [] };
+  const runtime = new FakeRuntime();
+  const { base, token } = await start(codeRoot, client(tracked), runtime);
+  const ticket = await startTicket(base, token);
+  await until(() => runtime.launches.length === 1 && action(codeRoot)['status'] === 'succeeded');
+  // As if the ticket came from another tracker before FACTORY.json switched.
+  const db = openStateDatabase(path.join(codeRoot, '.factory'));
+  try {
+    db.prepare("UPDATE tickets SET source_kind = 'linear'").run();
+  } finally {
+    db.close();
+  }
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const cancel = await fetch(`${base}/v1/tickets/${ticket}/cancel`, {
+    body: '{}',
+    headers,
+    method: 'POST',
+  });
+  assert.equal(cancel.status, 202);
+  const cancelled = (): Record<string, unknown> | undefined => {
+    const read = openStateDatabase(path.join(codeRoot, '.factory'), { readOnly: true });
+    try {
+      return read
+        .prepare(
+          "SELECT status, last_error FROM actions WHERE kind = 'update_ticket_source' AND idempotency_key LIKE '%:cancelled'",
+        )
+        .get();
+    } finally {
+      read.close();
+    }
+  };
+  await until(() => cancelled()?.['status'] === 'failed', 400);
+  assert.equal(
+    cancelled()?.['last_error'],
+    'Skipped: geut/factory-skills#7 came from linear; the configured tracker is github.',
+  );
+  assert.equal(tracked.comments.length, 1);
+
+  const rerun = await fetch(`${base}/v1/tickets/${ticket}/reruns`, { headers, method: 'POST' });
+  assert.equal(rerun.status, 409);
+  assert.match(
+    ((await rerun.json()) as { detail: string }).detail,
+    /came from linear; the configured tracker is github/,
+  );
 });

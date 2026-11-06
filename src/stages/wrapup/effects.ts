@@ -21,12 +21,12 @@ function readText(file: string): string {
 // The open items of the issue's checklist, through its tracker. A tracker that
 // cannot be read leaves wrap-up without them, and says why: a tracker never
 // holds up the ticket.
-export function readIssueBoxes(read: () => Array<ChecklistItem> | null): {
+export async function readIssueBoxes(read: () => Promise<Array<ChecklistItem> | null>): Promise<{
   boxes: Array<IssueBox>;
   unread: string | null;
-} {
+}> {
   try {
-    return { boxes: openBoxes(read() ?? []), unread: null };
+    return { boxes: openBoxes((await read()) ?? []), unread: null };
   } catch (error: unknown) {
     return { boxes: [], unread: error instanceof Error ? error.message : String(error) };
   }
@@ -39,7 +39,10 @@ function wrapupRuns(snapshot: FactorySnapshot) {
 
 // Checks the wrap-up input outside the controller transaction, so the reducer
 // can create the run atomically from what it found.
-export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResult<WrapupPrepared> {
+export async function prepareWrapupInput({
+  deps,
+  snapshot,
+}: InputContext): Promise<InputResult<WrapupPrepared>> {
   const factoryRoot = factoryRootOf(snapshot.execution.factoryDir);
   const inspection = inspectWrapupInput({
     activeChild: snapshot.runs.some((run) => run.status !== 'terminal'),
@@ -56,7 +59,7 @@ export function prepareWrapupInput({ deps, snapshot }: InputContext): InputResul
   let boxes = baseline === null ? [] : (parseBaseline(baseline)?.boxes ?? []);
   let boxesUnread: string | null = null;
   if (baseline === null) {
-    ({ boxes, unread: boxesUnread } = readIssueBoxes(deps.checklistItems));
+    ({ boxes, unread: boxesUnread } = await readIssueBoxes(deps.checklistItems));
     const { worktreeBaseSha, worktreeBranch, worktreePath } = snapshot.execution;
     if (worktreeBaseSha === null || worktreeBranch === null || worktreePath === null) {
       return { kind: 'failed', message: 'The worktree is not ready for this execution.' };
