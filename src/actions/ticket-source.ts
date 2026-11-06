@@ -1,3 +1,4 @@
+import { DEFAULT_TRACKER_UPDATES, type TrackerUpdates } from '../config.ts';
 import type { ActionRecord, TicketRecord } from '../domain.ts';
 import type { Tracker, TrackerIssue } from '../ports/tracker.ts';
 
@@ -23,41 +24,47 @@ export function trackerIssueOf(ticket: TicketRecord): TrackerIssue {
 }
 
 // Writes one tracker update to the issue: ticks its checklist items, posts or
-// replaces its comment, and shows its status, as far as the tracker can.
-// Returns the item texts it left unticked because someone changed them on the
-// issue.
-export function applyTicketUpdate(
+// replaces its comment, and shows its status, as far as the tracker can and
+// FACTORY.json's tracker.updates allows. Returns the item texts it left
+// unticked because someone changed them on the issue.
+export async function applyTicketUpdate(
   tracker: Tracker,
   issue: TrackerIssue,
   update: TicketUpdate,
-): { conflicts: Array<string> } {
+  updates: TrackerUpdates = DEFAULT_TRACKER_UPDATES,
+): Promise<{ conflicts: Array<string> }> {
   const textOf = new Map(update.checklist.map((item) => [item.key, item.text]));
   let conflicts: Array<string> = [];
   // A failed edit still lets the comment and status through; it is thrown
   // after them, so a retry ticks again and replaces the comment.
   let failed: unknown = null;
-  if (update.checklist.length > 0 && tracker.capabilities.has('checklist')) {
+  const ticking = updates.checklist && tracker.capabilities.has('checklist');
+  if (update.checklist.length > 0 && ticking) {
     try {
-      conflicts = tracker
-        .tickBoxes(
+      conflicts = (
+        await tracker.tickBoxes(
           issue,
           update.checklist.map((item) => item.key),
         )
-        .conflicts.map((key) => textOf.get(key) ?? key);
+      ).conflicts.map((key) => textOf.get(key) ?? key);
     } catch (error: unknown) {
       failed = error;
     }
   }
-  if (tracker.capabilities.has('comment')) {
+  if (updates.comments && tracker.capabilities.has('comment')) {
+    // The met items go in the comment when they were not ticked on the issue:
+    // ticking is off, or it failed.
+    const metHeading =
+      failed !== null
+        ? 'Met (ticking them on the issue failed):'
+        : updates.checklist
+          ? null
+          : 'Met:';
     const markdown = [
       update.comment,
-      ...(failed === null
+      ...(metHeading === null || update.checklist.length === 0
         ? []
-        : [
-            '',
-            'Met (ticking them on the issue failed):',
-            ...update.checklist.map((item) => `- [x] ${item.text}`),
-          ]),
+        : ['', metHeading, ...update.checklist.map((item) => `- [x] ${item.text}`)]),
       ...(conflicts.length === 0
         ? []
         : [
@@ -68,7 +75,7 @@ export function applyTicketUpdate(
     ].join('\n');
     // Without a key of its own, the action's key makes a retried comment a
     // no-op, even after a crash.
-    tracker.comment(
+    await tracker.comment(
       issue,
       markdown,
       update.commentKey ?? update.idempotencyKey,
@@ -76,7 +83,7 @@ export function applyTicketUpdate(
     );
   }
   if (update.issueStatus !== null && tracker.capabilities.has('status')) {
-    tracker.setStatus(issue, update.issueStatus);
+    await tracker.setStatus(issue, update.issueStatus);
   }
   if (failed !== null) {
     throw failed;

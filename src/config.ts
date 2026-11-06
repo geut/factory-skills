@@ -30,17 +30,35 @@ export const DEFAULT_LIMITS = Object.fromEntries(
 // The statuses the factory writes to a ticket's issue; see tracker updates.
 export type TrackerStatus = 'in_progress' | 'in_review';
 
-// Where issues and the backlog live. Only GitHub has an adapter so far.
-export type TrackerConfig = {
-  // Which open issues the backlog shows. GitHub filters by labels and milestone.
+// Which tracker updates the factory may write besides statuses, which are
+// written only when mapped. Both default to on.
+export type TrackerUpdates = {
+  // Ticking the issue's checklist items at handoff. Off, the met items are
+  // listed in the handoff comment instead.
+  checklist: boolean;
+  // Comments on start, on a pause for a person, at handoff, and on cancel.
+  comments: boolean;
+};
+
+// GitHub Issues as the tracker.
+export type GithubTrackerConfig = {
+  // Which open issues the backlog shows: GitHub filters by labels and milestone.
   backlog: { labels: Array<string>; milestone: string | null };
   host: string;
   kind: 'github';
   owner: string;
   repo: string;
-  // How each factory status shows on the issue; an unmapped status is not written.
+  // How each factory status shows on the issue: a label. An unmapped status is
+  // not written.
   status: Partial<Record<TrackerStatus, { label: string }>>;
+  updates: TrackerUpdates;
 };
+
+// Where issues and the backlog live. Each tracker kind has its own place,
+// backlog, and status settings; only GitHub has an adapter so far.
+export type TrackerConfig = GithubTrackerConfig;
+
+export const DEFAULT_TRACKER_UPDATES: TrackerUpdates = { checklist: true, comments: true };
 
 // Where the repository and its pull requests live.
 export type CodeHostConfig = {
@@ -407,7 +425,7 @@ function readTracker(value: unknown): TrackerConfig | null | string {
   if (!isRecord(statusValue)) {
     return 'FACTORY.json tracker.status must be an object.';
   }
-  const status: TrackerConfig['status'] = {};
+  const status: GithubTrackerConfig['status'] = {};
   for (const [name, mapping] of Object.entries(statusValue)) {
     const known = trackerStatuses.find((item) => item === name);
     const label = isRecord(mapping) ? readString(mapping, 'label') : null;
@@ -416,7 +434,30 @@ function readTracker(value: unknown): TrackerConfig | null | string {
     }
     status[known] = { label };
   }
-  return { ...place, backlog: { labels, milestone }, kind: 'github', status };
+  const updates = readTrackerUpdates(value['updates']);
+  if (typeof updates === 'string') {
+    return updates;
+  }
+  return { ...place, backlog: { labels, milestone }, kind: 'github', status, updates };
+}
+
+// A message on error.
+function readTrackerUpdates(value: unknown): TrackerUpdates | string {
+  if (value === undefined) {
+    return DEFAULT_TRACKER_UPDATES;
+  }
+  const message = 'FACTORY.json tracker.updates takes comments and checklist, each true or false.';
+  if (!isRecord(value)) {
+    return message;
+  }
+  const updates = { ...DEFAULT_TRACKER_UPDATES };
+  for (const [name, on] of Object.entries(value)) {
+    if ((name !== 'comments' && name !== 'checklist') || typeof on !== 'boolean') {
+      return message;
+    }
+    updates[name] = on;
+  }
+  return updates;
 }
 
 function readCodeHost(value: unknown): CodeHostConfig | null | string {

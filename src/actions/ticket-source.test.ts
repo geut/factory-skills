@@ -22,20 +22,20 @@ type Call = Array<unknown>;
 function fake(capabilities: Array<TrackerCapability>, changed: Array<string> = []) {
   const calls: Array<Call> = [];
   const tracker: Tracker = {
-    blockedBy: () => [],
+    blockedBy: async () => [],
     capabilities: new Set(capabilities),
-    checklistItems: () => [],
-    children: () => [],
-    comment: (_issue, markdown, key, mode) => {
+    checklistItems: async () => [],
+    children: async () => [],
+    comment: async (_issue, markdown, key, mode) => {
       calls.push(['comment', markdown, key, mode]);
     },
     kind: 'github',
-    listBacklog: () => [],
-    resolve: () => null,
-    setStatus: (_issue, status) => {
+    listBacklog: async () => [],
+    resolve: async () => null,
+    setStatus: async (_issue, status) => {
       calls.push(['status', status]);
     },
-    tickBoxes: (_issue, keys) => {
+    tickBoxes: async (_issue, keys) => {
       calls.push(['tickBoxes', keys]);
       return { conflicts: keys.filter((key) => changed.includes(key)) };
     },
@@ -54,9 +54,9 @@ const handoff = {
   issueStatus: 'in_review' as const,
 };
 
-test('a handoff ticks the met boxes, then replaces its one comment, then shows the status', () => {
+test('a handoff ticks the met boxes, then replaces its one comment, then shows the status', async () => {
   const { calls, tracker } = fake(['checklist', 'comment', 'status']);
-  assert.deepEqual(applyTicketUpdate(tracker, issue, handoff), { conflicts: [] });
+  assert.deepEqual(await applyTicketUpdate(tracker, issue, handoff), { conflicts: [] });
   assert.deepEqual(calls, [
     ['tickBoxes', ['1:A reload keeps the filter.', '1:The filter is labelled.']],
     ['comment', 'The factory finished this ticket.', 'handoff:T1', 'replace'],
@@ -64,9 +64,9 @@ test('a handoff ticks the met boxes, then replaces its one comment, then shows t
   ]);
 });
 
-test('a box someone changed stays unticked and the comment says so', () => {
+test('a box someone changed stays unticked and the comment says so', async () => {
   const { calls, tracker } = fake(['checklist', 'comment'], ['1:The filter is labelled.']);
-  assert.deepEqual(applyTicketUpdate(tracker, issue, handoff), {
+  assert.deepEqual(await applyTicketUpdate(tracker, issue, handoff), {
     conflicts: ['The filter is labelled.'],
   });
   assert.equal(
@@ -75,17 +75,17 @@ test('a box someone changed stays unticked and the comment says so', () => {
   );
 });
 
-test('a tracker without a checklist gets the comment only', () => {
+test('a tracker without a checklist gets the comment only', async () => {
   const { calls, tracker } = fake(['comment']);
-  applyTicketUpdate(tracker, issue, handoff);
+  await applyTicketUpdate(tracker, issue, handoff);
   assert.deepEqual(calls, [
     ['comment', 'The factory finished this ticket.', 'handoff:T1', 'replace'],
   ]);
 });
 
-test('an update without a comment key posts once, keyed by its action', () => {
+test('an update without a comment key posts once, keyed by its action', async () => {
   const { calls, tracker } = fake(['comment']);
-  applyTicketUpdate(tracker, issue, {
+  await applyTicketUpdate(tracker, issue, {
     ...handoff,
     checklist: [],
     commentKey: null,
@@ -96,12 +96,12 @@ test('an update without a comment key posts once, keyed by its action', () => {
   ]);
 });
 
-test('a failed edit still posts the comment, with the met boxes, then fails for a retry', () => {
+test('a failed edit still posts the comment, with the met boxes, then fails for a retry', async () => {
   const { calls, tracker } = fake(['checklist', 'comment', 'status']);
-  tracker.tickBoxes = () => {
+  tracker.tickBoxes = async () => {
     throw new Error('gh issue edit failed');
   };
-  assert.throws(() => applyTicketUpdate(tracker, issue, handoff), /gh issue edit failed/);
+  await assert.rejects(() => applyTicketUpdate(tracker, issue, handoff), /gh issue edit failed/);
   assert.deepEqual(calls, [
     [
       'comment',
@@ -111,4 +111,36 @@ test('a failed edit still posts the comment, with the met boxes, then fails for 
     ],
     ['status', 'in_review'],
   ]);
+});
+
+test('with checklist ticking off, nothing is ticked and the comment lists the met items', async () => {
+  const { calls, tracker } = fake(['checklist', 'comment', 'status']);
+  assert.deepEqual(
+    await applyTicketUpdate(tracker, issue, handoff, { checklist: false, comments: true }),
+    { conflicts: [] },
+  );
+  assert.deepEqual(calls, [
+    [
+      'comment',
+      'The factory finished this ticket.\n\nMet:\n- [x] A reload keeps the filter.\n- [x] The filter is labelled.',
+      'handoff:T1',
+      'replace',
+    ],
+    ['status', 'in_review'],
+  ]);
+});
+
+test('with comments off, the boxes are still ticked and the status still shown', async () => {
+  const { calls, tracker } = fake(['checklist', 'comment', 'status']);
+  await applyTicketUpdate(tracker, issue, handoff, { checklist: true, comments: false });
+  assert.deepEqual(calls, [
+    ['tickBoxes', ['1:A reload keeps the filter.', '1:The filter is labelled.']],
+    ['status', 'in_review'],
+  ]);
+});
+
+test('with both off, only the mapped status is written', async () => {
+  const { calls, tracker } = fake(['checklist', 'comment', 'status']);
+  await applyTicketUpdate(tracker, issue, handoff, { checklist: false, comments: false });
+  assert.deepEqual(calls, [['status', 'in_review']]);
 });

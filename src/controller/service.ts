@@ -24,8 +24,14 @@ import {
   type PullRequestInfo,
   type PullRequestOutcome,
 } from '../ports/code-host.ts';
-import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
-import type { IssueLink, Tracker } from '../ports/tracker.ts';
+import { githubCliClient, type GithubClient } from '../ports/github.ts';
+import type { IssueLink } from '../ports/tracker.ts';
+import {
+  createTracker,
+  trackerKindOf,
+  type ConfiguredTracker,
+  type TrackerClients,
+} from '../ports/trackers.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { stages } from '../stages/index.ts';
@@ -96,9 +102,9 @@ export type FactoryCommands = {
   complete: (key: string, options: CommandOptions) => CommandOutcome;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
-  rerun: (key: string, options: CommandOptions) => CommandOutcome;
+  rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
-  start: (source: TicketSource, options: CommandOptions) => CommandOutcome;
+  start: (source: TicketSource, options: CommandOptions) => Promise<CommandOutcome>;
   // Stops one running agent by its run id; the ticket pauses.
   stopRun: (runId: string, options: CommandOptions) => CommandOutcome;
 };
@@ -155,7 +161,7 @@ function runningRun(snapshot: FactorySnapshot): RunId | null {
 
 export type FactoryService = {
   // The backlog, from a short cache unless `refresh`.
-  backlog: (refresh: boolean) => BacklogResult;
+  backlog: (refresh: boolean) => Promise<BacklogResult>;
   command: (args: string) => Promise<string>;
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
@@ -196,7 +202,7 @@ export function createFactoryService(input: {
 }): FactoryService {
   const db = input.db ?? openStateDatabase(input.factoryRoot, { create: true });
   const runtime = input.runtime ?? createPiHerdrRuntime();
-  const github = input.github ?? githubCliClient();
+  const clients: TrackerClients = { github: input.github ?? githubCliClient() };
   const post = input.notify ?? (() => undefined);
   // Every card is also kept as an event, for clients that read the history.
   const notify = (message: string): void => {
@@ -258,10 +264,13 @@ export function createFactoryService(input: {
       return createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
     });
   const findPullRequest: PullRequestLookup = (url) => pullRequestLookup(codeHost())(url);
-  const trackerFor = (): Tracker | null => {
+  const trackerFor = (): ConfiguredTracker | null => {
     const config = readFactoryConfig(input.factoryRoot);
     return config.kind === 'ok' && config.config.tracker !== null
-      ? createGithubTracker(config.config.tracker, github)
+      ? {
+          tracker: createTracker(config.config.tracker, clients),
+          updates: config.config.tracker.updates,
+        }
       : null;
   };
 
@@ -333,7 +342,7 @@ export function createFactoryService(input: {
 
   let backlogCache: { at: number; fetchedAt: string; items: Array<BacklogItem> } | null = null;
 
-  function backlog(refresh: boolean): BacklogResult {
+  async function backlog(refresh: boolean): Promise<BacklogResult> {
     const config = readFactoryConfig(input.factoryRoot);
     if (config.kind === 'error') {
       return { kind: 'error', message: config.message };
@@ -342,21 +351,26 @@ export function createFactoryService(input: {
       return { kind: 'error', message: 'FACTORY.json has no tracker, so there is no backlog.' };
     }
     if (refresh || backlogCache === null || Date.now() - backlogCache.at > BACKLOG_CACHE_MS) {
-      const tracker = createGithubTracker(config.config.tracker, github);
+      const tracker = createTracker(config.config.tracker, clients);
       try {
-        const items = tracker.listBacklog(config.config.tracker.backlog).map((issue) => ({
-          author: issue.author,
-          blockedBy: tracker.capabilities.has('blockedBy') ? tracker.blockedBy(issue) : [],
-          body: issue.body,
-          children: tracker.children(issue),
-          createdAt: issue.createdAt,
-          displayRef: issue.displayRef,
-          id: issue.id,
-          labels: issue.labels,
-          title: issue.title,
-          updatedAt: issue.updatedAt,
-          url: issue.url,
-        }));
+        const issues = await tracker.listBacklog();
+        const items: Array<BacklogItem> = [];
+        // One issue at a time, as before: the tracker is asked in order.
+        for (const issue of issues) {
+          items.push({
+            author: issue.author,
+            blockedBy: tracker.capabilities.has('blockedBy') ? await tracker.blockedBy(issue) : [],
+            body: issue.body,
+            children: await tracker.children(issue),
+            createdAt: issue.createdAt,
+            displayRef: issue.displayRef,
+            id: issue.id,
+            labels: issue.labels,
+            title: issue.title,
+            updatedAt: issue.updatedAt,
+            url: issue.url,
+          });
+        }
         backlogCache = { at: Date.now(), fetchedAt: now(), items };
       } catch (error: unknown) {
         return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
@@ -555,10 +569,11 @@ export function createFactoryService(input: {
     };
   }
 
-  // Each command's synchronous part: it resolves, applies, and commits, and
+  // Each command's committing part: it resolves, applies, and commits, and
   // leaves dispatch to the caller. Pi waits for the dispatch; the API answers
-  // as soon as the command is committed.
-  function startCommitted(source: TicketSource, options: CommandOptions): Committed {
+  // as soon as the command is committed. Start and rerun ask the tracker first,
+  // so they are async.
+  async function startCommitted(source: TicketSource, options: CommandOptions): Promise<Committed> {
     const policy = policyFromConfig();
     if (typeof policy === 'string') {
       return { kind: 'refused', message: policy, reason: 'factory_config' };
@@ -567,12 +582,12 @@ export function createFactoryService(input: {
     if (config.kind === 'error') {
       return { kind: 'refused', message: config.message, reason: 'factory_config' };
     }
-    const resolved = resolveTicket({
+    const resolved = await resolveTicket({
       codeRoot: input.codeRoot,
       factoryRoot: input.factoryRoot,
       fetchedAt: now(),
       source,
-      tracker: createGithubTracker(config.config.tracker, github),
+      tracker: createTracker(config.config.tracker, clients),
     });
     if (resolved.kind === 'error') {
       return {
@@ -658,7 +673,7 @@ export function createFactoryService(input: {
   }
 
   async function start(source: TicketSource): Promise<string> {
-    const result = startCommitted(source, piCommand);
+    const result = await startCommitted(source, piCommand);
     if (result.kind === 'refused') {
       return result.message;
     }
@@ -750,7 +765,10 @@ export function createFactoryService(input: {
 
   // A rerun fetches the ticket's source again and starts generation N+1 in
   // `<ticket dir>/r<N>`, on its own worktree and branch.
-  function rerunCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+  async function rerunCommitted(
+    snapshot: FactorySnapshot,
+    options: CommandOptions,
+  ): Promise<Committed> {
     const policy = policyFromConfig();
     if (typeof policy === 'string') {
       return { kind: 'refused', message: policy, reason: 'factory_config' };
@@ -760,16 +778,29 @@ export function createFactoryService(input: {
       return { kind: 'refused', message: config.message, reason: 'factory_config' };
     }
     const { ticket } = snapshot;
+    // A ticket from a tracker FACTORY.json no longer names cannot be fetched again.
+    const trackerKind = trackerKindOf(config.config.tracker);
+    if (
+      ticket.sourceKind !== 'file' &&
+      ticket.sourceKind !== 'text' &&
+      ticket.sourceKind !== trackerKind
+    ) {
+      return {
+        kind: 'refused',
+        message: `${ticket.displayRef} came from ${ticket.sourceKind}; the configured tracker is ${trackerKind}, so it cannot be fetched again.`,
+        reason: 'invalid_state',
+      };
+    }
     const source: TicketSource =
       ticket.sourceKind === 'text'
         ? { body: ticket.body, id: ticket.commandRef, kind: 'text' }
         : { kind: 'ref', value: ticket.commandRef };
-    const resolved = resolveTicket({
+    const resolved = await resolveTicket({
       codeRoot: input.codeRoot,
       factoryRoot: input.factoryRoot,
       fetchedAt: now(),
       source,
-      tracker: createGithubTracker(config.config.tracker, github),
+      tracker: createTracker(config.config.tracker, clients),
     });
     if (resolved.kind === 'error') {
       return {
@@ -811,7 +842,7 @@ export function createFactoryService(input: {
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    const result = rerunCommitted(snapshot, piCommand);
+    const result = await rerunCommitted(snapshot, piCommand);
     if (result.kind === 'refused') {
       return result.message;
     }
@@ -887,9 +918,15 @@ export function createFactoryService(input: {
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
-    rerun: (key, options) => byKey(key, (snapshot) => rerunCommitted(snapshot, options)),
+    rerun: async (key, options) => {
+      const snapshot = loadCurrentByFactoryKey(db, key);
+      if (snapshot === null) {
+        return { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' };
+      }
+      return accepted(await rerunCommitted(snapshot, options));
+    },
     retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
-    start: (source, options) => accepted(startCommitted(source, options)),
+    start: async (source, options) => accepted(await startCommitted(source, options)),
     stopRun: (id, options) => {
       const snapshot = loadSnapshotByRun(db, runIdOf(id));
       if (snapshot === null) {

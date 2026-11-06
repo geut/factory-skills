@@ -124,6 +124,28 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
   }
 });
 
+test('tracker updates default to on, each can be turned off, and anything else is refused', () => {
+  const github = { kind: 'github', owner: 'geut', repo: 'factory-skills' };
+  const updatesOf = (updates?: unknown) => {
+    const parsed = parseFactoryConfig({
+      models,
+      tracker: updates === undefined ? github : { ...github, updates },
+    });
+    return parsed.kind === 'ok' ? parsed.config.tracker?.updates : parsed.message;
+  };
+  assert.deepEqual(updatesOf(), { checklist: true, comments: true });
+  assert.deepEqual(updatesOf({}), { checklist: true, comments: true });
+  assert.deepEqual(updatesOf({ comments: false }), { checklist: true, comments: false });
+  assert.deepEqual(updatesOf({ checklist: false }), { checklist: false, comments: true });
+  for (const bad of [true, [], { comments: 'no' }, { status: false }]) {
+    assert.match(
+      String(updatesOf(bad)),
+      /tracker.updates takes comments and checklist, each true or false/,
+      JSON.stringify(bad),
+    );
+  }
+});
+
 test('worktree setup takes commands with a ten-minute default timeout', () => {
   const parsed = parseFactoryConfig({
     models,

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import type { TrackerConfig } from '../config.ts';
+import type { GithubTrackerConfig } from '../config.ts';
 import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
 import {
   UnsupportedOperation,
@@ -281,7 +281,7 @@ export function githubCliClient(): GithubClient {
 // one of its refs.
 export function githubTarget(
   ref: string,
-  config: TrackerConfig | null,
+  config: GithubTrackerConfig | null,
 ): IssueLocator | { kind: 'error'; message: string } | null {
   const url = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/.exec(ref);
   if (url?.[1] && url[2] && url[3] && url[4]) {
@@ -359,7 +359,11 @@ function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
   };
 }
 
-export function createGithubTracker(config: TrackerConfig | null, client: GithubClient): Tracker {
+// The client stays synchronous: `gh` runs to completion, as it always has.
+export function createGithubTracker(
+  config: GithubTrackerConfig | null,
+  client: GithubClient,
+): Tracker {
   const listBlockedBy = client.listBlockedBy;
   const listIssues = client.listIssues;
   const capabilities: Array<TrackerCapability> = ['children'];
@@ -380,7 +384,7 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
     capabilities.push('backlog');
   }
   return {
-    blockedBy: (issue) => {
+    blockedBy: async (issue) => {
       if (listBlockedBy === undefined) {
         throw new UnsupportedOperation('github', 'blocking links');
       }
@@ -392,17 +396,17 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
     },
     capabilities: new Set(capabilities),
     // GitHub keeps an issue's checklist as Markdown boxes in its body.
-    checklistItems: (issue) => {
+    checklistItems: async (issue) => {
       const at = locate(issue);
       return markdownChecklist(
         client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body,
       );
     },
-    children: (issue) => {
+    children: async (issue) => {
       const at = locate(issue);
       return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
     },
-    comment: (issue, markdown, key, mode) => {
+    comment: async (issue, markdown, key, mode) => {
       if (addComment === undefined || listComments === undefined) {
         throw new UnsupportedOperation('github', 'comments');
       }
@@ -421,7 +425,7 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       }
     },
     kind: 'github',
-    listBacklog: (query) => {
+    listBacklog: async () => {
       if (listIssues === undefined || config === null) {
         throw new UnsupportedOperation(
           'github',
@@ -429,13 +433,13 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
         );
       }
       return listIssues({
-        ...query,
+        ...config.backlog,
         host: config.host,
         owner: config.owner,
         repo: config.repo,
       }).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
     },
-    resolve: (ref): Resolved | null => {
+    resolve: async (ref): Promise<Resolved | null> => {
       const target = githubTarget(ref, config);
       if (target === null) {
         return null;
@@ -451,7 +455,7 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       }
       return { issue: trackerIssue(issue, ref), kind: 'issue' };
     },
-    setStatus: (issue, status) => {
+    setStatus: async (issue, status) => {
       if (editLabels === undefined) {
         throw new UnsupportedOperation('github', 'status labels');
       }
@@ -464,7 +468,7 @@ export function createGithubTracker(config: TrackerConfig | null, client: Github
       }
       editLabels(locate(issue), add === undefined ? [] : [add], remove);
     },
-    tickBoxes: (issue, keys) => {
+    tickBoxes: async (issue, keys) => {
       if (editBody === undefined) {
         throw new UnsupportedOperation('github', 'ticking checkboxes');
       }

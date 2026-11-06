@@ -1,8 +1,9 @@
 // The tracker port: the factory's one way to read issues. Each tracker (GitHub
 // Issues first, Linear or Jira later) is an adapter that translates these
-// operations into its own API and says which ones it can do. An operation an
-// adapter cannot do throws UnsupportedOperation; asking for one in FACTORY.json
-// stops the server at startup instead.
+// operations into its own API and says which ones it can do. Every operation
+// that reaches the tracker is async. An operation an adapter cannot do rejects
+// with UnsupportedOperation; asking for one in FACTORY.json stops the server at
+// startup instead.
 
 export type TrackerCapability =
   | 'backlog'
@@ -14,9 +15,6 @@ export type TrackerCapability =
 
 // A factory status shown on an issue, or `clear` to remove it.
 export type IssueStatus = 'clear' | 'in_progress' | 'in_review';
-
-// Which open issues the backlog shows; each tracker reads its own fields.
-export type BacklogQuery = { labels: Array<string>; milestone: string | null };
 
 // An issue as the factory sees it, whatever the tracker.
 export type TrackerIssue = {
@@ -51,29 +49,35 @@ export type Resolved =
 
 export type Tracker = {
   // Issues that block `issue`, through the tracker's native links.
-  blockedBy: (issue: TrackerIssue) => Array<IssueLink>;
+  blockedBy: (issue: TrackerIssue) => Promise<Array<IssueLink>>;
   capabilities: ReadonlySet<TrackerCapability>;
   // The issue's checklist as it is now, in order.
-  checklistItems: (issue: TrackerIssue) => Array<ChecklistItem>;
+  checklistItems: (issue: TrackerIssue) => Promise<Array<ChecklistItem>>;
   // Sub-issues of `issue`, through the tracker's native links. An issue with
   // children is an umbrella and cannot be started.
-  children: (issue: TrackerIssue) => Array<IssueLink>;
+  children: (issue: TrackerIssue) => Promise<Array<IssueLink>>;
   // Comments on `issue` unless the comment of `key` is already there, so a
   // retried update posts once. With `replace`, that comment's text is
   // replaced instead, so the issue keeps one up-to-date comment. How the
   // adapter finds the comment of a key is its own.
-  comment: (issue: TrackerIssue, markdown: string, key: string, mode: 'once' | 'replace') => void;
+  comment: (
+    issue: TrackerIssue,
+    markdown: string,
+    key: string,
+    mode: 'once' | 'replace',
+  ) => Promise<void>;
   // Also the ticket's source kind, such as `github`.
   kind: string;
-  // Open issues matching the query, newest first.
-  listBacklog: (query: BacklogQuery) => Array<TrackerIssue>;
+  // The open issues the tracker's backlog settings in FACTORY.json select,
+  // newest first.
+  listBacklog: () => Promise<Array<TrackerIssue>>;
   // Null when `ref` is not a ref this tracker understands.
-  resolve: (ref: string) => Resolved | null;
+  resolve: (ref: string) => Promise<Resolved | null>;
   // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a no-op.
-  setStatus: (issue: TrackerIssue, status: IssueStatus) => void;
+  setStatus: (issue: TrackerIssue, status: IssueStatus) => Promise<void>;
   // Ticks the checklist items of these keys and changes nothing else. A key
   // the issue no longer has, because someone edited it, is a conflict.
-  tickBoxes: (issue: TrackerIssue, keys: Array<string>) => { conflicts: Array<string> };
+  tickBoxes: (issue: TrackerIssue, keys: Array<string>) => Promise<{ conflicts: Array<string> }>;
 };
 
 export class UnsupportedOperation extends Error {

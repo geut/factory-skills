@@ -16,7 +16,8 @@ import {
   type FactoryService,
 } from '../controller/service.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
-import { createGithubTracker, githubCliClient, type GithubClient } from '../ports/github.ts';
+import { githubCliClient, type GithubClient } from '../ports/github.ts';
+import { createTracker } from '../ports/trackers.ts';
 import { ensureHerdrPlugin, herdrPluginDir } from '../runtime/herdr-plugin.ts';
 import {
   createPiHerdrRuntime,
@@ -181,10 +182,9 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   // Ask only for what the tracker can do; better to stop here than to fail later.
   const tracker = config.config.tracker;
   if (tracker !== null) {
-    const capabilities = createGithubTracker(
-      tracker,
-      input.github ?? githubCliClient(),
-    ).capabilities;
+    const { capabilities } = createTracker(tracker, {
+      github: input.github ?? githubCliClient(),
+    });
     if (Object.keys(tracker.status).length > 0 && !capabilities.has('status')) {
       return {
         kind: 'error',
