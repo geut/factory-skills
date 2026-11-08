@@ -526,9 +526,9 @@ export function commentIdFor(issueId: string, key: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-// Linear never takes a deleted comment's id again, so each key has a few ids
-// to use in turn: after a person deletes the factory's comment, the next post
-// takes the next one. Still derived, so a retry finds what it posted.
+// Each key has a few ids to use in turn, in case Linear refuses a deleted
+// comment's id: after a person deletes the factory's comment, the next post
+// takes the next one it accepts. Still derived, so a retry finds what it posted.
 const COMMENT_IDS = 5;
 
 export function commentIdsFor(issueId: string, key: string): Array<string> {

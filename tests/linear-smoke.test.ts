@@ -108,7 +108,7 @@ test(
 test(
   'a comment id derived from the key is accepted, and a repeat never posts twice',
   { skip },
-  async () => {
+  async (context) => {
     await tracker.comment(issue, 'Smoke: first.', 'smoke', 'once');
     await tracker.comment(issue, 'Smoke: first.', 'smoke', 'once');
     const id = commentIdFor(issueId, 'smoke');
@@ -120,15 +120,22 @@ test(
       comments.nodes.map((comment) => [comment.id, comment.body]),
       [[id, 'Smoke: replaced.']],
     );
-    // A person deletes it: Linear refuses the id again, so the next post
-    // takes the key's next id.
+    // A person deletes it. The next post is one comment with one of the
+    // key's ids, whether Linear takes the deleted id again or not, and a
+    // repeat finds it.
     await sdk.deleteComment(id);
     await tracker.comment(issue, 'Smoke: after a deletion.', 'smoke', 'replace');
-    const next = commentIdsFor(issueId, 'smoke')[1];
-    const left = await (await sdk.issue(issueId)).comments();
+    await tracker.comment(issue, 'Smoke: after a deletion.', 'smoke', 'replace');
+    const ids = commentIdsFor(issueId, 'smoke');
+    const left = (await (await sdk.issue(issueId)).comments()).nodes;
     assert.deepEqual(
-      left.nodes.map((comment) => [comment.id, comment.body]),
-      [[next, 'Smoke: after a deletion.']],
+      left.map((comment) => comment.body),
+      ['Smoke: after a deletion.'],
+    );
+    const used = ids.indexOf(left[0]?.id ?? '');
+    assert.ok(used >= 0, `${left[0]?.id} is none of the key's ids`);
+    context.diagnostic(
+      used === 0 ? 'Linear took the deleted comment id again' : `the post took id #${used}`,
     );
   },
 );
