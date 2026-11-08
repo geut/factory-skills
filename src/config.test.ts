@@ -114,7 +114,7 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
   assert.equal(bare.kind === 'ok' && pullRequestsAllowed(bare.config), true);
 
   for (const bad of [
-    { tracker: { kind: 'linear', owner: 'a', repo: 'b' } },
+    { tracker: { kind: 'jira', owner: 'a', repo: 'b' } },
     { tracker: { kind: 'github', owner: 'a' } },
     { tracker: { kind: 'github', owner: 'a', repo: 'b', status: { done: { label: 'x' } } } },
     { codeHost: { kind: 'github', owner: 'a', pullRequests: 'yes', repo: 'b' } },
@@ -143,6 +143,57 @@ test('tracker updates default to on, each can be turned off, and anything else i
       /tracker.updates takes comments and checklist, each true or false/,
       JSON.stringify(bad),
     );
+  }
+});
+
+test('a Linear tracker takes a team, backlog state types, and workflow state names', () => {
+  const parsed = parseFactoryConfig({
+    models,
+    tracker: {
+      backlog: { labels: ['factory'], project: 'Catalog' },
+      kind: 'linear',
+      status: { in_review: { state: 'In Review' } },
+      team: 'ENG',
+    },
+  });
+  assert.equal(parsed.kind, 'ok');
+  assert.deepEqual(parsed.kind === 'ok' ? parsed.config.tracker : null, {
+    apiKeyEnv: 'LINEAR_API_KEY',
+    backlog: { labels: ['factory'], project: 'Catalog', states: ['backlog', 'unstarted'] },
+    kind: 'linear',
+    status: { in_review: { state: 'In Review' } },
+    team: 'ENG',
+    updates: { checklist: true, comments: true },
+  });
+  const custom = parseFactoryConfig({
+    models,
+    tracker: {
+      apiKeyEnv: 'ACME_LINEAR',
+      backlog: { states: ['triage'] },
+      kind: 'linear',
+      team: 'ENG',
+    },
+  });
+  assert.equal(
+    custom.kind === 'ok' &&
+      custom.config.tracker?.kind === 'linear' &&
+      custom.config.tracker.apiKeyEnv,
+    'ACME_LINEAR',
+  );
+
+  for (const [bad, message] of [
+    [{ kind: 'linear' }, /needs team/],
+    [{ kind: 'jira', team: 'ENG' }, /tracker.kind must be github or linear/],
+    [{ apiKeyEnv: 'lower case', kind: 'linear', team: 'ENG' }, /apiKeyEnv must name/],
+    [{ backlog: { states: ['open'] }, kind: 'linear', team: 'ENG' }, /workflow state types/],
+    [{ backlog: { states: [] }, kind: 'linear', team: 'ENG' }, /workflow state types/],
+    [
+      { kind: 'linear', status: { in_review: { label: 'x' } }, team: 'ENG' },
+      /"state": "<workflow state name>"/,
+    ],
+  ] as const) {
+    const result = parseFactoryConfig({ models, tracker: bad });
+    assert.match(result.kind === 'error' ? result.message : 'parsed', message, JSON.stringify(bad));
   }
 });
 

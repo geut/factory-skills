@@ -31,9 +31,11 @@ function fake(capabilities: Array<TrackerCapability>, changed: Array<string> = [
     },
     kind: 'github',
     listBacklog: async () => [],
+    refHint: 'a GitHub ref',
     resolve: async () => null,
     setStatus: async (_issue, status) => {
       calls.push(['status', status]);
+      return null;
     },
     tickBoxes: async (_issue, keys) => {
       calls.push(['tickBoxes', keys]);
@@ -56,7 +58,10 @@ const handoff = {
 
 test('a handoff ticks the met boxes, then replaces its one comment, then shows the status', async () => {
   const { calls, tracker } = fake(['checklist', 'comment', 'status']);
-  assert.deepEqual(await applyTicketUpdate(tracker, issue, handoff), { conflicts: [] });
+  assert.deepEqual(await applyTicketUpdate(tracker, issue, handoff), {
+    conflicts: [],
+    statusNote: null,
+  });
   assert.deepEqual(calls, [
     ['tickBoxes', ['1:A reload keeps the filter.', '1:The filter is labelled.']],
     ['comment', 'The factory finished this ticket.', 'handoff:T1', 'replace'],
@@ -68,6 +73,7 @@ test('a box someone changed stays unticked and the comment says so', async () =>
   const { calls, tracker } = fake(['checklist', 'comment'], ['1:The filter is labelled.']);
   assert.deepEqual(await applyTicketUpdate(tracker, issue, handoff), {
     conflicts: ['The filter is labelled.'],
+    statusNote: null,
   });
   assert.equal(
     calls[1]?.[1],
@@ -117,7 +123,7 @@ test('with checklist ticking off, nothing is ticked and the comment lists the me
   const { calls, tracker } = fake(['checklist', 'comment', 'status']);
   assert.deepEqual(
     await applyTicketUpdate(tracker, issue, handoff, { checklist: false, comments: true }),
-    { conflicts: [] },
+    { conflicts: [], statusNote: null },
   );
   assert.deepEqual(calls, [
     [

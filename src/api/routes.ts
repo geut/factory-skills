@@ -6,6 +6,7 @@ import { factoryRoutes } from './factory.ts';
 import { readRoutes } from './reads.ts';
 import { defineRoute, SCOPES, type Route } from './route.ts';
 import { statsRoutes } from './stats.ts';
+import { trackerRoutes } from './tracker.ts';
 import { webhookRoutes } from './webhooks.ts';
 
 const Health = z
@@ -89,6 +90,7 @@ export const apiRoutes: Array<Route> = [
   ...factoryRoutes,
   ...readRoutes,
   ...backlogRoutes,
+  ...trackerRoutes,
   ...eventRoutes,
   ...statsRoutes,
   ...commandRoutes,

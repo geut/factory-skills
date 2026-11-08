@@ -71,10 +71,15 @@ export type Tracker = {
   // The open issues the tracker's backlog settings in FACTORY.json select,
   // newest first.
   listBacklog: () => Promise<Array<TrackerIssue>>;
+  // The refs this tracker understands, for a message about one it does not,
+  // such as `a Linear issue key such as ENG-42, or its URL`.
+  refHint: string;
   // Null when `ref` is not a ref this tracker understands.
   resolve: (ref: string) => Promise<Resolved | null>;
-  // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a no-op.
-  setStatus: (issue: TrackerIssue, status: IssueStatus) => Promise<void>;
+  // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a
+  // no-op. Resolves to why the status was left as it is when a person should
+  // know, such as a mapped state the issue's team does not have; else null.
+  setStatus: (issue: TrackerIssue, status: IssueStatus) => Promise<string | null>;
   // Ticks the checklist items of these keys and changes nothing else. A key
   // the issue no longer has, because someone edited it, is a conflict.
   tickBoxes: (issue: TrackerIssue, keys: Array<string>) => Promise<{ conflicts: Array<string> }>;

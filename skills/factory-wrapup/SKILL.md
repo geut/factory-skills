@@ -45,11 +45,11 @@ When it is true, `codeHost.pullRequests` is the project policy that authorizes y
 git -C "<worktree>" status --porcelain
 ```
 
-If that prints anything, commit the approved work on the ticket branch. Stage exactly the paths in `## Files`, by name. Never use `git add -A`, `git add .`, or a glob. Use a conventional message that references the ticket:
+If that prints anything, commit the approved work on the ticket branch. Stage exactly the paths in `## Files`, by name. Never use `git add -A`, `git add .`, or a glob. Use a conventional message that references the ticket as its tracker names it, from the prompt's `Ticket:` line: `#42` for a GitHub issue, the issue key such as `ENG-42` for any other tracker, and no reference for a local or text ticket:
 
 ```sh
 git -C "<worktree>" add -- <every path in ## Files>
-git -C "<worktree>" commit -m "feat: <summary> (#<issue>)"
+git -C "<worktree>" commit -m "feat: <summary> (<ref>)"
 git -C "<worktree>" status --porcelain
 ```
 
@@ -79,6 +79,8 @@ gh pr create --head "<ticket-branch>" --base "<base-branch>" --title "<title>" -
 EOF
 )"
 ```
+
+For an issue in a tracker other than GitHub, start the title with its key, as `ENG-42: <title>`, so the tracker links the pull request to the issue. Never add a closing keyword such as `Fixes ENG-42`: what happens to the issue on merge is the team's own tracker automation to decide.
 
 When the prompt lists QA screenshots, add a `## Screenshots` section to the pull request summary that names each one by task and criterion with its path. GitHub takes images only through its web upload, so the handoff also tells the human which files to drop into the pull request.
 

@@ -28,6 +28,7 @@ import { githubCliClient, type GithubClient } from '../ports/github.ts';
 import type { IssueLink } from '../ports/tracker.ts';
 import {
   createTracker,
+  linearFromEnv,
   trackerKindOf,
   type ConfiguredTracker,
   type TrackerClients,
@@ -195,6 +196,8 @@ export function createFactoryService(input: {
   ids?: IdSource;
   // Recorded on every action this service claims; see claimNextAction.
   leaseOwner?: string;
+  // Linear for a Linear tracker; the SDK with the key from the environment by default.
+  linear?: TrackerClients['linear'];
   notify?: (message: string) => void;
   now?: () => string;
   onActivity?: () => void;
@@ -202,7 +205,10 @@ export function createFactoryService(input: {
 }): FactoryService {
   const db = input.db ?? openStateDatabase(input.factoryRoot, { create: true });
   const runtime = input.runtime ?? createPiHerdrRuntime();
-  const clients: TrackerClients = { github: input.github ?? githubCliClient() };
+  const clients: TrackerClients = {
+    github: input.github ?? githubCliClient(),
+    linear: input.linear ?? linearFromEnv(process.env),
+  };
   const post = input.notify ?? (() => undefined);
   // Every card is also kept as an event, for clients that read the history.
   const notify = (message: string): void => {

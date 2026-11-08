@@ -54,9 +54,41 @@ export type GithubTrackerConfig = {
   updates: TrackerUpdates;
 };
 
+// Linear's kinds of workflow state, in workflow order.
+export const LINEAR_STATE_TYPES = [
+  'triage',
+  'backlog',
+  'unstarted',
+  'started',
+  'completed',
+  'canceled',
+  'duplicate',
+] as const;
+export type LinearStateType = (typeof LINEAR_STATE_TYPES)[number];
+
+// Linear as the tracker. Every name here is one the workspace already has;
+// the server checks them at startup.
+export type LinearTrackerConfig = {
+  // The environment variable that holds a personal API key.
+  apiKeyEnv: string;
+  // Which open issues of the team the backlog shows: all of these labels, the
+  // project, and issues whose workflow state is one of these types.
+  backlog: { labels: Array<string>; project: string | null; states: Array<LinearStateType> };
+  kind: 'linear';
+  // How each factory status shows on the issue: a workflow state of the
+  // issue's team, by name. An unmapped status is not written.
+  status: Partial<Record<TrackerStatus, { state: string }>>;
+  // The key of the team whose issues are the backlog, such as `ENG`.
+  team: string;
+  updates: TrackerUpdates;
+};
+
 // Where issues and the backlog live. Each tracker kind has its own place,
-// backlog, and status settings; only GitHub has an adapter so far.
-export type TrackerConfig = GithubTrackerConfig;
+// backlog, and status settings.
+export type TrackerConfig = GithubTrackerConfig | LinearTrackerConfig;
+
+export const DEFAULT_LINEAR_API_KEY_ENV = 'LINEAR_API_KEY';
+export const DEFAULT_LINEAR_BACKLOG_STATES: Array<LinearStateType> = ['backlog', 'unstarted'];
 
 export const DEFAULT_TRACKER_UPDATES: TrackerUpdates = { checklist: true, comments: true };
 
@@ -408,6 +440,12 @@ function readTracker(value: unknown): TrackerConfig | null | string {
   if (!isRecord(value)) {
     return 'FACTORY.json tracker must be an object.';
   }
+  if (value['kind'] === 'linear') {
+    return readLinearTracker(value);
+  }
+  if (value['kind'] !== 'github') {
+    return 'FACTORY.json tracker.kind must be github or linear.';
+  }
   const place = githubPlace(value, 'tracker');
   if (typeof place === 'string') {
     return place;
@@ -439,6 +477,67 @@ function readTracker(value: unknown): TrackerConfig | null | string {
     return updates;
   }
   return { ...place, backlog: { labels, milestone }, kind: 'github', status, updates };
+}
+
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+// A message on error.
+function readLinearTracker(value: Record<string, unknown>): LinearTrackerConfig | string {
+  const team = readString(value, 'team');
+  if (team === null) {
+    return 'FACTORY.json tracker needs team, the key of a Linear team such as "ENG".';
+  }
+  const apiKeyEnv = value['apiKeyEnv'] ?? DEFAULT_LINEAR_API_KEY_ENV;
+  if (typeof apiKeyEnv !== 'string' || !ENV_NAME.test(apiKeyEnv)) {
+    return 'FACTORY.json tracker.apiKeyEnv must name an environment variable.';
+  }
+  const backlogValue = value['backlog'] ?? {};
+  if (!isRecord(backlogValue)) {
+    return 'FACTORY.json tracker.backlog must be an object.';
+  }
+  const labels = backlogValue['labels'] === undefined ? [] : stringArray(backlogValue['labels']);
+  const project = backlogValue['project'] ?? null;
+  const states =
+    backlogValue['states'] === undefined
+      ? DEFAULT_LINEAR_BACKLOG_STATES
+      : stringArray(backlogValue['states']);
+  const knownStates = states?.every((state) =>
+    (LINEAR_STATE_TYPES as ReadonlyArray<string>).includes(state),
+  );
+  if (
+    labels === null ||
+    (project !== null && typeof project !== 'string') ||
+    states === null ||
+    states.length === 0 ||
+    !knownStates
+  ) {
+    return `FACTORY.json tracker.backlog takes labels (an array of names), a project name, and states (workflow state types: ${LINEAR_STATE_TYPES.join(', ')}).`;
+  }
+  const statusValue = value['status'] ?? {};
+  if (!isRecord(statusValue)) {
+    return 'FACTORY.json tracker.status must be an object.';
+  }
+  const status: LinearTrackerConfig['status'] = {};
+  for (const [name, mapping] of Object.entries(statusValue)) {
+    const known = trackerStatuses.find((item) => item === name);
+    const state = isRecord(mapping) ? readString(mapping, 'state') : null;
+    if (known === undefined || state === null) {
+      return `FACTORY.json tracker.status maps in_progress and in_review to { "state": "<workflow state name>" }.`;
+    }
+    status[known] = { state };
+  }
+  const updates = readTrackerUpdates(value['updates']);
+  if (typeof updates === 'string') {
+    return updates;
+  }
+  return {
+    apiKeyEnv,
+    backlog: { labels, project, states: states as Array<LinearStateType> },
+    kind: 'linear',
+    status,
+    team,
+    updates,
+  };
 }
 
 // A message on error.

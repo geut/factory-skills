@@ -9,3 +9,5 @@ node_modules
 .factory/
 .scratch/
 dist/
+
+.env

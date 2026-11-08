@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@linear/sdk": "98.0.0",
     "yaml": "^2.9.1",
     "zod": "^4.6.7",
     "zod-openapi": "^6.0.2"
