@@ -90,9 +90,9 @@ function linear(): Linear {
     backlog: async () => [{ ...find('ENG-42'), blockers: [], children: [] }],
     blockers: async () => [],
     children: async () => [],
-    comment: async (_issueId, ids) => {
-      const id = ids.findLast((item) => state.comments.has(item));
-      return id === undefined ? null : { body: state.comments.get(id) ?? '', id };
+    comment: async (_issueId, id) => {
+      const body = state.comments.get(id);
+      return body === undefined ? null : { body };
     },
     createComment: async ({ body, id }) => {
       state.comments.set(id, body);

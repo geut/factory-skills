@@ -71,12 +71,9 @@ export type LinearApi = {
   // Issues with a `blocks` relation to the issue.
   blockers: (issueId: string) => Promise<Array<LinearRelated>>;
   children: (issueId: string) => Promise<Array<LinearRelated>>;
-  // The issue's comment of the last of these ids it has, or null when it has
-  // none of them. A deleted comment counts as none.
-  comment: (
-    issueId: string,
-    commentIds: Array<string>,
-  ) => Promise<{ body: string; id: string } | null>;
+  // The issue's comment of this id, or null when it has none. A deleted
+  // comment counts as none, and Linear takes its id again.
+  comment: (issueId: string, commentId: string) => Promise<{ body: string } | null>;
   createComment: (input: { body: string; id: string; issueId: string }) => Promise<void>;
   inventory: () => Promise<LinearInventory>;
   // By UUID or key; rejects when Linear has no such issue.
@@ -264,10 +261,10 @@ export function linearSdkApi(apiKey: string): LinearApi {
     }
     return all.slice(0, limit);
   };
-  // One selection of an issue; `$id` is the issue, `$other` optional ids.
-  const issueField = async (issueId: string, selection: string, other?: Array<string>) => {
+  // One selection of an issue; `$id` is the issue, `$other` an optional id.
+  const issueField = async (issueId: string, selection: string, other?: string) => {
     const data = await request(
-      `query FactoryIssueField($id: String!${other === undefined ? '' : ', $other: [ID!]'}) {
+      `query FactoryIssueField($id: String!${other === undefined ? '' : ', $other: ID'}) {
         issue(id: $id) { ${selection} }
       }`,
       { id: issueId, ...(other === undefined ? {} : { other }) },
@@ -338,18 +335,14 @@ export function linearSdkApi(apiKey: string): LinearApi {
     },
     blockers,
     children,
-    comment: async (issueId, commentIds) => {
+    comment: async (issueId, commentId) => {
       const issue = await issueField(
         issueId,
-        `comments(first: ${commentIds.length}, filter: { id: { in: $other } }) { nodes { id body } }`,
-        commentIds,
+        'comments(first: 1, filter: { id: { eq: $other } }) { nodes { id body } }',
+        commentId,
       );
-      const found = nodes(issue['comments']);
-      const last = commentIds.findLast((id) => found.some((comment) => comment['id'] === id));
-      const comment = found.find((item) => item['id'] === last);
-      return comment === undefined
-        ? null
-        : { body: text(comment['body']), id: text(comment['id']) };
+      const found = nodes(issue['comments'])[0];
+      return found === undefined ? null : { body: text(found['body']) };
     },
     createComment: async (input) => {
       succeeded(await plainly(() => sdk().createComment(input)), 'create the comment');
@@ -526,17 +519,6 @@ export function commentIdFor(issueId: string, key: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-// Each key has a few ids to use in turn, in case Linear refuses a deleted
-// comment's id: after a person deletes the factory's comment, the next post
-// takes the next one it accepts. Still derived, so a retry finds what it posted.
-const COMMENT_IDS = 5;
-
-export function commentIdsFor(issueId: string, key: string): Array<string> {
-  return Array.from({ length: COMMENT_IDS }, (_, index) =>
-    commentIdFor(issueId, index === 0 ? key : `${key}#${index}`),
-  );
-}
-
 function trackerIssue(issue: LinearIssue, ref: string): TrackerIssue {
   return {
     author: issue.creator,
@@ -583,31 +565,27 @@ export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi)
     children: async (issue) => (await api.children(uuidOf(issue))).map(linkOf),
     comment: async (issue, markdown, key, mode) => {
       const issueId = uuidOf(issue);
-      const ids = commentIdsFor(issueId, key);
-      const keep = async (posted: { body: string; id: string }) => {
+      const id = commentIdFor(issueId, key);
+      const keep = async (posted: { body: string }) => {
         if (mode === 'replace' && posted.body !== markdown) {
-          await api.updateComment(posted.id, markdown);
+          await api.updateComment(id, markdown);
         }
       };
-      const posted = await api.comment(issueId, ids);
+      const posted = await api.comment(issueId, id);
       if (posted !== null) {
         return keep(posted);
       }
-      let failure: unknown = null;
-      for (const id of ids) {
-        try {
-          return await api.createComment({ body: markdown, id, issueId });
-        } catch (error: unknown) {
-          failure = error;
-          // The create may have gone through before the error, as after a
-          // timeout. If not, the id was a deleted comment's: take the next.
-          const made = await api.comment(issueId, [id]);
-          if (made !== null) {
-            return keep(made);
-          }
+      try {
+        await api.createComment({ body: markdown, id, issueId });
+      } catch (error: unknown) {
+        // The create may have gone through before the error, as after a
+        // timeout: then the comment is there and is kept, not posted again.
+        const made = await api.comment(issueId, id);
+        if (made === null) {
+          throw error;
         }
+        await keep(made);
       }
-      throw failure;
     },
     kind: 'linear',
     listBacklog: async () =>

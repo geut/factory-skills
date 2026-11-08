@@ -4,7 +4,6 @@ import type { LinearTrackerConfig } from '../config.ts';
 import {
   checkLinearSettings,
   commentIdFor,
-  commentIdsFor,
   createLinearTracker,
   formatLinearInventory,
   linearMessage,
@@ -59,8 +58,6 @@ type Fake = {
   blockers: Array<LinearRelated>;
   children: Array<LinearRelated>;
   comments: Map<string, string>;
-  // Ids of comments a person deleted, which Linear never takes again.
-  deleted: Set<string>;
   issue: LinearIssue;
   writes: Array<Array<unknown>>;
 };
@@ -73,7 +70,6 @@ function fake(issue = linearIssue()): Fake {
     blockers: [],
     children: [],
     comments: new Map(),
-    deleted: new Set(),
     issue,
     writes: [],
   };
@@ -90,12 +86,12 @@ function fake(issue = linearIssue()): Fake {
       state.writes.push(['children']);
       return state.children;
     },
-    comment: async (_issueId, commentIds) => {
-      const id = commentIds.findLast((item) => state.comments.has(item));
-      return id === undefined ? null : { body: state.comments.get(id) ?? '', id };
+    comment: async (_issueId, commentId) => {
+      const body = state.comments.get(commentId);
+      return body === undefined ? null : { body };
     },
     createComment: async (input) => {
-      if (state.comments.has(input.id) || state.deleted.has(input.id)) {
+      if (state.comments.has(input.id)) {
         throw new Error('Argument Validation Error');
       }
       state.writes.push(['createComment', input.id, input.body]);
@@ -280,21 +276,19 @@ test('a comment gets an id from its issue and key, so a retry finds it instead o
   ]);
 });
 
-test('after a person deletes the factory’s comment, the next post takes the next id', async () => {
+test('after a person deletes the factory’s comment, the next post makes it again with its id', async () => {
   const linear = fake();
   const tracker = createLinearTracker(config, linear.api);
   const issue = await resolved(tracker);
-  const [first, second] = commentIdsFor('uuid-42', 'progress:T1');
-  assert.equal(first, commentIdFor('uuid-42', 'progress:T1'));
+  const id = commentIdFor('uuid-42', 'progress:T1');
   await tracker.comment(issue, 'Step 1.', 'progress:T1', 'replace');
-  linear.comments.delete(first ?? '');
-  linear.deleted.add(first ?? '');
+  linear.comments.delete(id);
   await tracker.comment(issue, 'Step 2.', 'progress:T1', 'replace');
   await tracker.comment(issue, 'Step 3.', 'progress:T1', 'replace');
   assert.deepEqual(linear.writes, [
-    ['createComment', first, 'Step 1.'],
-    ['createComment', second, 'Step 2.'],
-    ['updateComment', second, 'Step 3.'],
+    ['createComment', id, 'Step 1.'],
+    ['createComment', id, 'Step 2.'],
+    ['updateComment', id, 'Step 3.'],
   ]);
 });
 

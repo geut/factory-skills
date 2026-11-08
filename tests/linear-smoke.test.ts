@@ -7,7 +7,6 @@ import type { LinearTrackerConfig } from '../src/config.ts';
 import {
   checkLinearSettings,
   commentIdFor,
-  commentIdsFor,
   createLinearTracker,
   linearSdkApi,
 } from '../src/ports/linear.ts';
@@ -108,7 +107,7 @@ test(
 test(
   'a comment id derived from the key is accepted, and a repeat never posts twice',
   { skip },
-  async (context) => {
+  async () => {
     await tracker.comment(issue, 'Smoke: first.', 'smoke', 'once');
     await tracker.comment(issue, 'Smoke: first.', 'smoke', 'once');
     const id = commentIdFor(issueId, 'smoke');
@@ -120,22 +119,15 @@ test(
       comments.nodes.map((comment) => [comment.id, comment.body]),
       [[id, 'Smoke: replaced.']],
     );
-    // A person deletes it. The next post is one comment with one of the
-    // key's ids, whether Linear takes the deleted id again or not, and a
-    // repeat finds it.
+    // A person deletes it: Linear takes the deleted id again, so the next
+    // post makes the comment anew with its id, and a repeat finds it.
     await sdk.deleteComment(id);
     await tracker.comment(issue, 'Smoke: after a deletion.', 'smoke', 'replace');
     await tracker.comment(issue, 'Smoke: after a deletion.', 'smoke', 'replace');
-    const ids = commentIdsFor(issueId, 'smoke');
-    const left = (await (await sdk.issue(issueId)).comments()).nodes;
+    const left = await (await sdk.issue(issueId)).comments();
     assert.deepEqual(
-      left.map((comment) => comment.body),
-      ['Smoke: after a deletion.'],
-    );
-    const used = ids.indexOf(left[0]?.id ?? '');
-    assert.ok(used >= 0, `${left[0]?.id} is none of the key's ids`);
-    context.diagnostic(
-      used === 0 ? 'Linear took the deleted comment id again' : `the post took id #${used}`,
+      left.nodes.map((comment) => [comment.id, comment.body]),
+      [[id, 'Smoke: after a deletion.']],
     );
   },
 );
