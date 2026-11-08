@@ -35,6 +35,13 @@ test('wrap-up is given each task’s review verification, gaps included', () => 
     },
   );
   const text = wrapup.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
+  // The skill picks the commit and title reference by where the ticket came from.
+  assert.match(
+    text,
+    new RegExp(
+      `Ticket: ${snapshot.ticket.displayRef}\nTicket source: ${snapshot.ticket.sourceKind}\n`,
+    ),
+  );
   assert.match(
     text,
     /Review verification:\n- Task 01 AC1: verified — src\/a\.ts:4\n- Task 01 AC2: not_verified — needs a real browser\n/,

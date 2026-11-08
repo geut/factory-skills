@@ -729,6 +729,44 @@
         }
       }
     },
+    "/v1/tracker/inventory": {
+      "get": {
+        "operationId": "trackerInventory",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List the Linear workspace's teams, workflow states, labels, and projects",
+        "tags": [
+          "backlog"
+        ],
+        "responses": {
+          "200": {
+            "description": "What the Linear workspace has.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerInventory"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/events": {
       "get": {
         "operationId": "streamEvents",
@@ -3329,6 +3367,114 @@
           "displayRef",
           "title",
           "url"
+        ],
+        "additionalProperties": false
+      },
+      "TrackerInventory": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "linear"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerLabel"
+            },
+            "description": "Workspace labels, which every team can use."
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "The key tracker.team takes, such as ENG."
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TrackerLabel"
+                  },
+                  "description": "The team's own labels."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "states": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "description": "Workflow states in workflow order: tracker.status maps names, tracker.backlog.states takes types."
+                }
+              },
+              "required": [
+                "key",
+                "labels",
+                "name",
+                "states"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "labels",
+          "projects",
+          "teams"
+        ],
+        "additionalProperties": false
+      },
+      "TrackerLabel": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "description": "The label group it sits in, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name tracker.backlog.labels takes."
+          }
+        },
+        "required": [
+          "group",
+          "name"
         ],
         "additionalProperties": false
       },

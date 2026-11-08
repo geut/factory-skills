@@ -118,7 +118,7 @@ Reads need a `read` token.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
 - A ticket's `source` is the issue or brief as fetched when that execution started, so `?execution=n` shows what generation n was asked. A brief has no tracker author or url; `startedBy` says who started it.
 - A run's activity is the agent's latest assistant message in that run, read from its Pi session file.
-- `GET /v1/backlog` lists open tracker issues that match `tracker.backlog` (labels and milestone on GitHub) and are not tickets yet. Each one carries its description, author, and created and updated times, and says whether another issue blocks it and whether it is an umbrella with sub-issues. The list is cached for about a minute; `?refresh=true` asks the tracker again. A started issue drops out at once.
+- `GET /v1/backlog` lists open tracker issues that match `tracker.backlog` (labels and milestone on GitHub; team, labels, project, and state types on Linear) and are not tickets yet. Each one carries its description, author, and created and updated times, and says whether another issue blocks it and whether it is an umbrella with sub-issues. The list is cached for about a minute; `?refresh=true` asks the tracker again. A started issue drops out at once.
 
 ### Events
 
@@ -242,9 +242,9 @@ Each ticket works in its own git worktree, which starts without installed depend
 
 ## Tracker and code host
 
-The factory reads issues through a **tracker** and pull requests through a **code host**, configured in `FACTORY.json` as `tracker` and `codeHost`. Each is an adapter behind a fixed interface; GitHub is the only one so far, and it works through the `gh` CLI. An operation an adapter cannot do fails with "not supported", and asking for one in `FACTORY.json` stops the server at startup. The old `github` and `keys` blocks are refused with a message saying what replaced them.
+The factory reads issues through a **tracker** and pull requests through a **code host**, configured in `FACTORY.json` as `tracker` and `codeHost`. Each is an adapter behind a fixed interface. GitHub is both, through the `gh` CLI; Linear is a tracker, through its SDK (see [Linear](#linear)), with GitHub as the code host. An operation an adapter cannot do fails with "not supported", and asking for one in `FACTORY.json` stops the server at startup. The old `github` and `keys` blocks are refused with a message saying what replaced them.
 
-- `tracker` resolves issue refs: an issue URL, `owner/repo#n`, or `#n` for the configured repository. Local markdown or JSON files and `--text` tickets bypass it.
+- `tracker` resolves issue refs: on GitHub an issue URL, `owner/repo#n`, or `#n` for the configured repository; on Linear an issue key such as `ENG-42` or its URL. Local markdown or JSON files and `--text` tickets bypass it.
 - **Parent and blocking links must be native.** The factory reads GitHub's sub-issues and "blocked by" links, not `## Parent` or `## Blocked by` headings in an issue body. An issue with sub-issues is an umbrella: start each sub-issue instead.
 - **Tracker updates.** For a ticket that came from the tracker, the factory comments on its issue when it starts, when it pauses for a person (with the question and how to answer), and at handoff (with the pull request link). `tracker.status` maps `in_progress` and `in_review` to labels, such as `{ "in_progress": { "label": "factory:in-progress" } }`; create the labels in the repository first. An unmapped status is not written. Updates go through the outbox and retry; each comment carries a hidden marker, so a retry never posts twice. A tracker that keeps failing leaves a warning in the ticket's `trackerWarnings` and never pauses or fails the ticket. A `tracker.status` the tracker cannot write stops the server at startup.
 - **Turning updates off.** `tracker.updates` turns off comments (`"comments": false`) or checklist ticks (`"checklist": false`); both are on by default. With ticks off, the handoff comment lists the met items instead. Status changes need no switch, because only mapped statuses are written. The factory never creates labels or statuses in the tracker; it only uses the ones that already exist.
@@ -253,6 +253,34 @@ The factory reads issues through a **tracker** and pull requests through a **cod
 - When wrap-up validation passes, the pull request it checked becomes the ticket's. A ticket with none recorded, such as one you opened by hand, is found later by its branch.
 - The server checks the pull request of every ticket in handoff at startup and then every `codeHost.syncMinutes` (10 by default), and stores its reviews and commits. A merged pull request completes the ticket, recorded as done by `code-host`; one closed without merging cancels it with reason `pull_request_closed`. `/factory complete` still works by hand.
 - Webhooks make that faster. Set `codeHost.webhookSecretEnv` to the name of an environment variable holding the secret, then point a GitHub webhook for **Pull requests** and **Pull request reviews** at `POST /v1/webhooks/github` with that secret. A delivery needs no token; its `X-Hub-Signature-256` must match, or it gets `401`. Deliveries about pull requests no ticket has are accepted and ignored. The periodic sync stays on as a backstop, because GitHub does not retry a failed delivery.
+
+### Linear
+
+The factory fits an existing Linear workspace: it uses the teams, labels, projects, and workflow states that are already there, and never creates any.
+
+1. Create a personal API key in Linear (Settings → Security & access) and put it in `LINEAR_API_KEY`, or in the variable `tracker.apiKeyEnv` names.
+2. Run `factory tracker inspect` (`--json` for JSON). It lists the teams the key can see, each team's workflow states (name and type, in workflow order) and labels, the workspace's labels, and its projects. It works before the tracker is configured. The server serves the same list at `GET /v1/tracker/inventory` (`read`).
+3. Write the tracker settings from those names:
+
+   ```json
+   "tracker": {
+     "kind": "linear",
+     "team": "ENG",
+     "backlog": { "labels": ["factory"], "project": "Catalog", "states": ["backlog", "unstarted"] },
+     "status": { "in_progress": { "state": "In Progress" }, "in_review": { "state": "In Review" } }
+   }
+   ```
+
+   `team` is a team key and sets the backlog. `backlog.states` takes workflow state _types_ (`triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled`), so it fits any team's workflow, and defaults to `backlog` and `unstarted`. An issue must carry every listed label. `status` maps to workflow state _names_. `apiKeyEnv` defaults to `LINEAR_API_KEY`.
+
+The server refuses to start without the key, or when a team, label, project, or state it names does not exist; the message lists the names that do. When Linear cannot be reached at startup, the server warns and starts anyway: local tickets and runs under way do not need it.
+
+- **Refs.** Start an issue by its key (`ENG-42`, any case) or its URL. A bare number is refused with the key to use instead. An issue of another team can be started too.
+- **Statuses only move forward.** A status moves the issue to the mapped state of its own team only when that state comes later in the workflow, and never moves a completed or cancelled issue: people and Linear's own automation move issues too. Cancelling a ticket leaves the state as it is; the cancel comment says the factory stopped. When the issue's team has no state of the mapped name, the status is skipped with a warning on the ticket.
+- **Comments.** Each factory comment's id is derived from the issue and the comment's purpose, so a retry finds it instead of posting twice, with no hidden marker in the text. After a person deletes one, the next post makes it again with the same id.
+- **Checklist.** The issue checklist is the Markdown boxes in the description. Sub-issues make an issue an umbrella, as on GitHub; blockers are `blocks` relations whose issue is not finished.
+- **Pull requests.** The ticket branch (`factory/eng-42-…`) and the pull request title (`ENG-42: …`) carry the issue key, so Linear's GitHub integration links the pull request. The factory adds no closing keyword. By default that integration also moves a linked issue to In Progress when a pull request opens and to Done when it merges; map `in_review` only if your team's automation does not already cover it.
+- **Checking against a real workspace.** `tests/linear-smoke.test.ts` runs against Linear when `LINEAR_API_KEY` and `LINEAR_SMOKE_TEAM` (a scratch team's key) are set, in the environment or in a `.env` file at the repository root, which git ignores. With that file in place, `npm test` runs it too. It creates one throwaway issue, checks that description boxes, derived comment ids (including after a deletion), workflow states, and the factory's branch names behave as the adapter expects, then deletes it. CI skips it.
 
 ## Factory root
 

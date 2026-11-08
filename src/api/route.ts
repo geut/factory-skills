@@ -5,6 +5,7 @@ import type { ConfigResult } from '../config.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
+import type { InventoryResult } from '../ports/trackers.ts';
 import type { EventHub } from '../server/events.ts';
 import { ProblemError } from './problem.ts';
 
@@ -20,6 +21,9 @@ export type ApiContext = {
   factoryConfig: (() => ConfigResult) | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
+  // What the Linear workspace has, or null when the tracker is not Linear;
+  // null where the server has none.
+  trackerInventory: (() => Promise<InventoryResult | null>) | null;
   // The code host side of webhooks; null where the server has none.
   webhooks: Webhooks | null;
 };

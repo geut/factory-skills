@@ -421,16 +421,23 @@ async function updateTicketSource(
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
-      const { conflicts } = await applyTicketUpdate(tracker, issue, action, updates);
-      // A box someone changed stays unticked: a warning, never a retry.
+      const { conflicts, statusNote } = await applyTicketUpdate(tracker, issue, action, updates);
+      // A box someone changed stays unticked, and a status the issue's
+      // tracker cannot show stays unshown: a warning, never a retry.
+      const warnings = [
+        ...(conflicts.length === 0
+          ? []
+          : [
+              `Left unticked, because the item changed on the issue: ${conflicts.map((text) => `"${text}"`).join(', ')}.`,
+            ]),
+        ...(statusNote === null ? [] : [statusNote]),
+      ];
       finishLeasedAction(
         input.db,
         action.id,
         input.now(),
-        conflicts.length === 0 ? 'succeeded' : 'failed',
-        conflicts.length === 0
-          ? null
-          : `Left unticked, because the item changed on the issue: ${conflicts.map((text) => `"${text}"`).join(', ')}.`,
+        warnings.length === 0 ? 'succeeded' : 'failed',
+        warnings.length === 0 ? null : warnings.join(' '),
       );
       return null;
     } catch (error: unknown) {

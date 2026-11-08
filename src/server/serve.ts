@@ -8,7 +8,7 @@ import { buildOpenApiDocument } from '../api/openapi.ts';
 import { ProblemError } from '../api/problem.ts';
 import { createRouter } from '../api/router.ts';
 import { apiRoutes } from '../api/routes.ts';
-import { DEFAULT_SYNC_MINUTES, readFactoryConfig } from '../config.ts';
+import { DEFAULT_SYNC_MINUTES, readFactoryConfig, type LinearTrackerConfig } from '../config.ts';
 import {
   createFactoryService,
   factoryPaths,
@@ -17,7 +17,13 @@ import {
 } from '../controller/service.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
 import { githubCliClient, type GithubClient } from '../ports/github.ts';
-import { createTracker } from '../ports/trackers.ts';
+import { checkLinearSettings } from '../ports/linear.ts';
+import {
+  createTracker,
+  linearFromEnv,
+  linearInventory,
+  type TrackerClients,
+} from '../ports/trackers.ts';
 import { ensureHerdrPlugin, herdrPluginDir } from '../runtime/herdr-plugin.ts';
 import {
   createPiHerdrRuntime,
@@ -54,6 +60,8 @@ type ServeInput = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   github?: GithubClient;
+  // Tests pass a stand-in; a Linear tracker uses the SDK otherwise.
+  linear?: TrackerClients['linear'];
   // Called when the server loses its lease and has shut itself down.
   onLost?: (message: string) => void;
   out: (line: string) => void;
@@ -146,6 +154,38 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// A Linear tracker needs its API key, and every team, label, project, and
+// workflow state FACTORY.json names must already exist: the factory adapts to
+// the workspace and never creates them. Null when all is well.
+// A missing key or a name the workspace lacks stops the server; Linear being
+// out of reach only warns, since local tickets and runs under way need none of
+// it, and each tracker call reports its own failure.
+async function checkLinearTracker(
+  tracker: LinearTrackerConfig,
+  env: NodeJS.ProcessEnv,
+  linear: TrackerClients['linear'],
+): Promise<{ kind: 'error' | 'warning'; message: string } | null> {
+  const found = await linearInventory(tracker, env, linear);
+  if (found.kind === 'error') {
+    return found.reason === 'no_api_key'
+      ? { kind: 'error', message: `FACTORY.json's tracker is Linear: ${found.message}` }
+      : {
+          kind: 'warning',
+          message: `Warning: could not check FACTORY.json's tracker settings with ${found.message}`,
+        };
+  }
+  const problems = checkLinearSettings(tracker, found.inventory);
+  return problems.length === 0
+    ? null
+    : {
+        kind: 'error',
+        message: [
+          "FACTORY.json's tracker names what this Linear workspace does not have (run factory tracker inspect to see what it has):",
+          ...problems.map((problem) => `- ${problem}`),
+        ].join('\n'),
+      };
+}
+
 export async function serve(input: ServeInput): Promise<ServeResult> {
   const { codeRoot, factoryRoot } = factoryPaths(input.cwd);
   const targetPaneId = input.env['HERDR_PANE_ID'] ?? '';
@@ -181,15 +221,26 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const { host } = config.config.server;
   // Ask only for what the tracker can do; better to stop here than to fail later.
   const tracker = config.config.tracker;
+  const linear = input.linear ?? linearFromEnv(input.env);
   if (tracker !== null) {
     const { capabilities } = createTracker(tracker, {
       github: input.github ?? githubCliClient(),
+      linear,
     });
     if (Object.keys(tracker.status).length > 0 && !capabilities.has('status')) {
       return {
         kind: 'error',
         message: `The ${tracker.kind} tracker cannot show statuses; remove tracker.status from FACTORY.json.`,
       };
+    }
+  }
+  if (tracker?.kind === 'linear') {
+    const checked = await checkLinearTracker(tracker, input.env, linear);
+    if (checked?.kind === 'error') {
+      return { kind: 'error', message: checked.message };
+    }
+    if (checked?.kind === 'warning') {
+      input.out(checked.message);
     }
   }
 
@@ -240,6 +291,13 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         factoryConfig: () => readFactoryConfig(factoryRoot),
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+        trackerInventory: async () => {
+          const current = readFactoryConfig(factoryRoot);
+          const configured = current.kind === 'ok' ? current.config.tracker : null;
+          return configured?.kind === 'linear'
+            ? linearInventory(configured, input.env, linear)
+            : null;
+        },
         webhooks: {
           pullRequestChanged: (pullRequest) => ready().pullRequestChanged(pullRequest),
           secret: () => {
@@ -302,6 +360,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     ...(input.codeHost === undefined ? {} : { codeHost: input.codeHost }),
     ...(input.github === undefined ? {} : { github: input.github }),
     leaseOwner: instanceId,
+    linear,
     notify: input.out,
     runtime,
   });

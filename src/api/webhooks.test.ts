@@ -27,6 +27,7 @@ async function serveWith(secret: string | null, changed: Array<PullRequestInfo>)
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        trackerInventory: null,
         webhooks: {
           pullRequestChanged: (pullRequest) => {
             changed.push(pullRequest);

@@ -26,13 +26,14 @@ export function trackerIssueOf(ticket: TicketRecord): TrackerIssue {
 // Writes one tracker update to the issue: ticks its checklist items, posts or
 // replaces its comment, and shows its status, as far as the tracker can and
 // FACTORY.json's tracker.updates allows. Returns the item texts it left
-// unticked because someone changed them on the issue.
+// unticked because someone changed them on the issue, and why the status was
+// left as it was, when a person should know.
 export async function applyTicketUpdate(
   tracker: Tracker,
   issue: TrackerIssue,
   update: TicketUpdate,
   updates: TrackerUpdates = DEFAULT_TRACKER_UPDATES,
-): Promise<{ conflicts: Array<string> }> {
+): Promise<{ conflicts: Array<string>; statusNote: string | null }> {
   const textOf = new Map(update.checklist.map((item) => [item.key, item.text]));
   let conflicts: Array<string> = [];
   // A failed edit still lets the comment and status through; it is thrown
@@ -82,11 +83,12 @@ export async function applyTicketUpdate(
       update.commentKey === null ? 'once' : 'replace',
     );
   }
+  let statusNote: string | null = null;
   if (update.issueStatus !== null && tracker.capabilities.has('status')) {
-    await tracker.setStatus(issue, update.issueStatus);
+    statusNote = await tracker.setStatus(issue, update.issueStatus);
   }
   if (failed !== null) {
     throw failed;
   }
-  return { conflicts };
+  return { conflicts, statusNote };
 }

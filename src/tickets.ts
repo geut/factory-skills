@@ -166,7 +166,7 @@ export async function resolveTicket(input: {
   if (resolved === null) {
     return {
       kind: 'error',
-      message: `Cannot resolve ${ref}. Use a GitHub URL, owner/repo#number, #number, or a local markdown/json ticket.`,
+      message: `Cannot resolve ${ref}. Use ${input.tracker.refHint}, or a local markdown/json ticket.`,
     };
   }
   if (resolved.kind === 'error') {

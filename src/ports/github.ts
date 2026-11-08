@@ -439,6 +439,7 @@ export function createGithubTracker(
         repo: config.repo,
       }).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
     },
+    refHint: 'a GitHub URL, owner/repo#number, or #number',
     resolve: async (ref): Promise<Resolved | null> => {
       const target = githubTarget(ref, config);
       if (target === null) {
@@ -464,9 +465,10 @@ export function createGithubTracker(
       const add = status === 'clear' ? undefined : mapped[status]?.label;
       const remove = labels.filter((label) => label !== add);
       if (add === undefined && (status !== 'clear' || remove.length === 0)) {
-        return;
+        return null;
       }
       editLabels(locate(issue), add === undefined ? [] : [add], remove);
+      return null;
     },
     tickBoxes: async (issue, keys) => {
       if (editBody === undefined) {
