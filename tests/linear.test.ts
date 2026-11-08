@@ -87,12 +87,12 @@ function linear(): Linear {
     keys: [],
   };
   state.api = {
-    backlog: async () => [find('ENG-42')],
+    backlog: async () => [{ ...find('ENG-42'), blockers: [], children: [] }],
     blockers: async () => [],
     children: async () => [],
-    comment: async (_issueId, id) => {
-      const body = state.comments.get(id);
-      return body === undefined ? null : { body };
+    comment: async (_issueId, ids) => {
+      const id = ids.findLast((item) => state.comments.has(item));
+      return id === undefined ? null : { body: state.comments.get(id) ?? '', id };
     },
     createComment: async ({ body, id }) => {
       state.comments.set(id, body);
@@ -151,6 +151,7 @@ async function start(
   codeRoot: string,
   fake: Linear,
   env: NodeJS.ProcessEnv = { LINEAR_API_KEY: 'lin_api_test' },
+  out: (line: string) => void = () => undefined,
 ) {
   const keys = fake.keys;
   return serve({
@@ -166,7 +167,7 @@ async function start(
       keys.push(apiKeyEnv);
       return fake.api;
     },
-    out: () => undefined,
+    out,
     port: 0,
     runtime: () => new FakeRuntime(),
   });
@@ -245,6 +246,25 @@ test('a team, label, or state the workspace lacks stops the server, listing what
   assert.match(
     message,
     /- tracker\.status\.in_review: the ENG team has no workflow state "Review"/,
+  );
+});
+
+test('Linear out of reach at startup is a warning, and the server starts', async () => {
+  const fake = linear();
+  fake.api.inventory = async () => {
+    throw new Error('fetch failed');
+  };
+  const lines: Array<string> = [];
+  const result = await start(repository(), fake, undefined, (line) => lines.push(line));
+  assert.equal(result.kind, 'ok');
+  if (result.kind === 'ok') {
+    servers.push(result.server);
+  }
+  assert.ok(
+    lines.includes(
+      "Warning: could not check FACTORY.json's tracker settings with Linear: fetch failed",
+    ),
+    lines.join('\n'),
   );
 });
 

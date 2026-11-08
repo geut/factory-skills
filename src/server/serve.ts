@@ -157,24 +157,33 @@ function messageOf(error: unknown): string {
 // A Linear tracker needs its API key, and every team, label, project, and
 // workflow state FACTORY.json names must already exist: the factory adapts to
 // the workspace and never creates them. Null when all is well.
+// A missing key or a name the workspace lacks stops the server; Linear being
+// out of reach only warns, since local tickets and runs under way need none of
+// it, and each tracker call reports its own failure.
 async function checkLinearTracker(
   tracker: LinearTrackerConfig,
   env: NodeJS.ProcessEnv,
   linear: TrackerClients['linear'],
-): Promise<string | null> {
+): Promise<{ kind: 'error' | 'warning'; message: string } | null> {
   const found = await linearInventory(tracker, env, linear);
   if (found.kind === 'error') {
     return found.reason === 'no_api_key'
-      ? `FACTORY.json's tracker is Linear: ${found.message}`
-      : `Cannot check FACTORY.json's tracker settings with ${found.message}`;
+      ? { kind: 'error', message: `FACTORY.json's tracker is Linear: ${found.message}` }
+      : {
+          kind: 'warning',
+          message: `Warning: could not check FACTORY.json's tracker settings with ${found.message}`,
+        };
   }
   const problems = checkLinearSettings(tracker, found.inventory);
   return problems.length === 0
     ? null
-    : [
-        "FACTORY.json's tracker names what this Linear workspace does not have (run factory tracker inspect to see what it has):",
-        ...problems.map((problem) => `- ${problem}`),
-      ].join('\n');
+    : {
+        kind: 'error',
+        message: [
+          "FACTORY.json's tracker names what this Linear workspace does not have (run factory tracker inspect to see what it has):",
+          ...problems.map((problem) => `- ${problem}`),
+        ].join('\n'),
+      };
 }
 
 export async function serve(input: ServeInput): Promise<ServeResult> {
@@ -227,8 +236,11 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
   if (tracker?.kind === 'linear') {
     const checked = await checkLinearTracker(tracker, input.env, linear);
-    if (checked !== null) {
-      return { kind: 'error', message: checked };
+    if (checked?.kind === 'error') {
+      return { kind: 'error', message: checked.message };
+    }
+    if (checked?.kind === 'warning') {
+      input.out(checked.message);
     }
   }
 

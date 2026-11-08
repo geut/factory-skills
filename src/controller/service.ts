@@ -361,13 +361,18 @@ export function createFactoryService(input: {
       try {
         const issues = await tracker.listBacklog();
         const items: Array<BacklogItem> = [];
-        // One issue at a time, as before: the tracker is asked in order.
+        // Links the backlog read already come with the issue; otherwise the
+        // tracker is asked one issue at a time, in order.
         for (const issue of issues) {
+          const links = issue.links ?? {
+            blockedBy: tracker.capabilities.has('blockedBy') ? await tracker.blockedBy(issue) : [],
+            children: await tracker.children(issue),
+          };
           items.push({
             author: issue.author,
-            blockedBy: tracker.capabilities.has('blockedBy') ? await tracker.blockedBy(issue) : [],
+            blockedBy: links.blockedBy,
             body: issue.body,
-            children: await tracker.children(issue),
+            children: links.children,
             createdAt: issue.createdAt,
             displayRef: issue.displayRef,
             id: issue.id,

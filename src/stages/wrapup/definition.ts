@@ -44,6 +44,9 @@ export type WrapupInput = {
   // Each task's Verification lines from its latest valid review.
   reviewVerification: Array<string>;
   screenshots: WrapupPrepared['screenshots'];
+  // Where the ticket came from: a tracker kind such as `github` or `linear`,
+  // or `file` or `text` for a local ticket.
+  sourceKind: string;
   tasks: Array<{
     status: string;
     taskFile: string;
@@ -122,6 +125,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       issueBoxes: prepared.boxes,
       issueBoxesUnread: prepared.boxesUnread,
       minorFindings: notes.findings,
+      sourceKind: snapshot.ticket.sourceKind,
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
       planPath: execution.planPath ?? '',
@@ -174,6 +178,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         childInstructions(skill, contract),
         '',
         `Ticket: ${input.displayRef}`,
+        `Ticket source: ${input.sourceKind}`,
         `Plan: ${input.planPath}`,
         `ADR: ${input.adrPath ?? 'none'}`,
         `Factory root: ${input.factoryRoot}`,

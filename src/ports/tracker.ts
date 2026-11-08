@@ -35,6 +35,13 @@ export type TrackerIssue = {
   url: string;
 };
 
+// A backlog issue. An adapter that reads an issue's links along with the
+// backlog includes them, so the backlog needs no call per issue; without them
+// the factory asks blockedBy and children for each.
+export type BacklogIssue = TrackerIssue & {
+  links?: { blockedBy: Array<IssueLink>; children: Array<IssueLink> };
+};
+
 // One item of an issue's checklist, however the tracker keeps it: a Markdown
 // box in the body, a checklist field, or a sub-issue. The key is the adapter's
 // and means nothing to the factory but the item.
@@ -70,7 +77,7 @@ export type Tracker = {
   kind: string;
   // The open issues the tracker's backlog settings in FACTORY.json select,
   // newest first.
-  listBacklog: () => Promise<Array<TrackerIssue>>;
+  listBacklog: () => Promise<Array<BacklogIssue>>;
   // The refs this tracker understands, for a message about one it does not,
   // such as `a Linear issue key such as ENG-42, or its URL`.
   refHint: string;

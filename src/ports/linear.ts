@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { LinearClient } from '@linear/sdk';
 import { LINEAR_STATE_TYPES, type LinearStateType, type LinearTrackerConfig } from '../config.ts';
 import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
-import type { IssueLink, Resolved, Tracker, TrackerIssue } from './tracker.ts';
+import type { BacklogIssue, IssueLink, Resolved, Tracker, TrackerIssue } from './tracker.ts';
 
 // Linear as a tracker, through the Linear SDK and a personal API key. The
 // factory only uses the teams, labels, projects, and workflow states the
@@ -35,6 +35,12 @@ export type LinearRelated = {
   url: string | null;
 };
 
+// A backlog issue with its blockers and sub-issues, read in the same query.
+export type LinearBacklogIssue = LinearIssue & {
+  blockers: Array<LinearRelated>;
+  children: Array<LinearRelated>;
+};
+
 export type LinearLabel = { group: string | null; name: string };
 
 // What a workspace has, for writing the tracker settings and checking them.
@@ -61,12 +67,16 @@ export type LinearBacklogQuery = {
 // The calls the adapter makes. Tests pass a stand-in.
 export type LinearApi = {
   // Open issues matching the query, newest first.
-  backlog: (query: LinearBacklogQuery) => Promise<Array<LinearIssue>>;
+  backlog: (query: LinearBacklogQuery) => Promise<Array<LinearBacklogIssue>>;
   // Issues with a `blocks` relation to the issue.
   blockers: (issueId: string) => Promise<Array<LinearRelated>>;
   children: (issueId: string) => Promise<Array<LinearRelated>>;
-  // The issue's comment of this id, or null when it has none.
-  comment: (issueId: string, commentId: string) => Promise<{ body: string } | null>;
+  // The issue's comment of the last of these ids it has, or null when it has
+  // none of them. A deleted comment counts as none.
+  comment: (
+    issueId: string,
+    commentIds: Array<string>,
+  ) => Promise<{ body: string; id: string } | null>;
   createComment: (input: { body: string; id: string; issueId: string }) => Promise<void>;
   inventory: () => Promise<LinearInventory>;
   // By UUID or key; rejects when Linear has no such issue.
@@ -142,6 +152,30 @@ function relatedOf(value: Record<string, unknown>): LinearRelated {
     title: text(value['title']),
     url: textOrNull(value['url']),
   };
+}
+
+const RELATED_FIELDS = 'identifier title url state { type }';
+// How many sub-issues or relations the backlog query reads with each issue.
+// Linear prices a query by its page sizes multiplied, so these stay small;
+// an issue with more gets them read on their own.
+const BACKLOG_PAGE = 25;
+const LINKS_PAGE = 20;
+
+// The issues with a `blocks` relation in a connection of inverse relations.
+function blockersOf(relations: unknown): Array<LinearRelated> {
+  return nodes(relations).flatMap((relation) =>
+    relation['type'] === 'blocks' && isRecord(relation['issue'])
+      ? [relatedOf(relation['issue'])]
+      : [],
+  );
+}
+
+function hasMore(connection: unknown): boolean {
+  return (
+    isRecord(connection) &&
+    isRecord(connection['pageInfo']) &&
+    connection['pageInfo']['hasNextPage'] === true
+  );
 }
 
 function labelOf(value: Record<string, unknown>): LinearLabel {
@@ -230,16 +264,31 @@ export function linearSdkApi(apiKey: string): LinearApi {
     }
     return all.slice(0, limit);
   };
-  // One selection of an issue; `$id` is the issue, `$other` an optional id.
-  const issueField = async (issueId: string, selection: string, other?: string) => {
+  // One selection of an issue; `$id` is the issue, `$other` optional ids.
+  const issueField = async (issueId: string, selection: string, other?: Array<string>) => {
     const data = await request(
-      `query FactoryIssueField($id: String!${other === undefined ? '' : ', $other: ID'}) {
+      `query FactoryIssueField($id: String!${other === undefined ? '' : ', $other: [ID!]'}) {
         issue(id: $id) { ${selection} }
       }`,
       { id: issueId, ...(other === undefined ? {} : { other }) },
     );
     return isRecord(data['issue']) ? data['issue'] : {};
   };
+  const blockers = async (issueId: string) =>
+    blockersOf(
+      (
+        await issueField(
+          issueId,
+          `inverseRelations(first: 100) { nodes { type issue { ${RELATED_FIELDS} } } }`,
+        )
+      )['inverseRelations'],
+    );
+  const children = async (issueId: string) =>
+    nodes(
+      (await issueField(issueId, `children(first: 100) { nodes { ${RELATED_FIELDS} } }`))[
+        'children'
+      ],
+    ).map(relatedOf);
   return {
     backlog: async (query) => {
       const filter: Record<string, unknown> = {
@@ -250,10 +299,19 @@ export function linearSdkApi(apiKey: string): LinearApi {
           ? {}
           : { and: query.labels.map((name) => ({ labels: { some: { name: { eq: name } } } })) }),
       };
+      // Blockers and sub-issues come in the same query, so the backlog makes
+      // no call per issue unless one has more than a page of them.
       const found = await pages(
         `query FactoryBacklog($filter: IssueFilter, $after: String) {
-          issues(filter: $filter, first: 50, after: $after, orderBy: createdAt) {
-            nodes { ${ISSUE_FIELDS} }
+          issues(filter: $filter, first: ${BACKLOG_PAGE}, after: $after, orderBy: createdAt) {
+            nodes {
+              ${ISSUE_FIELDS}
+              children(first: ${LINKS_PAGE}) { nodes { ${RELATED_FIELDS} } pageInfo { hasNextPage } }
+              inverseRelations(first: ${LINKS_PAGE}) {
+                nodes { type issue { ${RELATED_FIELDS} } }
+                pageInfo { hasNextPage }
+              }
+            }
             pageInfo { hasNextPage endCursor }
           }
         }`,
@@ -261,81 +319,85 @@ export function linearSdkApi(apiKey: string): LinearApi {
         { filter },
         BACKLOG_LIMIT,
       );
-      return found
-        .map(issueOf)
-        .toSorted((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''));
+      const issues: Array<LinearBacklogIssue> = [];
+      for (const node of found) {
+        const issue = issueOf(node);
+        issues.push({
+          ...issue,
+          blockers: hasMore(node['inverseRelations'])
+            ? await blockers(issue.id)
+            : blockersOf(node['inverseRelations']),
+          children: hasMore(node['children'])
+            ? await children(issue.id)
+            : nodes(node['children']).map(relatedOf),
+        });
+      }
+      return issues.toSorted((left, right) =>
+        (right.createdAt ?? '').localeCompare(left.createdAt ?? ''),
+      );
     },
-    blockers: async (issueId) => {
+    blockers,
+    children,
+    comment: async (issueId, commentIds) => {
       const issue = await issueField(
         issueId,
-        'inverseRelations(first: 100) { nodes { type issue { identifier title url state { type } } } }',
+        `comments(first: ${commentIds.length}, filter: { id: { in: $other } }) { nodes { id body } }`,
+        commentIds,
       );
-      return nodes(issue['inverseRelations']).flatMap((relation) =>
-        relation['type'] === 'blocks' && isRecord(relation['issue'])
-          ? [relatedOf(relation['issue'])]
-          : [],
-      );
-    },
-    children: async (issueId) => {
-      const issue = await issueField(
-        issueId,
-        'children(first: 100) { nodes { identifier title url state { type } } }',
-      );
-      return nodes(issue['children']).map(relatedOf);
-    },
-    comment: async (issueId, commentId) => {
-      const issue = await issueField(
-        issueId,
-        'comments(first: 1, includeArchived: true, filter: { id: { eq: $other } }) { nodes { id body } }',
-        commentId,
-      );
-      const found = nodes(issue['comments'])[0];
-      return found === undefined ? null : { body: text(found['body']) };
+      const found = nodes(issue['comments']);
+      const last = commentIds.findLast((id) => found.some((comment) => comment['id'] === id));
+      const comment = found.find((item) => item['id'] === last);
+      return comment === undefined
+        ? null
+        : { body: text(comment['body']), id: text(comment['id']) };
     },
     createComment: async (input) => {
       succeeded(await plainly(() => sdk().createComment(input)), 'create the comment');
     },
     inventory: async () => {
       // Flat lists, never one inside another: Linear prices a query by its
-      // page sizes multiplied, and teams × states went past its limit.
-      const teams = await pages(
-        `query FactoryTeams($after: String) {
+      // page sizes multiplied, and teams × states went past its limit. They
+      // do not depend on each other, so they are read at once.
+      const [teams, states, labels, projects] = await Promise.all([
+        pages(
+          `query FactoryTeams($after: String) {
           teams(first: 100, after: $after) { nodes { key name } pageInfo { hasNextPage endCursor } }
         }`,
-        'teams',
-        {},
-        INVENTORY_LIMIT,
-      );
-      const states = await pages(
-        `query FactoryStates($after: String) {
+          'teams',
+          {},
+          INVENTORY_LIMIT,
+        ),
+        pages(
+          `query FactoryStates($after: String) {
           workflowStates(first: 250, after: $after) {
             nodes { name type position team { key } }
             pageInfo { hasNextPage endCursor }
           }
         }`,
-        'workflowStates',
-        {},
-        INVENTORY_LIMIT,
-      );
-      const labels = await pages(
-        `query FactoryLabels($after: String) {
+          'workflowStates',
+          {},
+          INVENTORY_LIMIT,
+        ),
+        pages(
+          `query FactoryLabels($after: String) {
           issueLabels(first: 250, after: $after) {
             nodes { name isGroup parent { name } team { key } }
             pageInfo { hasNextPage endCursor }
           }
         }`,
-        'issueLabels',
-        {},
-        INVENTORY_LIMIT,
-      );
-      const projects = await pages(
-        `query FactoryProjects($after: String) {
+          'issueLabels',
+          {},
+          INVENTORY_LIMIT,
+        ),
+        pages(
+          `query FactoryProjects($after: String) {
           projects(first: 250, after: $after) { nodes { name } pageInfo { hasNextPage endCursor } }
         }`,
-        'projects',
-        {},
-        INVENTORY_LIMIT,
-      );
+          'projects',
+          {},
+          INVENTORY_LIMIT,
+        ),
+      ]);
       // A label group only gathers labels; issues carry the labels inside it.
       const usable = labels.filter((label) => label['isGroup'] !== true);
       return {
@@ -464,6 +526,17 @@ export function commentIdFor(issueId: string, key: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Linear never takes a deleted comment's id again, so each key has a few ids
+// to use in turn: after a person deletes the factory's comment, the next post
+// takes the next one. Still derived, so a retry finds what it posted.
+const COMMENT_IDS = 5;
+
+export function commentIdsFor(issueId: string, key: string): Array<string> {
+  return Array.from({ length: COMMENT_IDS }, (_, index) =>
+    commentIdFor(issueId, index === 0 ? key : `${key}#${index}`),
+  );
+}
+
 function trackerIssue(issue: LinearIssue, ref: string): TrackerIssue {
   return {
     author: issue.creator,
@@ -490,16 +563,19 @@ function linkOf(related: LinearRelated): IssueLink {
   return { displayRef: related.identifier, title: related.title, url: related.url };
 }
 
+function openBlockers(related: Array<LinearRelated>): Array<IssueLink> {
+  return related
+    .filter((item) => item.stateType === null || !FINISHED.has(item.stateType))
+    .map(linkOf);
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Linear request failed';
 }
 
 export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi): Tracker {
   return {
-    blockedBy: async (issue) =>
-      (await api.blockers(uuidOf(issue)))
-        .filter((related) => related.stateType === null || !FINISHED.has(related.stateType))
-        .map(linkOf),
+    blockedBy: async (issue) => openBlockers(await api.blockers(uuidOf(issue))),
     capabilities: new Set(['backlog', 'blockedBy', 'checklist', 'children', 'comment', 'status']),
     // Linear keeps an issue's checklist as Markdown boxes in its description.
     checklistItems: async (issue) =>
@@ -507,19 +583,38 @@ export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi)
     children: async (issue) => (await api.children(uuidOf(issue))).map(linkOf),
     comment: async (issue, markdown, key, mode) => {
       const issueId = uuidOf(issue);
-      const id = commentIdFor(issueId, key);
-      const posted = await api.comment(issueId, id);
-      if (posted === null) {
-        await api.createComment({ body: markdown, id, issueId });
-      } else if (mode === 'replace' && posted.body !== markdown) {
-        await api.updateComment(id, markdown);
+      const ids = commentIdsFor(issueId, key);
+      const keep = async (posted: { body: string; id: string }) => {
+        if (mode === 'replace' && posted.body !== markdown) {
+          await api.updateComment(posted.id, markdown);
+        }
+      };
+      const posted = await api.comment(issueId, ids);
+      if (posted !== null) {
+        return keep(posted);
       }
+      let failure: unknown = null;
+      for (const id of ids) {
+        try {
+          return await api.createComment({ body: markdown, id, issueId });
+        } catch (error: unknown) {
+          failure = error;
+          // The create may have gone through before the error, as after a
+          // timeout. If not, the id was a deleted comment's: take the next.
+          const made = await api.comment(issueId, [id]);
+          if (made !== null) {
+            return keep(made);
+          }
+        }
+      }
+      throw failure;
     },
     kind: 'linear',
     listBacklog: async () =>
-      (await api.backlog({ ...config.backlog, team: config.team })).map((issue) =>
-        trackerIssue(issue, issue.identifier),
-      ),
+      (await api.backlog({ ...config.backlog, team: config.team })).map((issue): BacklogIssue => ({
+        ...trackerIssue(issue, issue.identifier),
+        links: { blockedBy: openBlockers(issue.blockers), children: issue.children.map(linkOf) },
+      })),
     refHint: 'a Linear issue key such as ENG-42, or its URL',
     resolve: async (ref): Promise<Resolved | null> => {
       const target = linearTarget(ref, config);

@@ -479,6 +479,7 @@ function readTracker(value: unknown): TrackerConfig | null | string {
   return { ...place, backlog: { labels, milestone }, kind: 'github', status, updates };
 }
 
+// The shape of an environment variable name, for settings that name one.
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
 // A message on error.
@@ -579,7 +580,7 @@ function readCodeHost(value: unknown): CodeHostConfig | null | string {
     return 'FACTORY.json codeHost.syncMinutes must be a positive number.';
   }
   const secret = value['webhookSecretEnv'];
-  if (secret !== undefined && (typeof secret !== 'string' || !/^[A-Z_][A-Z0-9_]*$/.test(secret))) {
+  if (secret !== undefined && (typeof secret !== 'string' || !ENV_NAME.test(secret))) {
     return 'FACTORY.json codeHost.webhookSecretEnv must name an environment variable.';
   }
   return { ...place, kind: 'github', pullRequests, syncMinutes, webhookSecretEnv: secret ?? null };

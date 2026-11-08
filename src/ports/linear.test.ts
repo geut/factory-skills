@@ -4,6 +4,7 @@ import type { LinearTrackerConfig } from '../config.ts';
 import {
   checkLinearSettings,
   commentIdFor,
+  commentIdsFor,
   createLinearTracker,
   formatLinearInventory,
   linearMessage,
@@ -58,6 +59,8 @@ type Fake = {
   blockers: Array<LinearRelated>;
   children: Array<LinearRelated>;
   comments: Map<string, string>;
+  // Ids of comments a person deleted, which Linear never takes again.
+  deleted: Set<string>;
   issue: LinearIssue;
   writes: Array<Array<unknown>>;
 };
@@ -70,21 +73,31 @@ function fake(issue = linearIssue()): Fake {
     blockers: [],
     children: [],
     comments: new Map(),
+    deleted: new Set(),
     issue,
     writes: [],
   };
   state.api = {
     backlog: async (query) => {
       state.backlogQueries.push(query);
-      return [state.issue];
+      return [{ ...state.issue, blockers: state.blockers, children: state.children }];
     },
-    blockers: async () => state.blockers,
-    children: async () => state.children,
-    comment: async (_issueId, commentId) => {
-      const body = state.comments.get(commentId);
-      return body === undefined ? null : { body };
+    blockers: async () => {
+      state.writes.push(['blockers']);
+      return state.blockers;
+    },
+    children: async () => {
+      state.writes.push(['children']);
+      return state.children;
+    },
+    comment: async (_issueId, commentIds) => {
+      const id = commentIds.findLast((item) => state.comments.has(item));
+      return id === undefined ? null : { body: state.comments.get(id) ?? '', id };
     },
     createComment: async (input) => {
+      if (state.comments.has(input.id) || state.deleted.has(input.id)) {
+        throw new Error('Argument Validation Error');
+      }
       state.writes.push(['createComment', input.id, input.body]);
       state.comments.set(input.id, input.body);
     },
@@ -187,6 +200,21 @@ test('the backlog is the configured team, labels, project, and state types', asy
   );
 });
 
+test('a backlog issue comes with its links, so the backlog makes no call per issue', async () => {
+  const linear = fake();
+  linear.children = [{ identifier: 'ENG-43', stateType: 'started', title: 'Slice', url: null }];
+  linear.blockers = [
+    { identifier: 'ENG-30', stateType: 'completed', title: 'Done already', url: null },
+    { identifier: 'ENG-32', stateType: 'started', title: 'Schema first', url: null },
+  ];
+  const [issue] = await createLinearTracker(config, linear.api).listBacklog();
+  assert.deepEqual(issue?.links, {
+    blockedBy: [{ displayRef: 'ENG-32', title: 'Schema first', url: null }],
+    children: [{ displayRef: 'ENG-43', title: 'Slice', url: null }],
+  });
+  assert.deepEqual(linear.writes, []);
+});
+
 test('sub-issues are children, and only an unfinished blocker blocks', async () => {
   const linear = fake();
   linear.children = [
@@ -249,6 +277,38 @@ test('a comment gets an id from its issue and key, so a retry finds it instead o
   assert.deepEqual(linear.writes, [
     ['createComment', id, 'Finished; opened #9.'],
     ['updateComment', id, 'Finished again; opened #10.'],
+  ]);
+});
+
+test('after a person deletes the factory’s comment, the next post takes the next id', async () => {
+  const linear = fake();
+  const tracker = createLinearTracker(config, linear.api);
+  const issue = await resolved(tracker);
+  const [first, second] = commentIdsFor('uuid-42', 'progress:T1');
+  assert.equal(first, commentIdFor('uuid-42', 'progress:T1'));
+  await tracker.comment(issue, 'Step 1.', 'progress:T1', 'replace');
+  linear.comments.delete(first ?? '');
+  linear.deleted.add(first ?? '');
+  await tracker.comment(issue, 'Step 2.', 'progress:T1', 'replace');
+  await tracker.comment(issue, 'Step 3.', 'progress:T1', 'replace');
+  assert.deepEqual(linear.writes, [
+    ['createComment', first, 'Step 1.'],
+    ['createComment', second, 'Step 2.'],
+    ['updateComment', second, 'Step 3.'],
+  ]);
+});
+
+test('a create that failed after it went through is found, not posted again', async () => {
+  const linear = fake();
+  const create = linear.api.createComment;
+  linear.api.createComment = async (input) => {
+    await create(input);
+    throw new Error('socket hang up');
+  };
+  const tracker = createLinearTracker(config, linear.api);
+  await tracker.comment(await resolved(tracker), 'Once.', 'handoff:T1', 'once');
+  assert.deepEqual(linear.writes, [
+    ['createComment', commentIdFor('uuid-42', 'handoff:T1'), 'Once.'],
   ]);
 });
 

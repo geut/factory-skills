@@ -273,14 +273,14 @@ The factory fits an existing Linear workspace: it uses the teams, labels, projec
 
    `team` is a team key and sets the backlog. `backlog.states` takes workflow state _types_ (`triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled`), so it fits any team's workflow, and defaults to `backlog` and `unstarted`. An issue must carry every listed label. `status` maps to workflow state _names_. `apiKeyEnv` defaults to `LINEAR_API_KEY`.
 
-The server refuses to start without the key, or when a team, label, project, or state it names does not exist; the message lists the names that do.
+The server refuses to start without the key, or when a team, label, project, or state it names does not exist; the message lists the names that do. When Linear cannot be reached at startup, the server warns and starts anyway: local tickets and runs under way do not need it.
 
 - **Refs.** Start an issue by its key (`ENG-42`, any case) or its URL. A bare number is refused with the key to use instead. An issue of another team can be started too.
 - **Statuses only move forward.** A status moves the issue to the mapped state of its own team only when that state comes later in the workflow, and never moves a completed or cancelled issue: people and Linear's own automation move issues too. Cancelling a ticket leaves the state as it is; the cancel comment says the factory stopped. When the issue's team has no state of the mapped name, the status is skipped with a warning on the ticket.
-- **Comments.** Each factory comment's id is derived from the issue and the comment's purpose, so a retry finds it instead of posting twice, with no hidden marker in the text.
+- **Comments.** Each factory comment's id is derived from the issue and the comment's purpose, so a retry finds it instead of posting twice, with no hidden marker in the text. Linear never takes a deleted comment's id again, so after a person deletes one, the next post takes the next id of the few each purpose has.
 - **Checklist.** The issue checklist is the Markdown boxes in the description. Sub-issues make an issue an umbrella, as on GitHub; blockers are `blocks` relations whose issue is not finished.
 - **Pull requests.** The ticket branch (`factory/eng-42-…`) and the pull request title (`ENG-42: …`) carry the issue key, so Linear's GitHub integration links the pull request. The factory adds no closing keyword. By default that integration also moves a linked issue to In Progress when a pull request opens and to Done when it merges; map `in_review` only if your team's automation does not already cover it.
-- **Checking against a real workspace.** `tests/linear-smoke.test.ts` runs against Linear when `LINEAR_API_KEY` and `LINEAR_SMOKE_TEAM` (a scratch team's key) are set. It creates one throwaway issue, checks that description boxes, derived comment ids, workflow states, and the factory's branch names behave as the adapter expects, then deletes it. CI skips it.
+- **Checking against a real workspace.** `tests/linear-smoke.test.ts` runs against Linear when `LINEAR_API_KEY` and `LINEAR_SMOKE_TEAM` (a scratch team's key) are set, in the environment or in a `.env` file at the repository root, which git ignores. With that file in place, `npm test` runs it too. It creates one throwaway issue, checks that description boxes, derived comment ids (including after a deletion), workflow states, and the factory's branch names behave as the adapter expects, then deletes it. CI skips it.
 
 ## Factory root
 

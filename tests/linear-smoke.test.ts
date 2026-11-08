@@ -7,6 +7,7 @@ import type { LinearTrackerConfig } from '../src/config.ts';
 import {
   checkLinearSettings,
   commentIdFor,
+  commentIdsFor,
   createLinearTracker,
   linearSdkApi,
 } from '../src/ports/linear.ts';
@@ -118,6 +119,16 @@ test(
     assert.deepEqual(
       comments.nodes.map((comment) => [comment.id, comment.body]),
       [[id, 'Smoke: replaced.']],
+    );
+    // A person deletes it: Linear refuses the id again, so the next post
+    // takes the key's next id.
+    await sdk.deleteComment(id);
+    await tracker.comment(issue, 'Smoke: after a deletion.', 'smoke', 'replace');
+    const next = commentIdsFor(issueId, 'smoke')[1];
+    const left = await (await sdk.issue(issueId)).comments();
+    assert.deepEqual(
+      left.nodes.map((comment) => [comment.id, comment.body]),
+      [[next, 'Smoke: after a deletion.']],
     );
   },
 );
