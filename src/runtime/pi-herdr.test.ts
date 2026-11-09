@@ -129,6 +129,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
     ],
   );
   const script = renderLaunchScript({
+    contextFiles: { kind: 'discovered' },
     env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
@@ -141,6 +142,8 @@ test('herdr launch opens the factory plugin argv pane', () => {
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
+  // A worker keeps Pi's discovery of AGENTS.md and CLAUDE.md.
+  assert.doesNotMatch(script, /--no-context-files|--append-system-prompt/);
   assert.match(script, /trap '' TSTP/);
   assert.match(script, /-e '\/pkg\/child-handshake\.ts'/);
   assert.match(script, /PI_SUBAGENT_AUTO_EXIT=1/);
@@ -194,6 +197,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
   writeFileSync(
     script,
     renderLaunchScript({
+      contextFiles: { kind: 'discovered' },
       env,
       handshakePath: '/pkg/child-handshake.ts',
       model: 'work-model',
@@ -544,6 +548,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     targetPaneId: 'parent',
   });
   const spec = {
+    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'resume' as const,
     model: 'work-model',
@@ -776,6 +781,7 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     return { code: 0, stderr: '', stdout: '' };
   };
   const spec = (ticket: string, id: string, previousPaneId: string | null = null) => ({
+    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'launch' as const,
     model: 'work-model',
@@ -880,6 +886,7 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     targetPaneId: 'server',
   });
   await runtime.launch({
+    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'launch',
     model: 'm',
@@ -928,6 +935,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
   });
   const launch = (id: string) =>
     runtime.launch({
+      contextFiles: { kind: 'discovered' as const },
       cwd: directory,
       mode: 'launch',
       model: 'm',
@@ -954,4 +962,30 @@ test('a pane that fails to open closes the tab made for it', async () => {
     ['tab', 'close', 'tab-2'],
   ]);
   assert.equal(JSON.parse(readFileSync(tabsFile, 'utf8'))['k'], undefined);
+});
+
+test('a reviewer launch turns off context discovery and passes the rules it was given', () => {
+  const script = renderLaunchScript({
+    contextFiles: {
+      appendSystemPrompt: ['/home/me/.pi/agent/APPEND_SYSTEM.md', "/tmp/it's/run.rules.md"],
+      kind: 'supplied',
+    },
+    env: { PI_CODING_AGENT_DIR: '/opt/pi' },
+    handshakePath: '/pkg/child-handshake.ts',
+    model: 'review-model',
+    piBin: 'pi',
+    promptFile: '/tmp/prompt.txt',
+    replyRequired: true,
+    runId: 'run-1',
+    sessionFile: '/tmp/session.jsonl',
+    thinking: 'high',
+    tools: 'read,grep,find,ls',
+    worktree: '/repo/.factory/worktrees/proj-1',
+  });
+  assert.match(
+    script,
+    / --no-context-files --append-system-prompt '\/home\/me\/\.pi\/agent\/APPEND_SYSTEM\.md' --append-system-prompt '\/tmp\/it'\\''s\/run\.rules\.md' '@\/tmp\/prompt\.txt'/,
+  );
+  // The agent reads the same agent directory the server read the rules from.
+  assert.match(script, /export PI_CODING_AGENT_DIR='\/opt\/pi'/);
 });

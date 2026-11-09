@@ -1048,7 +1048,16 @@ function handOff(
   ids: IdSource,
   pullRequestUrl: string | null,
   checklist: IssueChecklist | null,
+  rules: Array<string>,
 ): Reduction {
+  // A change to the project's rules is named before anyone merges it.
+  const ruleChanges =
+    rules.length === 0
+      ? []
+      : [
+          '',
+          `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`,
+        ];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
   snapshot.execution.status = 'ready_for_handoff';
@@ -1089,6 +1098,7 @@ function handOff(
       pullRequestUrl === null
         ? 'The factory finished this ticket. Its handoff has the merge commands.'
         : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
+      ...ruleChanges,
       ...(checklist === null || checklist.decisions.length === 0
         ? []
         : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)]),
@@ -1108,6 +1118,7 @@ function handOff(
     kind: 'manual_approval',
     question: [
       `${ref} is ready for handoff. The ${definition.label.toLowerCase()} session and the diff are open in their own panes.`,
+      ...ruleChanges,
       '',
       notice,
       '',
@@ -1223,6 +1234,7 @@ function applyOutcome(
           ids,
           outcome.pullRequestUrl ?? null,
           outcome.checklist ?? null,
+          outcome.rules ?? [],
         );
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;

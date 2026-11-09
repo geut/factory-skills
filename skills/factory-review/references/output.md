@@ -17,6 +17,7 @@ One evidence-based sentence.
 - AC2: verified — src/lib/factory/live.svelte.ts:112
 - AC3: not_verified — needs a real browser; covered by QA
 - R1-2: fixed — src/lib/factory/live.svelte.ts:130-141
+- AGENTS.md: out_of_scope — no criterion asks to allow network calls in tests
 
 ## Findings
 
@@ -34,13 +35,13 @@ none
 ...
 ```
 
-`## Verification` has one line per acceptance criterion the prompt lists (`AC1`, `AC2`, ...) and, from round 2, one per earlier blocking finding it lists (`R1-2`, ...). Each line is `- <id>: <status> — <evidence>`:
+`## Verification` has one line per acceptance criterion the prompt lists (`AC1`, `AC2`, ...), one per project rule file the prompt says the diff changes (`AGENTS.md`, ...), and, from round 2, one per earlier blocking finding it lists (`R1-2`, ...). Each line is `- <id>: <status> — <evidence>`:
 
-- A criterion is `verified` or `not_verified`. A finding is `fixed` or `still_open`.
+- A criterion is `verified` or `not_verified`. A finding is `fixed` or `still_open`. A rule file is `in_scope`, with the task criterion that asks for the change, or `out_of_scope`, with why none does; an `out_of_scope` file also needs a Critical or Major finding that names it.
 - `verified` and `fixed` cite at least one `path:line` or `path:start-end`, relative to the worktree. Every cited file must exist and every line must be within it, so cite what you read, not what you remember.
 - `not_verified` gives the reason it could not be verified. An approval may leave criteria `not_verified`; the gap is shown to the person and to wrap-up.
 - `approve` cannot leave a finding `still_open`. A problem that remains is a blocking finding, under its earlier number.
-- With no criteria and no earlier findings, the section is `none`.
+- With no criteria, no rule files, and no earlier findings, the section is `none`.
 
 `changes_requested` and `blocked` reviews report Verification too.
 

@@ -9,6 +9,7 @@ import type { PullRequestInfo } from '../ports/code-host.ts';
 import { shellQuote } from '../shell.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
 import { citations, latestReviews } from '../stages/review/parse.ts';
+import { changedRules } from '../stages/review/rules.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
@@ -608,6 +609,11 @@ export function validateWrapup(input: {
   const detail = {
     checklist: checklist.result,
     pullRequest: policy.length === 0 ? checked : null,
+    // The human sees these before merging, taken from the worktree, not the handoff.
+    rules: changedRules(
+      { codeRoot: input.codeRoot, worktree: input.worktree },
+      Object.keys(current.worktree),
+    ),
     usage: input.usage(),
   };
   return failures.length === 0

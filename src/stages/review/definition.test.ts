@@ -64,8 +64,13 @@ test('an unreadable verdict is corrected; a stale diff revalidates; isolation pa
   assert.equal(unsafe.kind === 'pause' && unsafe.reply, false);
 });
 
-function prompt(round: number, earlier: Array<string>) {
+function prompt(
+  round: number,
+  earlier: Array<string>,
+  diff = 'diff --git a/src/filter.ts b/src/filter.ts',
+) {
   const snapshot = blank();
+  snapshot.execution.worktreeBaseSha = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b';
   addTasks(snapshot, 1);
   const owner = session(snapshot, 'review', '01');
   for (const [index, output] of earlier.entries()) {
@@ -96,7 +101,7 @@ function prompt(round: number, earlier: Array<string>) {
           { id: 'AC1', text: 'The filter survives a reload.' },
           { id: 'AC2', text: 'An empty filter shows every ticket.' },
         ],
-        diff: 'diff --git a/src/filter.ts b/src/filter.ts',
+        diff,
         output: 'Stored the filter.',
       },
       prepared: null,
@@ -142,4 +147,21 @@ test('a later review asks to verify each earlier blocking finding, without claim
   assert.match(listed, /^- R1-1 \[major\] Missing DB_URL bypasses the typed error page/);
   // Minor findings do not block, so they are not re-verified.
   assert.doesNotMatch(listed, /R1-3/);
+});
+
+test('the reviewer is told its rules come from the base commit, and which rule files the diff changes', () => {
+  const plain = prompt(1, []);
+  assert.match(
+    plain,
+    /Project rules: your system prompt holds them from main at 1a2b3c4, not from the ticket's branch\./,
+  );
+  assert.doesNotMatch(plain, /This diff changes project rules/);
+  const changed = prompt(
+    1,
+    [],
+    ['diff --git a/AGENTS.md b/AGENTS.md', 'diff --git a/src/filter.ts b/src/filter.ts'].join('\n'),
+  );
+  assert.match(changed, /This diff changes project rules: AGENTS\.md\. Decide for each/);
+  assert.match(changed, /`<file>: in_scope — <the task criterion that asks for it>`/);
+  assert.match(changed, /report the change as a Major finding that names the file/);
 });

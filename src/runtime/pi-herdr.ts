@@ -14,6 +14,7 @@ import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
 import type {
+  ContextFiles,
   FactorySubagentRuntime,
   LaunchSpec,
   PaneSpec,
@@ -256,7 +257,9 @@ export function handshakeExtensionPath(): string {
 // The variables an agent's shell takes from the factory server. Herdr opens
 // panes with its own environment, and the agents' bash is non-interactive, so
 // a PATH that only ~/.bashrc extends would otherwise not reach them.
-const forwardedNames = ['PATH', 'BASH_ENV'] as const;
+// PI_CODING_AGENT_DIR keeps the agent on the agent directory the server read
+// the reviewer's outside rules from.
+const forwardedNames = ['PATH', 'BASH_ENV', 'PI_CODING_AGENT_DIR'] as const;
 
 export type ForwardedEnv = Partial<Record<(typeof forwardedNames)[number], string>>;
 
@@ -278,7 +281,27 @@ function exportLines(env: ForwardedEnv): string {
     .join('');
 }
 
+// Pi's flags for where the context files come from.
+function contextFileArgs(contextFiles: ContextFiles): string {
+  switch (contextFiles.kind) {
+    case 'discovered':
+      return '';
+    case 'supplied':
+      return [
+        ' --no-context-files',
+        ...contextFiles.appendSystemPrompt.map(
+          (file) => ` --append-system-prompt ${shellQuote(file)}`,
+        ),
+      ].join('');
+    default: {
+      const _exhaustive: never = contextFiles;
+      return _exhaustive;
+    }
+  }
+}
+
 export function renderLaunchScript(input: {
+  contextFiles: ContextFiles;
   env: ForwardedEnv;
   handshakePath: string;
   model: string;
@@ -304,7 +327,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 export FACTORY_WORKTREE=${shellQuote(input.worktree)}
 export FACTORY_RUN_ID=${runId}
-${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)} ${shellQuote(`@${input.promptFile}`)}
+${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${contextFileArgs(input.contextFiles)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -873,6 +896,7 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
+        contextFiles: spec.contextFiles,
         env,
         handshakePath,
         model: spec.model,

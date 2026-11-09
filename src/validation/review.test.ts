@@ -164,6 +164,7 @@ const context: ReviewContext = {
   criteria: ['AC1', 'AC2'],
   earlierFindings: [],
   lineCount: (file) => ({ 'src/filter.test.ts': 20, 'src/filter.ts': 40 })[file] ?? null,
+  rules: [],
 };
 
 const verified = [
@@ -345,6 +346,8 @@ test('review validation passes only for an isolated, fresh, parsed review', asyn
       ['reviewer model', 'passed'],
       // The review stage's own tool policy is read-only.
       ['read-only tools', 'passed'],
+      // Which rules the reviewer judged by, from the base commit.
+      ['project rules', 'passed'],
       ['reviewed diff', 'passed'],
     ],
   );
@@ -434,4 +437,44 @@ test('a review without a worktree is a validator error', async () => {
     }),
   );
   assert.equal(report.status, 'error');
+});
+
+test('each changed project rule file needs a Verification line, and out_of_scope needs a blocking finding', () => {
+  const rules: ReviewContext = { ...context, rules: ['AGENTS.md'] };
+  assert.match(
+    failuresOf(verifying('approve', verified), 1, rules),
+    /## Verification has no line for AGENTS\.md, a project rule file this diff changes/,
+  );
+  const inScope = `${verified}\n- AGENTS.md: in_scope — Task 01 AC2 asks to allow network calls`;
+  const accepted = parseReview(verifying('approve', inScope), 1, rules);
+  assert.equal(accepted.kind, 'valid');
+  assert.deepEqual(accepted.kind === 'valid' ? accepted.result.verification.at(-1) : null, {
+    evidence: 'Task 01 AC2 asks to allow network calls',
+    id: 'AGENTS.md',
+    status: 'in_scope',
+  });
+  assert.match(
+    failuresOf(verifying('approve', `${verified}\n- AGENTS.md: in_scope`), 1, rules),
+    /AGENTS\.md is in_scope without a reason/,
+  );
+  const outOfScope = `${verified}\n- AGENTS.md: out_of_scope — no criterion asks to relax the network rule`;
+  assert.match(
+    failuresOf(verifying('approve', outOfScope), 1, rules),
+    /AGENTS\.md is out_of_scope, but no Critical or Major finding names it/,
+  );
+  const reported = `### 1. [Major] AGENTS.md relaxes the network rule the task does not ask to change
+
+**Location:** AGENTS.md:3
+**Finding:** The diff allows network calls in tests.
+**Evidence:** No acceptance criterion mentions the rule.
+**Suggestion:** Revert the rule change.`;
+  assert.equal(
+    parseReview(verifying('changes_requested', outOfScope, reported), 1, rules).kind,
+    'valid',
+  );
+  // A rule line for a file the diff does not change is refused.
+  assert.match(
+    failuresOf(verifying('approve', `${verified}\n- CLAUDE.md: in_scope — x`), 1, rules),
+    /CLAUDE\.md is not a project rule file this diff changes \(AGENTS\.md\)/,
+  );
 });

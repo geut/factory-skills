@@ -611,6 +611,16 @@ test('with pull requests on, wrap-up commits the approved work, pushes it, and o
   }
 });
 
+test('the handoff detail names the project rule files the ticket changes', async () => {
+  const value = fixture();
+  const untouched = await validate(value, value.baseline(), handoff(value));
+  assert.deepEqual(untouched.status === 'error' ? null : untouched.detail.rules, []);
+  // The worker changed AGENTS.md: the human hears of it whatever the handoff says.
+  writeFileSync(path.join(value.worktree, 'AGENTS.md'), 'Tests may call the network.\n');
+  const outcome = await validate(value, value.baseline(), handoff(value));
+  assert.deepEqual(outcome.status === 'error' ? null : outcome.detail.rules, ['AGENTS.md']);
+});
+
 test('with pull requests on, the pull request must have the configured title', async () => {
   const value = fixture();
   addRemote(value);

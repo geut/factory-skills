@@ -10,7 +10,15 @@ import type {
 // The Herdr tab a ticket's panes open in: one per ticket, named after it.
 export type TicketTab = { key: string; label: string };
 
+// Where an agent's context files (AGENTS.md, CLAUDE.md) come from: Pi's own
+// discovery from its working directory, or files the controller wrote and
+// passes with --append-system-prompt, such as the reviewer's base-branch rules.
+export type ContextFiles =
+  | { kind: 'discovered' }
+  | { appendSystemPrompt: Array<string>; kind: 'supplied' };
+
 export type LaunchSpec = {
+  contextFiles: ContextFiles;
   cwd: string;
   mode: 'launch' | 'resume';
   model: string;

@@ -9,16 +9,20 @@ import type {
   VerificationStatus,
 } from '../../domain.ts';
 import { runOutput } from '../output.ts';
+import { CONTEXT_FILE_NAMES } from './rules.ts';
 
 export const REVIEW_CONTRACT = 'factory.review.v5';
 
 // What a review is checked against: the task's acceptance criterion ids,
-// the earlier blocking finding ids it must verify, and the worktree's files.
+// the earlier blocking finding ids it must verify, the rule files the diff
+// changes, and the worktree's files.
 export type ReviewContext = {
   criteria: ReadonlyArray<string>;
   earlierFindings: ReadonlyArray<string>;
   // The file's line count, by worktree-relative path, or null when it is not there.
   lineCount: (file: string) => number | null;
+  // Repository paths of the project rule files the reviewed diff changes.
+  rules: ReadonlyArray<string>;
 };
 
 export type ParsedReview =
@@ -143,8 +147,15 @@ function parseFindings(body: string, round: number, failures: Array<string>): Ar
   return findings;
 }
 
-// `AC01` and `ac1` are AC1; `R1-02` is R1-2, the id the controller gave it.
-function verificationId(value: string): { id: string; kind: 'criterion' | 'finding' } | null {
+// `AC01` and `ac1` are AC1; `R1-02` is R1-2, the id the controller gave it;
+// a project rule file, such as `AGENTS.md`, is its repository path.
+function verificationId(
+  value: string,
+): { id: string; kind: 'criterion' | 'finding' | 'rule' } | null {
+  const name = value.split('/').at(-1) ?? '';
+  if (CONTEXT_FILE_NAMES.some((rule) => rule === name)) {
+    return { id: value, kind: 'rule' };
+  }
   const criterion = /^AC0*(\d+)$/i.exec(value);
   if (criterion !== null) {
     return { id: `AC${Number(criterion[1])}`, kind: 'criterion' };
@@ -158,6 +169,7 @@ function verificationId(value: string): { id: string; kind: 'criterion' | 'findi
 const statusesFor = {
   criterion: ['verified', 'not_verified'],
   finding: ['fixed', 'still_open'],
+  rule: ['in_scope', 'out_of_scope'],
 } as const satisfies Record<string, ReadonlyArray<VerificationStatus>>;
 
 // The `path:line` and `path:start-end` locations an evidence text cites.
@@ -194,14 +206,14 @@ function parseVerification(
     if (line.length === 0) {
       continue;
     }
-    const match = /^(?:[-*]\s+)?([\w-]+)\s*:\s*([a-z_]+)\s*(?:(?:—|–|--|-)\s*(.*))?$/i.exec(
+    const match = /^(?:[-*]\s+)?([\w./-]+)\s*:\s*([a-z_]+)\s*(?:(?:—|–|--|-)\s*(.*))?$/i.exec(
       // Bold and code marks are dropped; a glob's `*` in the evidence stays.
       line.replaceAll('`', '').replaceAll(/\*\*([^*]+)\*\*/g, '$1'),
     );
     const id = match === null ? null : verificationId(match[1] ?? '');
     if (match === null || id === null) {
       failures.push(
-        `Verification line "${line}" must look like "- AC1: verified — path:line" or "- R1-2: fixed — path:line".`,
+        `Verification line "${line}" must look like "- AC1: verified — path:line", "- R1-2: fixed — path:line", or "- AGENTS.md: in_scope — reason".`,
       );
       continue;
     }
@@ -218,6 +230,11 @@ function parseVerification(
     }
     if (status === 'not_verified' && evidence.length === 0) {
       failures.push(`${id.id} is not_verified without a reason; say why it could not be verified.`);
+    }
+    if (id.kind === 'rule' && evidence.length === 0) {
+      failures.push(
+        `${id.id} is ${status} without a reason; name the task criterion that asks for the change, or say why none does.`,
+      );
     }
     if (status === 'verified' || status === 'fixed') {
       const cited = citations(evidence);
@@ -238,19 +255,53 @@ function parseVerification(
     lines.push({ evidence, id: id.id, status: status as VerificationStatus });
   }
   if (context !== null) {
-    const expected = [...context.criteria, ...context.earlierFindings];
+    const expected = [...context.criteria, ...context.earlierFindings, ...context.rules];
     for (const id of expected.filter((item) => !lines.some((line) => line.id === item))) {
-      failures.push(`## Verification has no line for ${id}.`);
+      failures.push(
+        context.rules.includes(id)
+          ? `## Verification has no line for ${id}, a project rule file this diff changes; say whether the task asks for the change (in_scope) or not (out_of_scope).`
+          : `## Verification has no line for ${id}.`,
+      );
     }
     for (const line of lines.filter((item) => !expected.includes(item.id))) {
-      failures.push(
-        line.id.startsWith('AC')
-          ? `${line.id} is not an acceptance criterion of this task (${context.criteria.join(', ') || 'none'}).`
-          : `${line.id} is not an earlier blocking finding (${context.earlierFindings.join(', ') || 'none'}).`,
-      );
+      failures.push(unexpectedLine(line.id, context));
     }
   }
   return lines;
+}
+
+function unexpectedLine(id: string, context: ReviewContext): string {
+  if (id.startsWith('AC')) {
+    return `${id} is not an acceptance criterion of this task (${context.criteria.join(', ') || 'none'}).`;
+  }
+  if (/^R\d/.test(id)) {
+    return `${id} is not an earlier blocking finding (${context.earlierFindings.join(', ') || 'none'}).`;
+  }
+  return `${id} is not a project rule file this diff changes (${context.rules.join(', ') || 'none'}).`;
+}
+
+// A rule change the task did not ask for is a Major finding, so an
+// out_of_scope line needs a blocking finding that names the file.
+function unreportedRuleChanges(
+  verification: Array<ReviewVerification>,
+  findings: Array<ReviewFinding>,
+): Array<string> {
+  return verification
+    .filter((line) => line.status === 'out_of_scope')
+    .filter(
+      (line) =>
+        !findings.some(
+          (finding) =>
+            finding.blocking &&
+            [finding.title, finding.location ?? '', finding.finding].some((text) =>
+              text.includes(line.id),
+            ),
+        ),
+    )
+    .map(
+      (line) =>
+        `${line.id} is out_of_scope, but no Critical or Major finding names it; report the rule change as a Major finding.`,
+    );
 }
 
 // Parses the factory.review.v5 Markdown template, with its Verification lines
@@ -293,6 +344,9 @@ export function parseReview(
   const verification =
     verificationSection === null ? [] : parseVerification(verificationSection, failures, context);
   const findings = findingsSection === null ? [] : parseFindings(findingsSection, round, failures);
+  if (context !== null) {
+    failures.push(...unreportedRuleChanges(verification, findings));
+  }
   const blocking = findings.filter((finding) => finding.blocking);
   if (verdict === 'approve' && blocking.length > 0) {
     failures.push(

@@ -278,9 +278,16 @@ export type ReviewFinding = {
 };
 
 // A reviewer's line on one acceptance criterion (`AC<n>`: verified or
-// not_verified) or one earlier blocking finding (`R<round>-<n>`: fixed or
-// still_open), with the locations or reason behind it.
-export type VerificationStatus = 'verified' | 'not_verified' | 'fixed' | 'still_open';
+// not_verified), one earlier blocking finding (`R<round>-<n>`: fixed or
+// still_open), or one project rule file the diff changes (its path: in_scope
+// or out_of_scope), with the locations or reason behind it.
+export type VerificationStatus =
+  | 'verified'
+  | 'not_verified'
+  | 'fixed'
+  | 'still_open'
+  | 'in_scope'
+  | 'out_of_scope';
 
 export type ReviewVerification = { evidence: string; id: string; status: VerificationStatus };
 
@@ -306,6 +313,8 @@ export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
   pullRequest: PullRequestInfo | null;
+  // The project rule files the ticket changes, from its worktree's changes.
+  rules: Array<string>;
   usage: string;
 };
 

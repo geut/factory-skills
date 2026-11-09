@@ -15,6 +15,7 @@ import {
   REVIEW_CONTRACT,
   runReview,
 } from './parse.ts';
+import { changedRules, diffPaths, rulesSource } from './rules.ts';
 
 export type ReviewInput = {
   criteria: Array<Criterion>;
@@ -25,6 +26,9 @@ export type ReviewInput = {
   planPath: string;
   rawOutput: string;
   round: number;
+  // Where the reviewer's project rules came from, and the rule files the diff
+  // changes, each of which needs a Verification line.
+  rules: { changed: Array<string>; source: string | null };
   taskFile: string;
   taskTitle: string;
   validationSummary: string;
@@ -98,6 +102,22 @@ function validationGroups(checks: Array<StageCheck>): string {
   return [...groups].flatMap(([stage, lines]) => [`${stage}:`, ...lines]).join('\n');
 }
 
+// Where the rules came from, and what to do about each rule file the diff
+// changes: the worker must not decide the rules its own work is judged by.
+function projectRules(rules: ReviewInput['rules']): Array<string> {
+  return [
+    `Project rules: your system prompt holds them from ${rules.source ?? 'the base commit'}, not from the ticket's branch. Judge the work by them.`,
+    ...(rules.changed.length === 0
+      ? []
+      : [
+          `This diff changes project rules: ${rules.changed.join(', ')}. Decide for each whether the task asks for the change, and give it one Verification line:`,
+          '- `<file>: in_scope — <the task criterion that asks for it>`: review the change as part of the task, and judge the work by the base rules as that change amends them.',
+          '- `<file>: out_of_scope — <why>`: judge the work by the base rules, and report the change as a Major finding that names the file.',
+        ]),
+    '',
+  ];
+}
+
 const skill = 'factory-review';
 const contract = REVIEW_CONTRACT;
 
@@ -158,6 +178,25 @@ export const review = defineStage<ReviewInput, 'review'>({
       planPath: snapshot.execution.planPath ?? '',
       rawOutput: handoff.output,
       round,
+      rules: {
+        changed:
+          snapshot.execution.worktreePath === null
+            ? []
+            : changedRules(
+                {
+                  codeRoot: snapshot.execution.policy.codeRoot,
+                  worktree: snapshot.execution.worktreePath,
+                },
+                diffPaths(handoff.diff),
+              ),
+        source:
+          snapshot.execution.worktreeBaseSha === null
+            ? null
+            : rulesSource({
+                branch: snapshot.execution.worktreeBaseBranch,
+                sha: snapshot.execution.worktreeBaseSha,
+              }),
+      },
       taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
       taskTitle: task.title,
       validationSummary: validationGroups(handoff.checks),
@@ -173,6 +212,9 @@ export const review = defineStage<ReviewInput, 'review'>({
       : { error: parsed.failures.join('\n'), json: JSON.stringify({ output }), kind: 'invalid' };
   },
   preparesInput: false,
+  // The reviewer judges the work by the base commit's rules, not by rules the
+  // ticket's branch may have changed.
+  projectRules: 'base',
   // Later rounds resume the same reviewer so it can check its earlier findings.
   prompts: {
     correction: (failures) =>
@@ -196,6 +238,7 @@ export const review = defineStage<ReviewInput, 'review'>({
           : 'This is the first review of this task.',
         'Read only. Do not edit files.',
         '',
+        ...projectRules(input.rules),
         'Acceptance criteria (one Verification line each):',
         ...(input.criteria.length === 0
           ? ['none']
