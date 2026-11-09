@@ -88,9 +88,6 @@ const TicketSummary = z
     progress: Progress,
     pullRequest: z
       .object({
-        isDraft: z.boolean().nullable().meta({
-          description: 'Whether it is a draft; null when it was recorded before drafts were.',
-        }),
         mergedAt: z.string().nullable(),
         number: z.int().nullable(),
         state: z.enum(['open', 'merged', 'closed']),
@@ -358,14 +355,11 @@ function pullRequestOf(
   executionId: string,
 ): z.infer<typeof TicketSummary>['pullRequest'] {
   const found = db
-    .prepare(
-      'SELECT url, number, state, merged_at, is_draft FROM pull_requests WHERE execution_id = ?',
-    )
+    .prepare('SELECT url, number, state, merged_at FROM pull_requests WHERE execution_id = ?')
     .get(executionId);
   return found === undefined
     ? null
     : {
-        isDraft: found['is_draft'] == null ? null : found['is_draft'] === 1,
         mergedAt: found['merged_at'] == null ? null : String(found['merged_at']),
         number: found['number'] == null ? null : Number(found['number']),
         state: String(found['state']) as 'closed' | 'merged' | 'open',

@@ -34,8 +34,6 @@ export type WrapupInput = {
   codeRoot: string;
   contextPath: string | null;
   displayRef: string;
-  // `codeHost.draft`: open a new pull request as a draft.
-  draft: boolean;
   factoryRoot: string;
   // The issue's open checklist items, B1..Bn.
   issueBoxes: Array<IssueBox>;
@@ -104,12 +102,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           notice: report.detail.usage,
           ...(report.detail.pullRequest === null
             ? {}
-            : {
-                pullRequest: {
-                  isDraft: report.detail.pullRequest.isDraft,
-                  url: report.detail.pullRequest.url,
-                },
-              }),
+            : { pullRequestUrl: report.detail.pullRequest.url }),
         }
       : { failures: report.failures, kind: 'correct' },
   contract,
@@ -131,7 +124,6 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       codeRoot: execution.policy.codeRoot,
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
-      draft: execution.policy.draft,
       factoryRoot: factoryRootOf(execution.factoryDir),
       issueBoxes: prepared.boxes,
       issueBoxesUnread: prepared.boxesUnread,
@@ -152,7 +144,11 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       })),
       testPlan: prepared.testPlan,
       title: titleExample(
-        renderTitle({ template: execution.policy.pullRequestTitle, ticket: snapshot.ticket }),
+        renderTitle({
+          codeHostRepo: execution.policy.codeHostRepo,
+          template: execution.policy.pullRequestTitle,
+          ticket: snapshot.ticket,
+        }),
       ),
       usage: prepared.usage,
       verification: prepared.verification,
@@ -203,12 +199,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         `Base branch: ${input.baseBranch ?? 'unknown'}`,
         `Model: ${input.model}. Tools: ${childToolList(tools)}.`,
         `codeHost.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
-        ...(input.pullRequests
-          ? [
-              `Pull request title: ${input.title}`,
-              `codeHost.draft: ${input.draft ? 'true' : 'false'}`,
-            ]
-          : []),
+        ...(input.pullRequests ? [`Pull request title: ${input.title}`] : []),
         '',
         'Tasks:',
         ...input.tasks.map(
@@ -262,13 +253,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'The human reviews the diff with notes taken from your handoff. Write each ## Files line as - `path` — what changed there and why, backticking only the path, and end a decision with the lines that show it, as `(src/filter.ts:12-40)`.',
         'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, a decision may cite only lines of a changed file, and you must not change product code or merge.',
         input.pullRequests
-          ? [
-              'codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD.',
-              `Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it.`,
-              input.draft
-                ? 'codeHost.draft is on: create it with --draft. Never change an existing pull request between draft and ready.'
-                : 'Never change an existing pull request between draft and ready.',
-            ].join(' ')
+          ? `codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD. Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it; pass the title to gh in single quotes.`
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
       ].join('\n'),
   },

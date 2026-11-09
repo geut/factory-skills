@@ -177,9 +177,9 @@ export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
 export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
 export type Policy = {
+  // `codeHost` as `owner/repo`: a GitHub issue there is `#42` in a title.
+  codeHostRepo: string | null;
   codeRoot: string;
-  // `codeHost.draft`: wrap-up opens a new pull request as a draft.
-  draft: boolean;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };

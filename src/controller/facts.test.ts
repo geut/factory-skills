@@ -46,7 +46,6 @@ test('pull request facts upsert by their ids and keep what a later write leaves 
     closedAt: null,
     executionId: 'e1',
     headBranch: 'factory/t1',
-    isDraft: false,
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00.000Z',
@@ -56,19 +55,12 @@ test('pull request facts upsert by their ids and keep what a later write leaves 
   recordPullRequest(db, base, '2026-10-15T10:00:00.000Z');
   recordPullRequest(
     db,
-    {
-      ...base,
-      author: null,
-      isDraft: true,
-      mergedAt: '2026-10-16T09:00:00.000Z',
-      state: 'merged',
-    },
+    { ...base, author: null, mergedAt: '2026-10-16T09:00:00.000Z', state: 'merged' },
     '2026-10-16T09:00:00.000Z',
   );
-  // The draft state is the code host's latest.
   assert.deepEqual(
-    { ...db.prepare('SELECT author, state, merged_at, is_draft FROM pull_requests').get() },
-    { author: 'dpaez', is_draft: 1, merged_at: '2026-10-16T09:00:00.000Z', state: 'merged' },
+    { ...db.prepare('SELECT author, state, merged_at FROM pull_requests').get() },
+    { author: 'dpaez', merged_at: '2026-10-16T09:00:00.000Z', state: 'merged' },
   );
 
   const review = {

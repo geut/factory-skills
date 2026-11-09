@@ -99,9 +99,6 @@ export const DEFAULT_TRACKER_UPDATES: TrackerUpdates = { checklist: true, commen
 
 // Where the repository and its pull requests live.
 export type CodeHostConfig = {
-  // Whether wrap-up opens a new pull request as a draft. It never converts an
-  // existing one.
-  draft: boolean;
   host: string;
   kind: 'github';
   owner: string;
@@ -593,26 +590,34 @@ function readCodeHost(value: unknown): CodeHostConfig | null | string {
   if (secret !== undefined && (typeof secret !== 'string' || !ENV_NAME.test(secret))) {
     return 'FACTORY.json codeHost.webhookSecretEnv must name an environment variable.';
   }
-  const title = value['pullRequestTitle'] ?? null;
-  if (title !== null && typeof title !== 'string') {
-    return 'FACTORY.json codeHost.pullRequestTitle must be a string such as "{ref} | {summary}".';
-  }
-  if (title !== null && !isTitleTemplate(title)) {
-    return `FACTORY.json codeHost.pullRequestTitle is not a title template: ${titleTemplateProblem(title) ?? ''}`;
-  }
-  const draft = value['draft'] ?? false;
-  if (typeof draft !== 'boolean') {
-    return 'FACTORY.json codeHost.draft must be true or false.';
+  const title = readTitleTemplate(value['pullRequestTitle']);
+  if (typeof title === 'string') {
+    return title;
   }
   return {
     ...place,
-    draft,
     kind: 'github',
     pullRequests,
-    pullRequestTitle: title,
+    pullRequestTitle: title.template,
     syncMinutes,
     webhookSecretEnv: secret ?? null,
   };
+}
+
+// `codeHost.pullRequestTitle`, trimmed, because GitHub trims titles. A message
+// on error.
+function readTitleTemplate(value: unknown): { template: TitleTemplate | null } | string {
+  if (value === undefined || value === null) {
+    return { template: null };
+  }
+  if (typeof value !== 'string') {
+    return 'FACTORY.json codeHost.pullRequestTitle must be a string such as "{ref} | {summary}".';
+  }
+  const template = value.trim();
+  if (!isTitleTemplate(template)) {
+    return `FACTORY.json codeHost.pullRequestTitle is not a title template: ${titleTemplateProblem(template) ?? ''}`;
+  }
+  return { template };
 }
 
 // Pull requests are on unless the code host turns them off.

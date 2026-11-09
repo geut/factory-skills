@@ -2,11 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addTasks, blank, review, run, session } from '../../stories/fixtures.ts';
 import { wrapup } from './definition.ts';
-import { isTitleTemplate, type TitleTemplate } from './title.ts';
-
-function template(value: string): TitleTemplate {
-  return isTitleTemplate(value) ? value : assert.fail(`${value} is not a title template`);
-}
+import { parseTitleTemplate } from './title.ts';
 
 test('wrap-up is given each task’s review verification, gaps included', () => {
   const snapshot = blank();
@@ -112,24 +108,21 @@ function initialPrompt(edit: (snapshot: ReturnType<typeof blank>) => void): stri
   return wrapup.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
 }
 
-test('with pull requests on, wrap-up is given the rendered title and the draft setting', () => {
+test('with pull requests on, wrap-up is given the rendered title', () => {
   const text = initialPrompt((snapshot) => {
     snapshot.execution.policy.pullRequests = true;
-    snapshot.execution.policy.draft = true;
-    snapshot.execution.policy.pullRequestTitle = template('{ref} | {summary}');
+    snapshot.execution.policy.pullRequestTitle = parseTitleTemplate('{ref} | {summary}');
     snapshot.ticket.displayRef = 'ENG-42';
     snapshot.ticket.sourceKind = 'linear';
   });
-  assert.match(text, /\nPull request title: ENG-42 \| <summary>\ncodeHost\.draft: true\n/);
+  assert.match(text, /\nPull request title: ENG-42 \| <summary>\n/);
   assert.match(text, /Title it exactly ENG-42 \| <summary>/);
-  assert.match(text, /create it with --draft/);
 
   const bare = initialPrompt((snapshot) => {
     snapshot.execution.policy.pullRequests = true;
   });
   // A GitHub ticket keeps today's title: the summary alone.
-  assert.match(bare, /\nPull request title: <summary>\ncodeHost\.draft: false\n/);
-  assert.doesNotMatch(bare, /--draft/);
+  assert.match(bare, /\nPull request title: <summary>\n/);
 
   const off = initialPrompt(() => {});
   assert.doesNotMatch(off, /Pull request title:/);

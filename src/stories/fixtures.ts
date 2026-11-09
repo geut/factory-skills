@@ -66,8 +66,8 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
       message: null,
       planPath: '.factory/tickets/dpaez-factory-dashboard-11/plan.md',
       policy: {
+        codeHostRepo: null,
         codeRoot: '/repo',
-        draft: false,
         labels: { map: {} },
         limits: { ...DEFAULT_LIMITS },
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },

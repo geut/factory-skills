@@ -12,7 +12,6 @@ export type PullRequestInfo = {
   headBranch: string;
   // The commit the pull request's branch points at, when the host reports it.
   headSha: string | null;
-  isDraft: boolean;
   mergedAt: string | null;
   number: number;
   openedAt: string | null;
@@ -72,7 +71,7 @@ function text(value: unknown): string | null {
 }
 
 const PR_FIELDS =
-  'number,url,title,isDraft,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
+  'number,url,title,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
 
 function pullRequestFrom(value: unknown): PullRequestInfo | null {
   if (!isRecord(value) || typeof value['number'] !== 'number' || typeof value['url'] !== 'string') {
@@ -85,7 +84,6 @@ function pullRequestFrom(value: unknown): PullRequestInfo | null {
     closedAt: text(value['closedAt']),
     headBranch: String(value['headRefName'] ?? ''),
     headSha: text(value['headRefOid']),
-    isDraft: value['isDraft'] === true,
     mergedAt: text(value['mergedAt']),
     number: value['number'],
     openedAt: text(value['createdAt']),

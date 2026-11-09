@@ -174,9 +174,8 @@ function parsePolicy(raw: string): Policy {
     throw new FactoryDatabaseError('execution policy is invalid');
   }
   return {
+    codeHostRepo: typeof value['codeHostRepo'] === 'string' ? value['codeHostRepo'] : null,
     codeRoot: value['codeRoot'],
-    // Executions started before draft pull requests open ready ones.
-    draft: value['draft'] === true,
     labels: parseLabelMap(labels['map']),
     // A limit the execution's policy does not name keeps its default.
     limits: Object.fromEntries(

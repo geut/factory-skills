@@ -5,7 +5,6 @@ import type { CodeHostConfig } from '../config.ts';
 import { createGithubCodeHost, type GhJson } from './code-host.ts';
 
 const config: CodeHostConfig = {
-  draft: false,
   host: 'github.com',
   kind: 'github',
   owner: 'geut',
@@ -22,7 +21,6 @@ const view = {
   createdAt: '2026-10-15T10:00:00Z',
   headRefName: 'factory/proj-123',
   headRefOid: 'abc123',
-  isDraft: false,
   mergedAt: null,
   number: 7,
   state: 'OPEN',
@@ -53,7 +51,6 @@ test('a pull request reads by URL, and a missing one is null', () => {
     closedAt: null,
     headBranch: 'factory/proj-123',
     headSha: 'abc123',
-    isDraft: false,
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',

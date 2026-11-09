@@ -8,7 +8,7 @@ import type { WrapupBaseline } from '../domain.ts';
 import { markdownChecklist } from '../ports/markdown-checklist.ts';
 import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
-import { isTitleTemplate } from '../stages/wrapup/title.ts';
+import { parseTitleTemplate } from '../stages/wrapup/title.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
 import { captureWrapupState, wrapupValidator, type PullRequestLookup } from './wrapup.ts';
@@ -178,9 +178,7 @@ function validate(
         if (options.titled !== undefined) {
           const { displayRef, sourceKind, template } = options.titled;
           execution.policy.pullRequestTitle =
-            template === null || isTitleTemplate(template)
-              ? template
-              : assert.fail(`${template} is not a title template`);
+            template === null ? null : parseTitleTemplate(template);
           snapshot.ticket.displayRef = displayRef;
           snapshot.ticket.sourceKind = sourceKind;
         }
@@ -523,7 +521,6 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
     closedAt: null,
     headBranch: branch,
     headSha: git(value.worktree, ['rev-parse', 'HEAD']),
-    isDraft: false,
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
@@ -573,7 +570,6 @@ function openPullRequest(headSha: string | null): PullRequestLookup {
     closedAt: null,
     headBranch: branch,
     headSha,
-    isDraft: false,
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
@@ -583,13 +579,10 @@ function openPullRequest(headSha: string | null): PullRequestLookup {
   });
 }
 
-// The same pull request, with another title or draft state.
-function pullRequestWith(
-  headSha: string,
-  change: { isDraft?: boolean; title?: string },
-): PullRequestLookup {
+// The same pull request, with another title.
+function pullRequestTitled(headSha: string, title: string): PullRequestLookup {
   const found = openPullRequest(headSha)(url);
-  return () => ('missing' in found ? found : { ...found, ...change });
+  return () => ('missing' in found ? found : { ...found, title });
 }
 
 function commit(value: Fixture, paths: Array<string>, message = 'feat: persist the filter (#1)') {
@@ -627,7 +620,7 @@ test('with pull requests on, the pull request must have the configured title', a
   const titled = { displayRef: 'ENG-42', sourceKind: 'linear', template: '{ref} | {summary}' };
   const check = (title: string) =>
     validate(value, baseline, handoff(value, { merge: url }), {
-      findPullRequest: pullRequestWith(head, { title }),
+      findPullRequest: pullRequestTitled(head, title),
       pullRequests: true,
       titled,
     });
@@ -638,38 +631,29 @@ test('with pull requests on, the pull request must have the configured title', a
   assert.equal(wrong.status, 'failed');
   assert.match(
     failures(wrong),
-    /is titled "ENG-42: Persist the filter", not ENG-42 \| <summary>; run gh pr edit 7 --title "ENG-42 \| <summary>"/,
+    /is titled "ENG-42: Persist the filter", not ENG-42 \| <summary>; run gh pr edit 7 --title 'ENG-42 \| <summary>'/,
   );
+  // The suggested command quotes the title so the shell runs none of it.
+  const quoted = await validate(value, baseline, handoff(value, { merge: url }), {
+    findPullRequest: pullRequestTitled(head, 'Persist the filter'),
+    pullRequests: true,
+    titled: { displayRef: 'ENG-42', sourceKind: 'linear', template: "`{ref}` it's {summary}" },
+  });
+  assert.match(failures(quoted), /--title '`ENG-42` it'\\''s <summary>'/);
   // A local ticket has no ref, so the separator goes with it.
   const local = await validate(value, baseline, handoff(value, { merge: url }), {
-    findPullRequest: pullRequestWith(head, { title: 'Persist the filter' }),
+    findPullRequest: pullRequestTitled(head, 'Persist the filter'),
     pullRequests: true,
     titled: { displayRef: 'proj-1', sourceKind: 'text', template: '{ref} | {summary}' },
   });
   assert.equal(local.status, 'passed', failures(local));
   // Without a template, a Linear ticket's title still starts with its key.
   const untitled = await validate(value, baseline, handoff(value, { merge: url }), {
-    findPullRequest: pullRequestWith(head, { title: 'Persist the filter' }),
+    findPullRequest: pullRequestTitled(head, 'Persist the filter'),
     pullRequests: true,
     titled: { displayRef: 'ENG-42', sourceKind: 'linear', template: null },
   });
   assert.match(failures(untitled), /not ENG-42: <summary>/);
-});
-
-test('with pull requests on, a draft and a ready pull request both pass and keep their state', async () => {
-  const value = fixture();
-  addRemote(value);
-  const baseline = value.baseline();
-  const head = commit(value, ['src/filter.ts', 'src/store.ts']);
-  git(value.worktree, ['push', '-u', 'origin', branch]);
-  for (const isDraft of [true, false]) {
-    const outcome = await validate(value, baseline, handoff(value, { merge: url }), {
-      findPullRequest: pullRequestWith(head, { isDraft }),
-      pullRequests: true,
-    });
-    assert.equal(outcome.status, 'passed', failures(outcome));
-    assert.equal(outcome.status === 'passed' && outcome.detail.pullRequest?.isDraft, isDraft);
-  }
 });
 
 test('with pull requests on, the commit holds only paths ## Files lists', async () => {

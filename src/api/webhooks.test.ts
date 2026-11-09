@@ -52,7 +52,6 @@ const merged = {
   pull_request: {
     closed_at: '2026-10-16T09:00:00Z',
     created_at: '2026-10-15T10:00:00Z',
-    draft: true,
     head: { ref: 'factory/proj-123' },
     html_url: 'https://github.com/geut/factory-skills/pull/7',
     merged: true,
@@ -96,7 +95,6 @@ test('a signed pull_request delivery updates the ticket of that pull request', a
   assert.equal(changed[0]?.headBranch, 'factory/proj-123');
   // The webhook path and the controller's check share one shape.
   assert.equal(changed[0]?.title, 'ENG-42 | Persist the filter');
-  assert.equal(changed[0]?.isDraft, true);
 });
 
 test('an unsigned or wrongly signed delivery is refused and changes nothing', async () => {

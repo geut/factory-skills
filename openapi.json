@@ -1992,13 +1992,6 @@
               {
                 "type": "object",
                 "properties": {
-                  "isDraft": {
-                    "description": "Whether it is a draft; null when it was recorded before drafts were.",
-                    "type": [
-                      "boolean",
-                      "null"
-                    ]
-                  },
                   "mergedAt": {
                     "type": [
                       "string",
@@ -2030,7 +2023,6 @@
                   }
                 },
                 "required": [
-                  "isDraft",
                   "mergedAt",
                   "number",
                   "state",
@@ -2261,13 +2253,6 @@
               {
                 "type": "object",
                 "properties": {
-                  "isDraft": {
-                    "description": "Whether it is a draft; null when it was recorded before drafts were.",
-                    "type": [
-                      "boolean",
-                      "null"
-                    ]
-                  },
                   "mergedAt": {
                     "type": [
                       "string",
@@ -2299,7 +2284,6 @@
                   }
                 },
                 "required": [
-                  "isDraft",
                   "mergedAt",
                   "number",
                   "state",

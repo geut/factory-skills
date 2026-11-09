@@ -434,8 +434,8 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     title: 'Remember the filter',
   };
   const policy: Policy = {
+    codeHostRepo: null,
     codeRoot,
-    draft: false,
     labels: { map: {} },
     limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
@@ -1490,7 +1490,6 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
   opened = {
     ...(codeHostWith('open', []).findPullRequest(branch) as PullRequestInfo),
     headSha: git(wrapup.cwd, ['rev-parse', 'HEAD']),
-    isDraft: false,
   };
   runtime.emit(wrapup.runId, {
     kind: 'subagent_done',
@@ -1905,7 +1904,6 @@ function codeHostWith(
     closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
-    isDraft: false,
     mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
@@ -2001,7 +1999,6 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
     closedAt: '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
-    isDraft: false,
     mergedAt: '2026-10-16T09:00:00Z',
     number: 7,
     openedAt: null,
@@ -2017,7 +2014,6 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
       closedAt: null,
       headBranch: 'someone/else',
       headSha: null,
-      isDraft: false,
       mergedAt: null,
       number: 9,
       openedAt: null,

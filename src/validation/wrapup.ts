@@ -290,6 +290,11 @@ function commitFailures(input: {
   return failures;
 }
 
+// A title can hold backticks or `$`, which a double-quoted shell word would run.
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
+}
+
 // The code host's view of the pull request at a URL.
 export type PullRequestLookup = (url: string) => PullRequestInfo | { missing: true };
 
@@ -583,7 +588,7 @@ export function validateWrapup(input: {
       if (!titleMatches(input.title, found.title)) {
         const wanted = titleExample(input.title);
         policy.push(
-          `${url} is titled "${found.title}", not ${wanted}; run gh pr edit ${found.number} --title "${wanted}" with <summary> replaced by your one-line summary.`,
+          `${url} is titled "${found.title}", not ${wanted}; run gh pr edit ${found.number} --title ${shellQuote(wanted)} with <summary> replaced by your one-line summary.`,
         );
       }
     }
@@ -706,6 +711,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         pullRequests: execution.policy.pullRequests,
         ticketDir: ticketDirOf(execution.factoryDir),
         title: renderTitle({
+          codeHostRepo: execution.policy.codeHostRepo,
           template: execution.policy.pullRequestTitle,
           ticket: snapshot.ticket,
         }),

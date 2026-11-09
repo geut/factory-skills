@@ -1046,7 +1046,7 @@ function handOff(
   run: RunRecord,
   notice: string,
   ids: IdSource,
-  pullRequest: { isDraft: boolean; url: string } | null,
+  pullRequestUrl: string | null,
   checklist: IssueChecklist | null,
 ): Reduction {
   const ref = snapshot.ticket.displayRef;
@@ -1086,11 +1086,9 @@ function handOff(
   trackerUpdate(snapshot, ids, {
     checklist: checklist?.met.map(({ key, text }) => ({ key, text })) ?? [],
     comment: [
-      pullRequest === null
+      pullRequestUrl === null
         ? 'The factory finished this ticket. Its handoff has the merge commands.'
-        : pullRequest.isDraft
-          ? `The factory finished this ticket and opened ${pullRequest.url} as a draft.`
-          : `The factory finished this ticket and opened ${pullRequest.url} for review.`,
+        : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
       ...(checklist === null || checklist.decisions.length === 0
         ? []
         : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)]),
@@ -1113,9 +1111,6 @@ function handOff(
       '',
       notice,
       '',
-      ...(pullRequest?.isDraft === true
-        ? [`${pullRequest.url} is a draft: mark it ready for review when you want reviewers.`, '']
-        : []),
       `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
     ].join('\n'),
     runId: run.id,
@@ -1226,7 +1221,7 @@ function applyOutcome(
           run,
           outcome.notice ?? '',
           ids,
-          outcome.pullRequest ?? null,
+          outcome.pullRequestUrl ?? null,
           outcome.checklist ?? null,
         );
       }

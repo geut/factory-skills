@@ -21,7 +21,6 @@ export type PullRequestFact = {
   closedAt: string | null;
   executionId: string;
   headBranch: string | null;
-  isDraft: boolean;
   mergedAt: string | null;
   number: number | null;
   openedAt: string | null;
@@ -33,11 +32,10 @@ export function recordPullRequest(db: DatabaseSync, fact: PullRequestFact, now: 
   db.prepare(
     `INSERT INTO pull_requests
       (execution_id, url, number, head_branch, author, state, opened_at, merged_at, closed_at,
-       recorded_at, is_draft)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (execution_id) DO UPDATE SET
        url = excluded.url,
-       is_draft = excluded.is_draft,
        number = coalesce(excluded.number, number),
        head_branch = coalesce(excluded.head_branch, head_branch),
        author = coalesce(excluded.author, author),
@@ -56,7 +54,6 @@ export function recordPullRequest(db: DatabaseSync, fact: PullRequestFact, now: 
     fact.mergedAt,
     fact.closedAt,
     now,
-    fact.isDraft ? 1 : 0,
   );
 }
 

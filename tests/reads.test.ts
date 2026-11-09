@@ -231,7 +231,6 @@ test('a ticket shows the pull request recorded for it', async () => {
       closedAt: null,
       executionId: execution,
       headBranch: 'factory/alpha',
-      isDraft: false,
       mergedAt: null,
       number: 7,
       openedAt: null,

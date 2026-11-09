@@ -65,7 +65,7 @@ Never amend, rebase, reset, or force-push, never make a merge commit, and never 
 When that list is non-empty, update the open pull request instead of creating another:
 
 ```sh
-gh pr edit <number> --title "<title>" --body "$(cat <<'EOF'
+gh pr edit <number> --title '<title>' --body "$(cat <<'EOF'
 <pr summary>
 EOF
 )"
@@ -74,15 +74,13 @@ EOF
 When the list is empty:
 
 ```sh
-gh pr create --head "<ticket-branch>" --base "<base-branch>" --title "<title>" [--draft] --body "$(cat <<'EOF'
+gh pr create --head "<ticket-branch>" --base "<base-branch>" --title '<title>' --body "$(cat <<'EOF'
 <pr summary>
 EOF
 )"
 ```
 
-Use the title from the prompt's `Pull request title:` line, with `<summary>` replaced by a one-line summary of the ticket, on create and on every edit. The controller renders it from `codeHost.pullRequestTitle` and checks it, so do not reformat it. In a direct run, render that template yourself: `{ref}` is `#42` for a GitHub ticket, the issue key such as `ENG-42` for another tracker, and nothing for a `file` or `text` ticket, which also drops the separator next to it. Unset, the title is the summary for a GitHub ticket and `ENG-42: <summary>` for another tracker, so the tracker links the pull request to the issue. Never add a closing keyword such as `Fixes ENG-42`: what happens to the issue on merge is the team's own tracker automation to decide.
-
-When the prompt says `codeHost.draft: true`, add `--draft` to `gh pr create`. Never convert an existing pull request with `gh pr ready`, in either direction: a person who marked it ready keeps it ready.
+Use the title from the prompt's `Pull request title:` line, with `<summary>` replaced by a one-line summary of the ticket, on create and on every edit. The controller renders it from `codeHost.pullRequestTitle` and checks it, so do not reformat it. Quote it with single quotes, as above, so the shell runs none of it; write a `'` inside it as `'\''`. In a direct run, render that template yourself: `{ref}` is `#42` for an issue of the code host's repository, `owner/repo#42` for another GitHub repository's, the issue key such as `ENG-42` for another tracker, and nothing for a `file` or `text` ticket, which also drops the separator next to it. Unset, the title is the summary for a GitHub ticket and `ENG-42: <summary>` for another tracker, so the tracker links the pull request to the issue. Never add a closing keyword such as `Fixes ENG-42`: what happens to the issue on merge is the team's own tracker automation to decide.
 
 When the prompt lists QA screenshots, add a `## Screenshots` section to the pull request summary that names each one by task and criterion with its path. GitHub takes images only through its web upload, so the handoff also tells the human which files to drop into the pull request.
 

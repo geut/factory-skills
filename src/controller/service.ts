@@ -569,8 +569,11 @@ export function createFactoryService(input: {
       return config.message;
     }
     return {
+      codeHostRepo:
+        config.config.codeHost === null
+          ? null
+          : `${config.config.codeHost.owner}/${config.config.codeHost.repo}`,
       codeRoot: input.codeRoot,
-      draft: config.config.codeHost?.draft ?? false,
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,

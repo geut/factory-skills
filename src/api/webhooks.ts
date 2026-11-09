@@ -37,7 +37,6 @@ export function pullRequestFromPayload(payload: unknown): PullRequestInfo | null
     closedAt: typeof pr['closed_at'] === 'string' ? pr['closed_at'] : null,
     headBranch: typeof head['ref'] === 'string' ? head['ref'] : '',
     headSha: typeof head['sha'] === 'string' ? head['sha'] : null,
-    isDraft: pr['draft'] === true,
     mergedAt,
     number: pr['number'],
     openedAt: typeof pr['created_at'] === 'string' ? pr['created_at'] : null,

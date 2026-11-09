@@ -112,8 +112,4 @@ CREATE TABLE pull_request_commits (
   PRIMARY KEY (execution_id, sha)
 ) STRICT;
 `,
-  // Schema 7: whether a ticket's pull request is a draft.
-  6: `
-ALTER TABLE pull_requests ADD COLUMN is_draft INTEGER CHECK (is_draft IN (0, 1));
-`,
 };
