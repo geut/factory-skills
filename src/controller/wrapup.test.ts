@@ -191,6 +191,58 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
   );
 });
 
+test('an accepted wrap-up says when its pull request is a draft', () => {
+  const pullRequest = {
+    author: 'dpaez',
+    closedAt: null,
+    headBranch: 'factory/demo',
+    headSha: 'abc123',
+    mergedAt: null,
+    number: 7,
+    openedAt: null,
+    state: 'open' as const,
+    title: 'Persist the filter',
+    url: 'https://github.com/geut/demo/pull/7',
+  };
+  const handedOff = (isDraft: boolean) => {
+    const { runId, snapshot } = finishedWrapup();
+    const passed = reduce({
+      event: {
+        actionId: validation(snapshot).id,
+        kind: 'validation_finished',
+        report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+          checklist: noIssue,
+          pullRequest: { ...pullRequest, isDraft },
+          usage: '',
+        }),
+        runId,
+        stage: 'wrapup',
+      },
+      ids: randomIds(),
+      now,
+      snapshot,
+    });
+    const after = passed.snapshot ?? snapshot;
+    const comment = after.actions.find(
+      (item): item is Extract<ActionRecord, { kind: 'update_ticket_source' }> =>
+        item.kind === 'update_ticket_source' && item.update === 'handoff',
+    )?.comment;
+    return { comment, question: after.attention.at(-1)?.question ?? '' };
+  };
+  const draft = handedOff(true);
+  assert.equal(
+    draft.comment,
+    `The factory finished this ticket and opened ${pullRequest.url} as a draft.`,
+  );
+  assert.match(draft.question, /pull\/7 is a draft: mark it ready for review/);
+  const ready = handedOff(false);
+  assert.equal(
+    ready.comment,
+    `The factory finished this ticket and opened ${pullRequest.url} for review.`,
+  );
+  assert.doesNotMatch(ready.question, /is a draft/);
+});
+
 test('complete is a command, and only a ready-for-handoff ticket can be completed', () => {
   assert.deepEqual(parseFactoryCommand('complete PROJ-1'), { kind: 'complete', ref: 'PROJ-1' });
   assert.equal(parseFactoryCommand('complete').kind, 'invalid');

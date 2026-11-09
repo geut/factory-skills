@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
+import {
+  isTitleTemplate,
+  titleTemplateProblem,
+  type TitleTemplate,
+} from './stages/wrapup/title.ts';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 // Installing dependencies takes longer than a check.
@@ -94,11 +99,16 @@ export const DEFAULT_TRACKER_UPDATES: TrackerUpdates = { checklist: true, commen
 
 // Where the repository and its pull requests live.
 export type CodeHostConfig = {
+  // Whether wrap-up opens a new pull request as a draft. It never converts an
+  // existing one.
+  draft: boolean;
   host: string;
   kind: 'github';
   owner: string;
   // Whether wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
+  // The pull request title, with {ref} and {summary}; null keeps the default.
+  pullRequestTitle: TitleTemplate | null;
   repo: string;
   // How often the server checks the pull requests of tickets in handoff.
   syncMinutes: number;
@@ -583,7 +593,26 @@ function readCodeHost(value: unknown): CodeHostConfig | null | string {
   if (secret !== undefined && (typeof secret !== 'string' || !ENV_NAME.test(secret))) {
     return 'FACTORY.json codeHost.webhookSecretEnv must name an environment variable.';
   }
-  return { ...place, kind: 'github', pullRequests, syncMinutes, webhookSecretEnv: secret ?? null };
+  const title = value['pullRequestTitle'] ?? null;
+  if (title !== null && typeof title !== 'string') {
+    return 'FACTORY.json codeHost.pullRequestTitle must be a string such as "{ref} | {summary}".';
+  }
+  if (title !== null && !isTitleTemplate(title)) {
+    return `FACTORY.json codeHost.pullRequestTitle is not a title template: ${titleTemplateProblem(title) ?? ''}`;
+  }
+  const draft = value['draft'] ?? false;
+  if (typeof draft !== 'boolean') {
+    return 'FACTORY.json codeHost.draft must be true or false.';
+  }
+  return {
+    ...place,
+    draft,
+    kind: 'github',
+    pullRequests,
+    pullRequestTitle: title,
+    syncMinutes,
+    webhookSecretEnv: secret ?? null,
+  };
 }
 
 // Pull requests are on unless the code host turns them off.

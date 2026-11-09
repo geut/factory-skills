@@ -11,6 +11,12 @@ import { citations, latestReviews } from '../stages/review/parse.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
+  type PullRequestTitle,
+  renderTitle,
+  titleExample,
+  titleMatches,
+} from '../stages/wrapup/title.ts';
+import {
   errorReport,
   failedReport,
   passedReport,
@@ -302,6 +308,8 @@ export function validateWrapup(input: {
   output: string;
   pullRequests: boolean;
   ticketDir: string;
+  // The title the pull request must have, with wrap-up's summary in it.
+  title: PullRequestTitle;
   // The all-stage usage table, read once the checks are done.
   usage: () => string;
   worktree: string;
@@ -565,10 +573,19 @@ export function validateWrapup(input: {
       policy.push(`No pull request exists at ${url}.`);
     } else if (found.headBranch !== input.branch) {
       policy.push(`${url} is for ${found.headBranch}, not ${input.branch}.`);
-    } else if (found.headSha !== current.head) {
-      policy.push(
-        `${url} has head ${found.headSha ?? 'unknown'}, not the local HEAD ${current.head}; push ${input.branch}.`,
-      );
+    } else {
+      if (found.headSha !== current.head) {
+        policy.push(
+          `${url} has head ${found.headSha ?? 'unknown'}, not the local HEAD ${current.head}; push ${input.branch}.`,
+        );
+      }
+      // The project's title format, which its CI, changelog, or tracker reads.
+      if (!titleMatches(input.title, found.title)) {
+        const wanted = titleExample(input.title);
+        policy.push(
+          `${url} is titled "${found.title}", not ${wanted}; run gh pr edit ${found.number} --title "${wanted}" with <summary> replaced by your one-line summary.`,
+        );
+      }
     }
   }
   checks.push(
@@ -688,6 +705,10 @@ export const wrapupValidator: Validator<'wrapup'> = {
         output: outputOf(run.resultJson),
         pullRequests: execution.policy.pullRequests,
         ticketDir: ticketDirOf(execution.factoryDir),
+        title: renderTitle({
+          template: execution.policy.pullRequestTitle,
+          ticket: snapshot.ticket,
+        }),
         usage: deps.usage,
         worktree: execution.worktreePath,
       }),

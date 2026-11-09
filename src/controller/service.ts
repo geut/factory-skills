@@ -570,10 +570,12 @@ export function createFactoryService(input: {
     }
     return {
       codeRoot: input.codeRoot,
+      draft: config.config.codeHost?.draft ?? false,
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,
       pullRequests: pullRequestsAllowed(config.config),
+      pullRequestTitle: config.config.codeHost?.pullRequestTitle ?? null,
       stages: config.config.stages,
       validation: config.config.validation,
       worktreeSetup: config.config.worktree.setup,

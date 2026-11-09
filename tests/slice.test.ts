@@ -435,10 +435,12 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
   };
   const policy: Policy = {
     codeRoot,
+    draft: false,
     labels: { map: {} },
     limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     pullRequests: false,
+    pullRequestTitle: null,
     stages: {},
     validation: { qa: { commands: [] }, work: { commands: [] }, wrapup: { generated: [] } },
     worktreeSetup: [],
@@ -1488,6 +1490,7 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
   opened = {
     ...(codeHostWith('open', []).findPullRequest(branch) as PullRequestInfo),
     headSha: git(wrapup.cwd, ['rev-parse', 'HEAD']),
+    isDraft: false,
   };
   runtime.emit(wrapup.runId, {
     kind: 'subagent_done',
@@ -1902,10 +1905,12 @@ function codeHostWith(
     closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
+    isDraft: false,
     mergedAt: state === 'merged' ? '2026-10-16T09:00:00Z' : null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
     state: state ?? 'open',
+    title: 'Persist the filter',
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   return {
@@ -1996,10 +2001,12 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
     closedAt: '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
+    isDraft: false,
     mergedAt: '2026-10-16T09:00:00Z',
     number: 7,
     openedAt: null,
     state: 'merged',
+    title: 'Persist the filter',
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   assert.match(ticket ?? '', /^proj-123-[0-9a-f]{8}$/);
@@ -2010,10 +2017,12 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
       closedAt: null,
       headBranch: 'someone/else',
       headSha: null,
+      isDraft: false,
       mergedAt: null,
       number: 9,
       openedAt: null,
       state: 'open',
+      title: 'Persist the filter',
       url: 'https://github.com/geut/factory-skills/pull/9',
     }),
     null,

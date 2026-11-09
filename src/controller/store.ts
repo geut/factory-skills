@@ -39,6 +39,7 @@ import {
   type TicketId,
 } from '../domain.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
+import { isTitleTemplate, type TitleTemplate } from '../stages/wrapup/title.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { card, encodeCard } from './card.ts';
 import { keyOfFactoryDir } from './keys.ts';
@@ -174,6 +175,8 @@ function parsePolicy(raw: string): Policy {
   }
   return {
     codeRoot: value['codeRoot'],
+    // Executions started before draft pull requests open ready ones.
+    draft: value['draft'] === true,
     labels: parseLabelMap(labels['map']),
     // A limit the execution's policy does not name keeps its default.
     limits: Object.fromEntries(
@@ -184,6 +187,7 @@ function parsePolicy(raw: string): Policy {
     ) as Limits,
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
     pullRequests: value['pullRequests'] === true,
+    pullRequestTitle: storedTitleTemplate(value['pullRequestTitle']),
     stages: storedStageSettings(value['stages']),
     validation: {
       // Executions started before validation.qa run the work commands again.
@@ -200,6 +204,17 @@ function parsePolicy(raw: string): Policy {
     // Executions started before worktree setup existed have none.
     worktreeSetup: parseCommands(value['worktreeSetup'] ?? []),
   };
+}
+
+// Executions started before title templates have none.
+function storedTitleTemplate(value: unknown): TitleTemplate | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'string' || !isTitleTemplate(value)) {
+    throw new FactoryDatabaseError('execution policy has an invalid pullRequestTitle');
+  }
+  return value;
 }
 
 // Settings snapshotted at start are read again by their stages.

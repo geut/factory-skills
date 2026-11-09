@@ -6,7 +6,7 @@ CREATE TABLE schema_meta (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 6);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 7);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -953,7 +953,9 @@ CREATE TABLE pull_requests (
   merged_at      TEXT,
   closed_at      TEXT,
   recorded_at    TEXT NOT NULL,
-  last_synced_at TEXT
+  last_synced_at TEXT,
+  -- Null for a pull request recorded before schema 7.
+  is_draft       INTEGER CHECK (is_draft IN (0, 1))
 ) STRICT;
 
 CREATE TABLE pull_request_reviews (
@@ -979,6 +981,6 @@ CREATE TABLE pull_request_commits (
 
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 
 COMMIT;

@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
+import type { CodeHostConfig } from '../config.ts';
 import { createGithubCodeHost, type GhJson } from './code-host.ts';
 
-const config = {
+const config: CodeHostConfig = {
+  draft: false,
   host: 'github.com',
-  kind: 'github' as const,
+  kind: 'github',
   owner: 'geut',
   pullRequests: true,
+  pullRequestTitle: null,
   repo: 'factory-skills',
   syncMinutes: 10,
   webhookSecretEnv: null,
@@ -19,9 +22,11 @@ const view = {
   createdAt: '2026-10-15T10:00:00Z',
   headRefName: 'factory/proj-123',
   headRefOid: 'abc123',
+  isDraft: false,
   mergedAt: null,
   number: 7,
   state: 'OPEN',
+  title: 'Persist the filter',
   url: 'https://github.com/geut/factory-skills/pull/7',
 };
 
@@ -48,10 +53,12 @@ test('a pull request reads by URL, and a missing one is null', () => {
     closedAt: null,
     headBranch: 'factory/proj-123',
     headSha: 'abc123',
+    isDraft: false,
     mergedAt: null,
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
     state: 'open',
+    title: 'Persist the filter',
     url: view.url,
   });
   const missing = createGithubCodeHost(
