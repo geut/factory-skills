@@ -124,6 +124,26 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
   }
 });
 
+test('codeHost takes a pull request title template, unset by default', () => {
+  const place = { kind: 'github', owner: 'geut', repo: 'factory-skills' };
+  const codeHostOf = (extra: Record<string, unknown>) => {
+    const parsed = parseFactoryConfig({ codeHost: { ...place, ...extra }, models });
+    return parsed.kind === 'ok' ? parsed.config.codeHost : parsed.message;
+  };
+  const bare = codeHostOf({});
+  assert.equal(typeof bare === 'object' && bare?.pullRequestTitle, null);
+  // GitHub trims titles, so the template is trimmed too.
+  const set = codeHostOf({ pullRequestTitle: ' {ref} | {summary} ' });
+  assert.equal(typeof set === 'object' && set?.pullRequestTitle, '{ref} | {summary}');
+  // A template without {summary} names the setting.
+  assert.match(
+    String(codeHostOf({ pullRequestTitle: '{ref}' })),
+    /codeHost\.pullRequestTitle .*\{summary\} once/,
+  );
+  assert.match(String(codeHostOf({ pullRequestTitle: '{key}: {summary}' })), /\{key\}/);
+  assert.match(String(codeHostOf({ pullRequestTitle: 7 })), /codeHost\.pullRequestTitle/);
+});
+
 test('tracker updates default to on, each can be turned off, and anything else is refused', () => {
   const github = { kind: 'github', owner: 'geut', repo: 'factory-skills' };
   const updatesOf = (updates?: unknown) => {

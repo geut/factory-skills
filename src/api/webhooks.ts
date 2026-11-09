@@ -41,6 +41,7 @@ export function pullRequestFromPayload(payload: unknown): PullRequestInfo | null
     number: pr['number'],
     openedAt: typeof pr['created_at'] === 'string' ? pr['created_at'] : null,
     state: mergedAt !== null || pr['merged'] === true ? 'merged' : closed ? 'closed' : 'open',
+    title: typeof pr['title'] === 'string' ? pr['title'] : '',
     url: pr['html_url'],
   };
 }

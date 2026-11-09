@@ -6,6 +6,7 @@ import type { InputStage, PreparedInput, StageReports } from './stages/index.ts'
 import type { ContextGaps } from './stages/plan/context.ts';
 import type { Criterion } from './stages/qa/criteria.ts';
 import type { IssueBox, IssueChecklist } from './stages/wrapup/checklist.ts';
+import type { TitleTemplate } from './stages/wrapup/title.ts';
 import type { ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
@@ -176,12 +177,16 @@ export type ReviewVerdict = 'approve' | 'changes_requested' | 'blocked';
 export type ReviewSeverity = 'critical' | 'major' | 'minor';
 
 export type Policy = {
+  // `codeHost` as `owner/repo`: a GitHub issue there is `#42` in a title.
+  codeHostRepo: string | null;
   codeRoot: string;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
   // `codeHost.pullRequests`: wrap-up may push the branch and open a pull request.
   pullRequests: boolean;
+  // `codeHost.pullRequestTitle`; null titles the pull request the default way.
+  pullRequestTitle: TitleTemplate | null;
   // Optional stages' settings, by stage name; a stage absent here is off.
   stages: Record<string, StageSettings>;
   validation: Validation;

@@ -19,6 +19,7 @@ import {
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import {
+  codeHostRepo,
   createGithubCodeHost,
   type CodeHost,
   type PullRequestInfo,
@@ -569,11 +570,13 @@ export function createFactoryService(input: {
       return config.message;
     }
     return {
+      codeHostRepo: config.config.codeHost === null ? null : codeHostRepo(config.config.codeHost),
       codeRoot: input.codeRoot,
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,
       pullRequests: pullRequestsAllowed(config.config),
+      pullRequestTitle: config.config.codeHost?.pullRequestTitle ?? null,
       stages: config.config.stages,
       validation: config.config.validation,
       worktreeSetup: config.config.worktree.setup,

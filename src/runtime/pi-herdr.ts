@@ -9,6 +9,7 @@ import {
   type TerminalOutcome,
   type UsageTotals,
 } from '../domain.ts';
+import { shellQuote } from '../shell.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
@@ -407,10 +408,6 @@ function jsonRecord(stdout: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 export function usageFromSession(jsonl: string): UsageTotals {

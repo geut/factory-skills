@@ -434,11 +434,13 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
     title: 'Remember the filter',
   };
   const policy: Policy = {
+    codeHostRepo: null,
     codeRoot,
     labels: { map: {} },
     limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
     pullRequests: false,
+    pullRequestTitle: null,
     stages: {},
     validation: { qa: { commands: [] }, work: { commands: [] }, wrapup: { generated: [] } },
     worktreeSetup: [],
@@ -1906,6 +1908,7 @@ function codeHostWith(
     number: 7,
     openedAt: '2026-10-15T10:00:00Z',
     state: state ?? 'open',
+    title: 'Persist the filter',
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   return {
@@ -2000,6 +2003,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
     number: 7,
     openedAt: null,
     state: 'merged',
+    title: 'Persist the filter',
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   assert.match(ticket ?? '', /^proj-123-[0-9a-f]{8}$/);
@@ -2014,6 +2018,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
       number: 9,
       openedAt: null,
       state: 'open',
+      title: 'Persist the filter',
       url: 'https://github.com/geut/factory-skills/pull/9',
     }),
     null,

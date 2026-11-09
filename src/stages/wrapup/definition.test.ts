@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addTasks, blank, review, run, session } from '../../stories/fixtures.ts';
 import { wrapup } from './definition.ts';
+import { parseTitleTemplate } from './title.ts';
 
 test('wrap-up is given each task’s review verification, gaps included', () => {
   const snapshot = blank();
@@ -80,4 +81,49 @@ test('wrap-up is given the issue’s open boxes as B1..Bn and each task’s QA t
   assert.match(turn(), /Issue checkboxes: none; write `none` under ## Issue checklist\./);
   prepared.boxesUnread = 'gh: rate limited';
   assert.match(turn(), /none, because the tracker could not be read \(gh: rate limited\)/);
+});
+
+function initialPrompt(edit: (snapshot: ReturnType<typeof blank>) => void): string {
+  const snapshot = blank();
+  snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
+  edit(snapshot);
+  const input = wrapup.input?.(
+    { snapshot, task: null },
+    {
+      handoff: null,
+      prepared: {
+        adrPath: null,
+        baseline: '{}',
+        boxes: [],
+        boxesUnread: null,
+        contextPath: null,
+        screenshots: [],
+        testPlan: [],
+        usage: '',
+        verification: [],
+      },
+      round: 0,
+    },
+  );
+  return wrapup.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
+}
+
+test('with pull requests on, wrap-up is given the rendered title', () => {
+  const text = initialPrompt((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    snapshot.execution.policy.pullRequestTitle = parseTitleTemplate('{ref} | {summary}');
+    snapshot.ticket.displayRef = 'ENG-42';
+    snapshot.ticket.sourceKind = 'linear';
+  });
+  assert.match(text, /\nPull request title: ENG-42 \| <summary>\n/);
+  assert.match(text, /Title it exactly ENG-42 \| <summary>/);
+
+  const bare = initialPrompt((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+  });
+  // A GitHub ticket keeps today's title: the summary alone.
+  assert.match(bare, /\nPull request title: <summary>\n/);
+
+  const off = initialPrompt(() => {});
+  assert.doesNotMatch(off, /Pull request title:/);
 });

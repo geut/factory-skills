@@ -106,3 +106,21 @@ test('a tracker update a dead server left leased goes back to pending', () => {
   );
   db.close();
 });
+
+test('a stored title template loads back, and one the rules now refuse falls back to the default', () => {
+  const { db, ticketId } = started();
+  const setTitle = (template: string) =>
+    db
+      .prepare(
+        "UPDATE ticket_executions SET policy_json = json_set(policy_json, '$.pullRequestTitle', ?, '$.codeHostRepo', 'geut/demo')",
+      )
+      .run(template);
+  setTitle('{ref} | {summary}');
+  const policy = () => loadCurrentByTicketKey(db, ticketId)?.execution.policy;
+  assert.equal(policy()?.pullRequestTitle, '{ref} | {summary}');
+  assert.equal(policy()?.codeHostRepo, 'geut/demo');
+  // Such as one saved before newlines were refused: the ticket still loads.
+  setTitle('{ref}\n{summary}');
+  assert.equal(policy()?.pullRequestTitle, null);
+  db.close();
+});

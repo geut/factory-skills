@@ -58,6 +58,7 @@ const merged = {
     merged_at: '2026-10-16T09:00:00Z',
     number: 7,
     state: 'closed',
+    title: 'ENG-42 | Persist the filter',
     user: { login: 'dpaez' },
   },
 };
@@ -92,6 +93,8 @@ test('a signed pull_request delivery updates the ticket of that pull request', a
   assert.deepEqual(await response.json(), { ticket: 'proj-123-ab12cd34' });
   assert.equal(changed[0]?.state, 'merged');
   assert.equal(changed[0]?.headBranch, 'factory/proj-123');
+  // The webhook path and the controller's check share one shape.
+  assert.equal(changed[0]?.title, 'ENG-42 | Persist the filter');
 });
 
 test('an unsigned or wrongly signed delivery is refused and changes nothing', async () => {

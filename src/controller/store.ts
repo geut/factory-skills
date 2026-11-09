@@ -39,6 +39,7 @@ import {
   type TicketId,
 } from '../domain.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
+import { isTitleTemplate, type TitleTemplate } from '../stages/wrapup/title.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
 import { card, encodeCard } from './card.ts';
 import { keyOfFactoryDir } from './keys.ts';
@@ -173,6 +174,7 @@ function parsePolicy(raw: string): Policy {
     throw new FactoryDatabaseError('execution policy is invalid');
   }
   return {
+    codeHostRepo: typeof value['codeHostRepo'] === 'string' ? value['codeHostRepo'] : null,
     codeRoot: value['codeRoot'],
     labels: parseLabelMap(labels['map']),
     // A limit the execution's policy does not name keeps its default.
@@ -184,6 +186,7 @@ function parsePolicy(raw: string): Policy {
     ) as Limits,
     models: { plan: models['plan'], review: models['review'], work: models['work'] },
     pullRequests: value['pullRequests'] === true,
+    pullRequestTitle: storedTitleTemplate(value['pullRequestTitle']),
     stages: storedStageSettings(value['stages']),
     validation: {
       // Executions started before validation.qa run the work commands again.
@@ -200,6 +203,13 @@ function parsePolicy(raw: string): Policy {
     // Executions started before worktree setup existed have none.
     worktreeSetup: parseCommands(value['worktreeSetup'] ?? []),
   };
+}
+
+// Executions started before title templates have none. A template the
+// current rules refuse falls back to the default title rather than leaving the
+// ticket unreadable.
+function storedTitleTemplate(value: unknown): TitleTemplate | null {
+  return typeof value === 'string' && isTitleTemplate(value) ? value : null;
 }
 
 // Settings snapshotted at start are read again by their stages.

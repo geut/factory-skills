@@ -16,6 +16,7 @@ export type PullRequestInfo = {
   number: number;
   openedAt: string | null;
   state: 'closed' | 'merged' | 'open';
+  title: string;
   url: string;
 };
 
@@ -50,6 +51,11 @@ export type CodeHost = {
   ) => boolean;
 };
 
+// The code host's repository as `owner/repo`, as gh and GitHub refs name it.
+export function codeHostRepo(config: Pick<CodeHostConfig, 'owner' | 'repo'>): string {
+  return `${config.owner}/${config.repo}`;
+}
+
 // Runs gh and parses its JSON output. Tests pass a stand-in.
 export type GhJson = (args: Array<string>) => unknown;
 
@@ -69,7 +75,8 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-const PR_FIELDS = 'number,url,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
+const PR_FIELDS =
+  'number,url,title,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
 
 function pullRequestFrom(value: unknown): PullRequestInfo | null {
   if (!isRecord(value) || typeof value['number'] !== 'number' || typeof value['url'] !== 'string') {
@@ -86,6 +93,7 @@ function pullRequestFrom(value: unknown): PullRequestInfo | null {
     number: value['number'],
     openedAt: text(value['createdAt']),
     state: state === 'merged' ? 'merged' : state === 'closed' ? 'closed' : 'open',
+    title: typeof value['title'] === 'string' ? value['title'] : '',
     url: value['url'],
   };
 }
@@ -152,7 +160,7 @@ export function verifyGithubSignature(
 }
 
 export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson = ghJson): CodeHost {
-  const repo = config === null ? null : `${config.owner}/${config.repo}`;
+  const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
     const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
     return match?.[1] && match[2] ? `${match[1]}/${match[2]}` : (repo ?? '');

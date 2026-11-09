@@ -5,6 +5,7 @@ import { childInstructions, childToolList } from '../prompt.ts';
 import { formatFinding, latestReviews } from '../review/parse.ts';
 import type { IssueBox } from './checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
+import { ticketTitle, titleExample } from './title.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
 export type WrapupPrepared = {
@@ -55,6 +56,8 @@ export type WrapupInput = {
     verdict: string;
   }>;
   testPlan: Array<string>;
+  // The pull request title, with `<summary>` for the agent to replace.
+  title: string;
   usage: string;
   verification: Array<string>;
   worktree: string;
@@ -140,6 +143,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         verdict: task.summaries.review?.label ?? 'none',
       })),
       testPlan: prepared.testPlan,
+      title: titleExample(ticketTitle(snapshot)),
       usage: prepared.usage,
       verification: prepared.verification,
       worktree: execution.worktreePath,
@@ -189,6 +193,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         `Base branch: ${input.baseBranch ?? 'unknown'}`,
         `Model: ${input.model}. Tools: ${childToolList(tools)}.`,
         `codeHost.pullRequests: ${input.pullRequests ? 'true' : 'false'}`,
+        ...(input.pullRequests ? [`Pull request title: ${input.title}`] : []),
         '',
         'Tasks:',
         ...input.tasks.map(
@@ -242,7 +247,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         'The human reviews the diff with notes taken from your handoff. Write each ## Files line as - `path` — what changed there and why, backticking only the path, and end a decision with the lines that show it, as `(src/filter.ts:12-40)`.',
         'The controller checks the handoff against the worktree: ## Files must list every changed path and nothing else, ## Tests must name the validation commands above, a decision may cite only lines of a changed file, and you must not change product code or merge.',
         input.pullRequests
-          ? 'codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD.'
+          ? `codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD. Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it; pass the title to gh in single quotes.`
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
       ].join('\n'),
   },
