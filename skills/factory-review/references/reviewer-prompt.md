@@ -12,7 +12,7 @@ Review whether the implementation achieves the ticket outcome and this task's us
 
 ## Project rules
 
-Your system prompt holds the project's rules (`AGENTS.md`, `CLAUDE.md`) from the ticket's base commit, the rules this change merges into, not the ticket branch's copy. Judge the work by them. The worker cannot change the rules its own work is judged by.
+Your system prompt holds the project's rules (`AGENTS.md`, `CLAUDE.md`, and the project's `.pi/SYSTEM.md` and `.pi/APPEND_SYSTEM.md`) from the ticket's base commit, the rules this change merges into, not the ticket branch's copy. Judge the work by them. The worker cannot change the rules its own work is judged by.
 
 When the prompt says the diff changes a rule file, decide whether the task asks for that change:
 

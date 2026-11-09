@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../../config.ts';
+import { changedPaths } from '../../diff.ts';
 import { sha256 } from '../../hash.ts';
 import {
   errorReport,
@@ -17,12 +18,7 @@ import {
 } from '../../validation/work.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import { acceptanceCriteria, qaPaths, testGaps, testPlan } from './criteria.ts';
-import {
-  changedFiles,
-  qaSettings,
-  type QaPrepared,
-  type QaValidationReport,
-} from './definition.ts';
+import { qaSettings, type QaPrepared, type QaValidationReport } from './definition.ts';
 
 export const QA_VALIDATOR_VERSION = 'qa.v1';
 
@@ -42,7 +38,7 @@ type QaBaseline = { files: Record<string, string>; workChecks: Array<ValidationC
 function fileDiffs(diff: string): Record<string, string> {
   const files: Record<string, string> = {};
   for (const part of diff.split(/^(?=diff --git )/m)) {
-    const [file] = changedFiles(part);
+    const [file] = changedPaths(part);
     if (file !== undefined) {
       // Trimmed: the diff joins untracked files' parts with a newline.
       files[file] = sha256(part.trim());
@@ -125,7 +121,7 @@ export function prepareQaInput({ action, deps, snapshot }: InputContext): InputR
   return {
     input: {
       baseline: qaBaseline(diff.diff, passed),
-      changedFiles: changedFiles(diff.diff),
+      changedFiles: changedPaths(diff.diff),
       checks: passed.map((check) => `${check.name}: ${check.status}`),
       criteria,
       dir: paths.dir,

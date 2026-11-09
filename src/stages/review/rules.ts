@@ -67,26 +67,27 @@ export function ruleCandidates(place: RulesPlace): Array<string> {
   );
 }
 
-// The rule files among `paths`, repository-relative, in the order Pi reads
-// them. Adding, removing, or editing any candidate changes the rules, since an
-// added `AGENTS.override.md` shadows the `AGENTS.md` beside it.
-export function changedRules(place: RulesPlace, paths: Iterable<string>): Array<string> {
-  const changed = new Set(paths);
-  return ruleCandidates(place).filter((candidate) => changed.has(candidate));
+// Pi's prompt files in the project's `.pi` directory, at the worktree root:
+// SYSTEM.md replaces the system prompt and APPEND_SYSTEM.md adds to it. The
+// reviewer takes them from the base commit too.
+export const PROMPT_FILES = ['.pi/SYSTEM.md', '.pi/APPEND_SYSTEM.md'] as const;
+
+// Whether a repository path names a rule file, at any depth.
+export function isRulePath(file: string): boolean {
+  const name = file.split('/').at(-1) ?? '';
+  return (
+    CONTEXT_FILE_NAMES.some((rule) => rule === name) ||
+    PROMPT_FILES.some((prompt) => prompt === file)
+  );
 }
 
-// The paths a unified diff touches, from its `diff --git a/<path> b/<path>`
-// headers: both sides, so a rename counts for its source and its target.
-export function diffPaths(diff: string): Array<string> {
-  const paths = new Set<string>();
-  for (const match of diff.matchAll(/^diff --git a\/(.+) b\/(.+)$/gm)) {
-    for (const side of [match[1], match[2]]) {
-      if (side !== undefined) {
-        paths.add(side);
-      }
-    }
-  }
-  return [...paths];
+// The rule files among `paths`, repository-relative: the prompt files, then
+// the context files in the order Pi reads them. Adding, removing, or editing
+// any candidate changes the rules, since an added `AGENTS.override.md`
+// shadows the `AGENTS.md` beside it.
+export function changedRules(place: RulesPlace, paths: Iterable<string>): Array<string> {
+  const changed = new Set(paths);
+  return [...PROMPT_FILES, ...ruleCandidates(place)].filter((candidate) => changed.has(candidate));
 }
 
 // Where the reviewer's rules came from, as its system prompt and the review

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   changedRules,
-  diffPaths,
+  isRulePath,
   outsideDirectories,
   ruleCandidates,
   ruleDirectories,
@@ -28,7 +28,7 @@ test('the rules inside the code root are the repository root’s and those of th
   ]);
 });
 
-test('a changed rule file is any context file name Pi would read, nested ones aside', () => {
+test('a changed rule file is any context file name Pi would read, nested ones aside, or a .pi prompt file', () => {
   assert.deepEqual(
     changedRules(nested, [
       'src/filter.ts',
@@ -36,24 +36,16 @@ test('a changed rule file is any context file name Pi would read, nested ones as
       'AGENTS.override.md',
       '.factory/AGENTS.md',
       'docs/AGENTS.md',
+      '.pi/APPEND_SYSTEM.md',
+      '.pi/settings.json',
     ]),
-    ['AGENTS.override.md', 'CLAUDE.md', '.factory/AGENTS.md'],
+    ['.pi/APPEND_SYSTEM.md', 'AGENTS.override.md', 'CLAUDE.md', '.factory/AGENTS.md'],
   );
   assert.deepEqual(changedRules(nested, ['src/filter.ts']), []);
-});
-
-test('a diff’s paths come from its headers, both sides of a rename', () => {
-  const diff = [
-    'diff --git a/AGENTS.md b/AGENTS.md',
-    'index 1..2 100644',
-    '--- a/AGENTS.md',
-    '+++ b/AGENTS.md',
-    '@@ -1 +1 @@',
-    '-diff --git a/not/a/header b/not/a/header',
-    'diff --git a/CLAUDE.md b/docs/CLAUDE.md',
-    'similarity index 100%',
-  ].join('\n');
-  assert.deepEqual(diffPaths(diff), ['AGENTS.md', 'CLAUDE.md', 'docs/CLAUDE.md']);
+  assert.ok(isRulePath('docs/AGENTS.md'));
+  assert.ok(isRulePath('.pi/SYSTEM.md'));
+  assert.ok(!isRulePath('docs/.pi/SYSTEM.md'));
+  assert.ok(!isRulePath('src/filter.ts'));
 });
 
 test('the rules’ source names the base branch and short SHA', () => {

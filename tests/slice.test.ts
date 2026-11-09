@@ -573,12 +573,13 @@ test('passing work validation launches one read-only reviewer', async () => {
   assert.match(service.status('proj-123'), /stage: review/);
   // Only the reviewer takes the project rules from the base commit; the
   // worker keeps Pi's discovery in its worktree.
-  assert.deepEqual(runtime.launches.find((launch) => launch.stage === 'work')?.contextFiles, {
-    kind: 'discovered',
+  assert.deepEqual(runtime.launches.find((launch) => launch.stage === 'work')?.projectConfig, {
+    kind: 'worktree',
   });
-  const rules = reviews[0]?.contextFiles;
-  assert.equal(rules?.kind, 'supplied');
-  const file = rules?.kind === 'supplied' ? rules.appendSystemPrompt.at(-1) : undefined;
+  const rules = reviews[0]?.projectConfig;
+  assert.equal(rules?.kind, 'base');
+  assert.equal(rules?.kind === 'base' ? rules.skill : null, 'factory-review');
+  const file = rules?.kind === 'base' ? rules.appendSystemPrompt.at(-1) : undefined;
   assert.match(readFileSync(file ?? '', 'utf8'), /Project rules \(from main at [0-9a-f]{7}\)/);
   assert.match(
     reviews[0]?.prompt ?? '',

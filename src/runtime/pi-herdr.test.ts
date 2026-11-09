@@ -129,15 +129,16 @@ test('herdr launch opens the factory plugin argv pane', () => {
     ],
   );
   const script = renderLaunchScript({
-    contextFiles: { kind: 'discovered' },
     env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
     piBin: 'pi',
+    projectConfig: { kind: 'worktree' },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
+    skillsPath: '/pkg/skills',
     thinking: 'medium',
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
     worktree: '/repo/.factory/worktrees/proj-1',
@@ -197,15 +198,16 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
   writeFileSync(
     script,
     renderLaunchScript({
-      contextFiles: { kind: 'discovered' },
       env,
       handshakePath: '/pkg/child-handshake.ts',
       model: 'work-model',
       piBin: pi,
+      projectConfig: { kind: 'worktree' },
       promptFile: '/tmp/prompt.txt',
       replyRequired: false,
       runId: 'run-1',
       sessionFile,
+      skillsPath: '/pkg/skills',
       thinking: 'medium',
       tools: 'read,bash',
       worktree: directory,
@@ -548,12 +550,12 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     targetPaneId: 'parent',
   });
   const spec = {
-    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'resume' as const,
     model: 'work-model',
     paneName: '🛠 repo#1 01',
     previousPaneId: 'pane-old',
+    projectConfig: { kind: 'worktree' as const },
     prompt: 'Fix the lint.',
     purpose: 'validation_correction' as const,
     runId: runId('run-2'),
@@ -781,12 +783,12 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     return { code: 0, stderr: '', stdout: '' };
   };
   const spec = (ticket: string, id: string, previousPaneId: string | null = null) => ({
-    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'launch' as const,
     model: 'work-model',
     paneName: `🛠 ${ticket}`,
     previousPaneId,
+    projectConfig: { kind: 'worktree' as const },
     prompt: 'Work.',
     purpose: 'initial' as const,
     runId: runId(id),
@@ -886,12 +888,12 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     targetPaneId: 'server',
   });
   await runtime.launch({
-    contextFiles: { kind: 'discovered' as const },
     cwd: directory,
     mode: 'launch',
     model: 'm',
     paneName: 'x',
     previousPaneId: null,
+    projectConfig: { kind: 'worktree' as const },
     prompt: 'p',
     purpose: 'initial',
     runId: runId('r'),
@@ -935,12 +937,12 @@ test('a pane that fails to open closes the tab made for it', async () => {
   });
   const launch = (id: string) =>
     runtime.launch({
-      contextFiles: { kind: 'discovered' as const },
       cwd: directory,
       mode: 'launch',
       model: 'm',
       paneName: 'x',
       previousPaneId: null,
+      projectConfig: { kind: 'worktree' as const },
       prompt: 'p',
       purpose: 'initial',
       runId: runId(id),
@@ -964,28 +966,53 @@ test('a pane that fails to open closes the tab made for it', async () => {
   assert.equal(JSON.parse(readFileSync(tabsFile, 'utf8'))['k'], undefined);
 });
 
-test('a reviewer launch turns off context discovery and passes the rules it was given', () => {
+test('a reviewer launch runs untrusted, with its skill by path and the prompts it was given', () => {
   const script = renderLaunchScript({
-    contextFiles: {
-      appendSystemPrompt: ['/home/me/.pi/agent/APPEND_SYSTEM.md', "/tmp/it's/run.rules.md"],
-      kind: 'supplied',
-    },
     env: { PI_CODING_AGENT_DIR: '/opt/pi' },
     handshakePath: '/pkg/child-handshake.ts',
     model: 'review-model',
     piBin: 'pi',
+    projectConfig: {
+      appendSystemPrompt: ['/home/me/.pi/agent/APPEND_SYSTEM.md', "/tmp/it's/run.rules.md"],
+      kind: 'base',
+      skill: 'factory-review',
+      systemPrompt: '/tmp/run.system.md',
+    },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
+    skillsPath: '/pkg/skills',
     thinking: 'high',
     tools: 'read,grep,find,ls',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
   assert.match(
     script,
-    / --no-context-files --append-system-prompt '\/home\/me\/\.pi\/agent\/APPEND_SYSTEM\.md' --append-system-prompt '\/tmp\/it'\\''s\/run\.rules\.md' '@\/tmp\/prompt\.txt'/,
+    / --no-approve --no-context-files --skill '\/pkg\/skills\/factory-review' --system-prompt '\/tmp\/run\.system\.md' --append-system-prompt '\/home\/me\/\.pi\/agent\/APPEND_SYSTEM\.md' --append-system-prompt '\/tmp\/it'\\''s\/run\.rules\.md' '@\/tmp\/prompt\.txt'/,
   );
   // The agent reads the same agent directory the server read the rules from.
   assert.match(script, /export PI_CODING_AGENT_DIR='\/opt\/pi'/);
+  // Without a base commit SYSTEM.md, Pi finds its own.
+  const discovered = renderLaunchScript({
+    env: {},
+    handshakePath: '/pkg/child-handshake.ts',
+    model: 'review-model',
+    piBin: 'pi',
+    projectConfig: {
+      appendSystemPrompt: ['/tmp/run.rules.md'],
+      kind: 'base',
+      skill: 'factory-review',
+      systemPrompt: null,
+    },
+    promptFile: '/tmp/prompt.txt',
+    replyRequired: true,
+    runId: 'run-1',
+    sessionFile: '/tmp/session.jsonl',
+    skillsPath: '/pkg/skills',
+    thinking: 'high',
+    tools: 'read,grep,find,ls',
+    worktree: '/repo/.factory/worktrees/proj-1',
+  });
+  assert.doesNotMatch(discovered, /--system-prompt/);
 });

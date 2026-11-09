@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { diffPaths } from '../diff.ts';
 import type { ReviewValidationReport } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { stageTools } from '../stages/index.ts';
@@ -11,7 +12,7 @@ import {
   REVIEW_CONTRACT,
   type ReviewContext,
 } from '../stages/review/parse.ts';
-import { changedRules, diffPaths, rulesSource, type RulesPlace } from '../stages/review/rules.ts';
+import { changedRules, rulesSource, type RulesPlace } from '../stages/review/rules.ts';
 import {
   errorReport,
   failedReport,

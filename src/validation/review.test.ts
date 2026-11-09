@@ -472,9 +472,27 @@ test('each changed project rule file needs a Verification line, and out_of_scope
     parseReview(verifying('changes_requested', outOfScope, reported), 1, rules).kind,
     'valid',
   );
+  // A finding about another rule file whose path ends the same does not count.
+  const elsewhere = reported
+    .replaceAll('AGENTS.md relaxes', '.factory/AGENTS.md relaxes')
+    .replace('AGENTS.md:3', '.factory/AGENTS.md:3');
+  assert.match(
+    failuresOf(verifying('changes_requested', outOfScope, elsewhere), 1, rules),
+    /AGENTS\.md is out_of_scope, but no Critical or Major finding names it/,
+  );
   // A rule line for a file the diff does not change is refused.
   assert.match(
     failuresOf(verifying('approve', `${verified}\n- CLAUDE.md: in_scope — x`), 1, rules),
     /CLAUDE\.md is not a project rule file this diff changes \(AGENTS\.md\)/,
+  );
+  // Pi's .pi prompt files are rule files too.
+  const prompts: ReviewContext = { ...context, rules: ['.pi/SYSTEM.md'] };
+  assert.equal(
+    parseReview(
+      verifying('approve', `${verified}\n- .pi/SYSTEM.md: in_scope — Task 01 asks for it`),
+      1,
+      prompts,
+    ).kind,
+    'valid',
   );
 });

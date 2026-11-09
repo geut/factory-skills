@@ -14,10 +14,10 @@ import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
 import type {
-  ContextFiles,
   FactorySubagentRuntime,
   LaunchSpec,
   PaneSpec,
+  ProjectConfig,
   RunStarted,
   TicketTab,
 } from './runtime.ts';
@@ -254,6 +254,11 @@ export function handshakeExtensionPath(): string {
   return fileURLToPath(new URL('./child-handshake.ts', import.meta.url));
 }
 
+// This package's skills directory.
+export function factorySkillsPath(): string {
+  return fileURLToPath(new URL('../../skills', import.meta.url));
+}
+
 // The variables an agent's shell takes from the factory server. Herdr opens
 // panes with its own environment, and the agents' bash is non-interactive, so
 // a PATH that only ~/.bashrc extends would otherwise not reach them.
@@ -281,36 +286,43 @@ function exportLines(env: ForwardedEnv): string {
     .join('');
 }
 
-// Pi's flags for where the context files come from.
-function contextFileArgs(contextFiles: ContextFiles): string {
-  switch (contextFiles.kind) {
-    case 'discovered':
+// Pi's flags for where the project configuration comes from. A `base` stage
+// runs untrusted, so the worktree's `.pi` files, extensions, and skills stay
+// out, and gets its skill by path: Pi keeps the first skill of a name, so an
+// installed factory package's copy still wins.
+function projectConfigArgs(config: ProjectConfig, skillsPath: string): string {
+  switch (config.kind) {
+    case 'worktree':
       return '';
-    case 'supplied':
+    case 'base':
       return [
-        ' --no-context-files',
-        ...contextFiles.appendSystemPrompt.map(
-          (file) => ` --append-system-prompt ${shellQuote(file)}`,
-        ),
+        ' --no-approve --no-context-files',
+        ` --skill ${shellQuote(path.join(skillsPath, config.skill))}`,
+        ...(config.systemPrompt === null
+          ? []
+          : [` --system-prompt ${shellQuote(config.systemPrompt)}`]),
+        ...config.appendSystemPrompt.map((file) => ` --append-system-prompt ${shellQuote(file)}`),
       ].join('');
     default: {
-      const _exhaustive: never = contextFiles;
+      const _exhaustive: never = config;
       return _exhaustive;
     }
   }
 }
 
 export function renderLaunchScript(input: {
-  contextFiles: ContextFiles;
   env: ForwardedEnv;
   handshakePath: string;
   model: string;
   piBin: string;
+  projectConfig: ProjectConfig;
   promptFile: string;
   // The controller grades the reply, so subagent_done asks for a missing one.
   replyRequired: boolean;
   runId: string;
   sessionFile: string;
+  // The factory's skills directory, where a `base` stage's skill is.
+  skillsPath: string;
   thinking: string;
   tools: string;
   // The agent's cwd. Exported as FACTORY_WORKTREE, with FACTORY_RUN_ID, it marks
@@ -327,7 +339,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 export FACTORY_WORKTREE=${shellQuote(input.worktree)}
 export FACTORY_RUN_ID=${runId}
-${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${contextFileArgs(input.contextFiles)} ${shellQuote(`@${input.promptFile}`)}
+${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -679,6 +691,8 @@ export function createPiHerdrRuntime(options?: {
   piBin?: string;
   pollMs?: number;
   run?: CommandRunner;
+  // The factory's skills directory; this package's by default.
+  skillsPath?: string;
   socketPath?: string;
   // Where each ticket's tab is remembered across restarts.
   tabsFile?: string;
@@ -688,6 +702,7 @@ export function createPiHerdrRuntime(options?: {
   const env = forwardedEnv(options?.env ?? process.env);
   const piBin = options?.piBin ?? 'pi';
   const handshakePath = options?.handshakePath ?? handshakeExtensionPath();
+  const skillsPath = options?.skillsPath ?? factorySkillsPath();
   const freshBin = options?.freshBin ?? process.env['FACTORY_FRESH_BIN'] ?? 'fresh';
   const hunkBin = options?.hunkBin ?? process.env['FACTORY_HUNK_BIN'] ?? 'hunk';
   const targetPaneId = options?.targetPaneId ?? process.env['HERDR_PANE_ID'] ?? '';
@@ -896,16 +911,17 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
-        contextFiles: spec.contextFiles,
         env,
         handshakePath,
         model: spec.model,
         piBin,
+        projectConfig: spec.projectConfig,
         promptFile,
         // A plan is accepted from its files, whatever the reply says.
         replyRequired: spec.stage !== 'plan',
         runId: spec.runId,
         sessionFile: spec.sessionFile,
+        skillsPath,
         thinking: spec.thinking,
         tools: spec.tools,
         worktree: spec.cwd,

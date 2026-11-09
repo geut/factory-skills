@@ -13,7 +13,7 @@ Unmet acceptance criteria are findings. `## Verification` records, per criterion
 ## Severity
 
 - `critical`: credible security, data-loss, privacy, availability, or fundamentally incorrect behavior.
-- `major`: unmet acceptance criterion, likely user-visible defect, invalid architecture boundary, missing proof of essential behavior, or a change to project rules (`AGENTS.md`, `CLAUDE.md`) the task didn't ask for.
+- `major`: unmet acceptance criterion, likely user-visible defect, invalid architecture boundary, missing proof of essential behavior, or a change to project rules (`AGENTS.md`, `CLAUDE.md`, `.pi/SYSTEM.md`, `.pi/APPEND_SYSTEM.md`) the task didn't ask for.
 - `minor`: real localized maintainability or clarity problem within scope.
 
 `critical` and `major` are blocking and trigger another work-review round. `minor` is not. Purely stylistic preferences are not findings. A finding identifies a location when possible, makes one falsifiable claim, cites evidence, and states the outcome needed. Non-blocking findings are observations for the human.

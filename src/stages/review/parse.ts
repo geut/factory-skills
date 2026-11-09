@@ -9,7 +9,7 @@ import type {
   VerificationStatus,
 } from '../../domain.ts';
 import { runOutput } from '../output.ts';
-import { CONTEXT_FILE_NAMES } from './rules.ts';
+import { isRulePath } from './rules.ts';
 
 export const REVIEW_CONTRACT = 'factory.review.v5';
 
@@ -148,12 +148,12 @@ function parseFindings(body: string, round: number, failures: Array<string>): Ar
 }
 
 // `AC01` and `ac1` are AC1; `R1-02` is R1-2, the id the controller gave it;
-// a project rule file, such as `AGENTS.md`, is its repository path.
+// a project rule file, such as `AGENTS.md` or `.pi/SYSTEM.md`, is its
+// repository path.
 function verificationId(
   value: string,
 ): { id: string; kind: 'criterion' | 'finding' | 'rule' } | null {
-  const name = value.split('/').at(-1) ?? '';
-  if (CONTEXT_FILE_NAMES.some((rule) => rule === name)) {
+  if (isRulePath(value)) {
     return { id: value, kind: 'rule' };
   }
   const criterion = /^AC0*(\d+)$/i.exec(value);
@@ -280,6 +280,13 @@ function unexpectedLine(id: string, context: ReviewContext): string {
   return `${id} is not a project rule file this diff changes (${context.rules.join(', ') || 'none'}).`;
 }
 
+// Whether `text` names `file` as a whole path: `.factory/AGENTS.md` does not
+// name `AGENTS.md`, while `AGENTS.md:3` and `AGENTS.md.` do.
+function namesPath(text: string, file: string): boolean {
+  const escaped = file.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(String.raw`(?<![\w./-])${escaped}(?!\.?[\w/-])`).test(text);
+}
+
 // A rule change the task did not ask for is a Major finding, so an
 // out_of_scope line needs a blocking finding that names the file.
 function unreportedRuleChanges(
@@ -294,7 +301,7 @@ function unreportedRuleChanges(
           (finding) =>
             finding.blocking &&
             [finding.title, finding.location ?? '', finding.finding].some((text) =>
-              text.includes(line.id),
+              namesPath(text, line.id),
             ),
         ),
     )

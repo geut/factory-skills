@@ -28,11 +28,13 @@ import { ensureHerdrPlugin, herdrPluginDir } from '../runtime/herdr-plugin.ts';
 import {
   createPiHerdrRuntime,
   defaultRunner,
+  factorySkillsPath,
   handshakeExtensionPath,
 } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
+import { writeEmbeddedSkills } from './embedded-skills.ts';
 import { createEventHub } from './events.ts';
 import {
   acquireServerLease,
@@ -116,6 +118,17 @@ function handshakePath(factoryRoot: string): string {
     writeFileSync(file, source);
   }
   return file;
+}
+
+// The skills directory an untrusted agent's Pi gets its skill from: this
+// package's, or, in the single executable, the carried ones written into the
+// factory root.
+function skillsPath(factoryRoot: string): string {
+  return isSea()
+    ? writeEmbeddedSkills(path.join(factoryRoot, 'runtime', 'skills'), (key) =>
+        getAsset(key, 'utf8'),
+      )
+    : factorySkillsPath();
 }
 
 function isLoopback(host: string): boolean {
@@ -349,6 +362,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       env: input.env,
       handshakePath: handshake,
       piBin,
+      skillsPath: skillsPath(factoryRoot),
       socketPath,
       tabsFile: path.join(factoryRoot, 'runtime', 'tabs.json'),
       targetPaneId,

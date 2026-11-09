@@ -1,3 +1,4 @@
+import { diffPaths } from '../../diff.ts';
 import type { ReviewFinding, ReviewResult } from '../../domain.ts';
 import {
   defineStage,
@@ -15,7 +16,7 @@ import {
   REVIEW_CONTRACT,
   runReview,
 } from './parse.ts';
-import { changedRules, diffPaths, rulesSource } from './rules.ts';
+import { changedRules, rulesSource } from './rules.ts';
 
 export type ReviewInput = {
   criteria: Array<Criterion>;
