@@ -6,13 +6,14 @@ import type { WorkCommand } from '../config.ts';
 import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
+import { shellQuote } from '../shell.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
 import { citations, latestReviews } from '../stages/review/parse.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
   type PullRequestTitle,
-  renderTitle,
+  ticketTitle,
   titleExample,
   titleMatches,
 } from '../stages/wrapup/title.ts';
@@ -288,11 +289,6 @@ function commitFailures(input: {
     }
   }
   return failures;
-}
-
-// A title can hold backticks or `$`, which a double-quoted shell word would run.
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 // The code host's view of the pull request at a URL.
@@ -710,11 +706,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         output: outputOf(run.resultJson),
         pullRequests: execution.policy.pullRequests,
         ticketDir: ticketDirOf(execution.factoryDir),
-        title: renderTitle({
-          codeHostRepo: execution.policy.codeHostRepo,
-          template: execution.policy.pullRequestTitle,
-          ticket: snapshot.ticket,
-        }),
+        title: ticketTitle(snapshot),
         usage: deps.usage,
         worktree: execution.worktreePath,
       }),

@@ -205,15 +205,11 @@ function parsePolicy(raw: string): Policy {
   };
 }
 
-// Executions started before title templates have none.
+// Executions started before title templates have none. A template the
+// current rules refuse falls back to the default title rather than leaving the
+// ticket unreadable.
 function storedTitleTemplate(value: unknown): TitleTemplate | null {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  if (typeof value !== 'string' || !isTitleTemplate(value)) {
-    throw new FactoryDatabaseError('execution policy has an invalid pullRequestTitle');
-  }
-  return value;
+  return typeof value === 'string' && isTitleTemplate(value) ? value : null;
 }
 
 // Settings snapshotted at start are read again by their stages.

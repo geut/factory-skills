@@ -5,7 +5,7 @@ import { childInstructions, childToolList } from '../prompt.ts';
 import { formatFinding, latestReviews } from '../review/parse.ts';
 import type { IssueBox } from './checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
-import { renderTitle, titleExample } from './title.ts';
+import { ticketTitle, titleExample } from './title.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
 export type WrapupPrepared = {
@@ -143,13 +143,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         verdict: task.summaries.review?.label ?? 'none',
       })),
       testPlan: prepared.testPlan,
-      title: titleExample(
-        renderTitle({
-          codeHostRepo: execution.policy.codeHostRepo,
-          template: execution.policy.pullRequestTitle,
-          ticket: snapshot.ticket,
-        }),
-      ),
+      title: titleExample(ticketTitle(snapshot)),
       usage: prepared.usage,
       verification: prepared.verification,
       worktree: execution.worktreePath,

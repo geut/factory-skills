@@ -14,6 +14,10 @@ export function titleTemplateProblem(template: string): string | null {
   if (template !== template.trim()) {
     return 'It must not start or end with spaces, because GitHub trims titles.';
   }
+  // A title is one line; GitHub would not store a newline as written.
+  if (/\p{Cc}/u.test(template)) {
+    return 'It must not contain newlines or other control characters.';
+  }
   const names = [...template.matchAll(PLACEHOLDER)].map((match) => match[1] ?? '');
   const unknown = names.find((name) => !PLACEHOLDERS.has(name));
   if (unknown !== undefined) {
@@ -109,9 +113,24 @@ export function renderTitle(input: {
   const ref = ticketRef(input);
   const template =
     input.template ?? (input.ticket.sourceKind === 'github' ? GITHUB_DEFAULT : TRACKER_DEFAULT);
-  const filled = ref === '' ? dropRef(template) : template.replaceAll('{ref}', ref);
+  // A function, so a `$` in the ref is not read as a replacement pattern.
+  const filled = ref === '' ? dropRef(template) : template.replaceAll('{ref}', () => ref);
   const at = filled.indexOf('{summary}');
   return { prefix: filled.slice(0, at), suffix: filled.slice(at + '{summary}'.length) };
+}
+
+// A ticket's title from the settings saved when it started. The prompt and
+// the validator both use this, so the agent is checked against the title it
+// was told.
+export function ticketTitle(snapshot: {
+  execution: { policy: { codeHostRepo: string | null; pullRequestTitle: TitleTemplate | null } };
+  ticket: TicketOrigin;
+}): PullRequestTitle {
+  return renderTitle({
+    codeHostRepo: snapshot.execution.policy.codeHostRepo,
+    template: snapshot.execution.policy.pullRequestTitle,
+    ticket: snapshot.ticket,
+  });
 }
 
 // The title as the agent is told to write it, with `<summary>` to replace.

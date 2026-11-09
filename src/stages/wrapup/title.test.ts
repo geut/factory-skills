@@ -43,6 +43,13 @@ test('a template names the ticket as its tracker does', () => {
   assert.equal(example('feat: {summary} ({ref})', linear), 'feat: <summary> (ENG-42)');
 });
 
+test('a ref is copied as it is, even with a replacement pattern in it', () => {
+  assert.equal(
+    example('{ref} | {summary}', { displayRef: 'ENG-$&', sourceKind: 'linear' }),
+    'ENG-$& | <summary>',
+  );
+});
+
 test('a GitHub issue of another repository keeps its owner and repo', () => {
   assert.equal(
     example('{ref} | {summary}', github, 'geut/other'),
@@ -73,6 +80,8 @@ test('a template needs {summary} once, only known placeholders, and no stray bra
   assert.match(titleTemplateProblem('{summary} {{ref}}') ?? '', /Braces may only wrap/);
   assert.match(titleTemplateProblem('{summary} }') ?? '', /Braces may only wrap/);
   assert.match(titleTemplateProblem('{ref} | {summary} ') ?? '', /GitHub trims titles/);
+  assert.match(titleTemplateProblem('{ref}\n{summary}') ?? '', /control characters/);
+  assert.match(titleTemplateProblem('{ref}\t{summary}') ?? '', /control characters/);
 });
 
 test('a title matches when only the summary differs and the summary is not empty', () => {

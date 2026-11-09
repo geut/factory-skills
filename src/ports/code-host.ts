@@ -51,6 +51,11 @@ export type CodeHost = {
   ) => boolean;
 };
 
+// The code host's repository as `owner/repo`, as gh and GitHub refs name it.
+export function codeHostRepo(config: Pick<CodeHostConfig, 'owner' | 'repo'>): string {
+  return `${config.owner}/${config.repo}`;
+}
+
 // Runs gh and parses its JSON output. Tests pass a stand-in.
 export type GhJson = (args: Array<string>) => unknown;
 
@@ -155,7 +160,7 @@ export function verifyGithubSignature(
 }
 
 export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson = ghJson): CodeHost {
-  const repo = config === null ? null : `${config.owner}/${config.repo}`;
+  const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
     const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
     return match?.[1] && match[2] ? `${match[1]}/${match[2]}` : (repo ?? '');
