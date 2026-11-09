@@ -1,4 +1,6 @@
 import path from 'node:path';
+import type { TaskId, TaskRecord } from '../../domain.ts';
+import { inside } from '../../paths.ts';
 
 // The project's rules are the context files Pi loads into an agent's system
 // prompt: one per directory, from the agent's working directory up. The
@@ -16,11 +18,6 @@ export const CONTEXT_FILE_NAMES = [
 
 // Where an agent runs and which repository holds its rules.
 export type RulesPlace = { codeRoot: string; worktree: string };
-
-function inside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
 
 // The repository directories, outermost first, whose context file Pi would
 // load for an agent in `worktree`: the repository root, which is the
@@ -56,7 +53,8 @@ export function outsideDirectories(place: RulesPlace): Array<string> {
   }
 }
 
-function candidatePath(directory: string, name: string): string {
+// A context file's repository path in `directory` (`''` is the root).
+export function candidatePath(directory: string, name: string): string {
   return directory === '' ? name : `${directory}/${name}`;
 }
 
@@ -88,6 +86,60 @@ export function isRulePath(file: string): boolean {
 export function changedRules(place: RulesPlace, paths: Iterable<string>): Array<string> {
   const changed = new Set(paths);
   return [...PROMPT_FILES, ...ruleCandidates(place)].filter((candidate) => changed.has(candidate));
+}
+
+// The rule changes earlier tasks' reviews accepted: each rule file's diff
+// hash when a review of another task approved it, the latest task's last.
+export function acceptedRules(
+  tasks: ReadonlyArray<TaskRecord>,
+  taskId: TaskId | null,
+): Map<string, { hash: string; taskId: TaskId }> {
+  const accepted = new Map<string, { hash: string; taskId: TaskId }>();
+  for (const task of tasks.toSorted((a, b) => a.ordinal - b.ordinal)) {
+    if (task.taskId === taskId) {
+      continue;
+    }
+    for (const [file, hash] of Object.entries(task.summaries.review?.rules ?? {})) {
+      accepted.set(file, { hash, taskId: task.taskId });
+    }
+  }
+  return accepted;
+}
+
+// Splits the rule files a diff changes into those this task's review judges
+// and those an earlier task's review accepted, unchanged since. The diff
+// holds every task's changes until wrap-up commits them, so an accepted
+// change stays in it.
+export function ruleChanges(input: {
+  accepted: Map<string, { hash: string; taskId: TaskId }>;
+  changed: ReadonlyArray<string>;
+  hashes: Record<string, string>;
+}): { accepted: Array<{ file: string; taskId: TaskId }>; judged: Array<string> } {
+  const accepted: Array<{ file: string; taskId: TaskId }> = [];
+  const judged: Array<string> = [];
+  for (const file of input.changed) {
+    const earlier = input.accepted.get(file);
+    if (earlier !== undefined && earlier.hash === input.hashes[file]) {
+      accepted.push({ file, taskId: earlier.taskId });
+    } else {
+      judged.push(file);
+    }
+  }
+  return { accepted, judged };
+}
+
+// The diff hash of each rule file among `changed`, for an approving review to
+// record.
+export function ruleHashes(
+  changed: ReadonlyArray<string>,
+  hashes: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    changed.flatMap((file) => {
+      const hash = hashes[file];
+      return hash === undefined ? [] : [[file, hash]];
+    }),
+  );
 }
 
 // Where the reviewer's rules came from, as its system prompt and the review

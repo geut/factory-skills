@@ -10,6 +10,7 @@ import {
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
+  candidatePath,
   CONTEXT_FILE_NAMES,
   outsideDirectories,
   PROMPT_FILES,
@@ -66,9 +67,11 @@ type TreeEntry = { mode: string; object: string; type: string };
 
 // The base commit's entries for `paths`, by path, from one `git ls-tree`.
 function treeEntries(codeRoot: string, sha: string, paths: Array<string>): Map<string, TreeEntry> {
-  const listed = git(codeRoot, ['ls-tree', '-z', '--full-tree', sha, '--', ...paths]);
+  const listed = git(codeRoot, ['ls-tree', '-z', '--full-tree', `${sha}^{commit}`, '--', ...paths]);
   if (listed.status !== 0) {
-    throw new Error(`Cannot read the project rules at ${sha}: ${listed.stderr.toString().trim()}`);
+    throw new Error(
+      `Cannot read the project rules: the base commit ${sha} is not in ${codeRoot} (${listed.stderr.toString().trim()}).`,
+    );
   }
   const entries = new Map<string, TreeEntry>();
   for (const record of listed.stdout.toString('utf8').split('\0')) {
@@ -166,7 +169,7 @@ function baseText(reader: BaseReader, file: string, root: string, hops = 0): str
 }
 
 function candidates(directory: string): Array<string> {
-  return CONTEXT_FILE_NAMES.map((name) => (directory === '' ? name : `${directory}/${name}`));
+  return CONTEXT_FILE_NAMES.map((name) => candidatePath(directory, name));
 }
 
 function firstAtBase(reader: BaseReader, directory: string, root: string): RuleFile | null {
@@ -209,7 +212,7 @@ export type ReviewPrompts = { appendSystemPrompt: Array<string>; systemPrompt: s
 // files; a directory between the code root and the worktree, such as
 // `.factory`, takes them when the base commit tracks one, else from disk,
 // since the operator keeps them there. Throws when the base commit cannot be
-// read, so the launch retries rather than starting a reviewer without the
+// read, so the review pauses rather than starting a reviewer without the
 // project's rules.
 export function writeReviewRules(
   input: RulesPlace & {
@@ -219,18 +222,17 @@ export function writeReviewRules(
     prefix: string;
   },
 ): ReviewPrompts {
-  const place = { codeRoot: realPath(input.codeRoot), worktree: realPath(input.worktree) };
-  const exists = git(place.codeRoot, ['cat-file', '-e', `${input.baseSha}^{commit}`]);
-  if (exists.status !== 0) {
-    throw new Error(
-      `Cannot read the project rules: the base commit ${input.baseSha} is not in ${input.codeRoot}.`,
-    );
-  }
+  // Which directories hold the project's rules is decided on the paths as
+  // given, as the review prompt, its validation, and the handoff decide which
+  // rule files a diff changes. The directories outside the project are the
+  // ones Pi walks up through, from its real working directory.
+  const place = { codeRoot: path.resolve(input.codeRoot), worktree: path.resolve(input.worktree) };
+  const real = { codeRoot: realPath(input.codeRoot), worktree: realPath(input.worktree) };
   const reader = baseReader(place.codeRoot, input.baseSha);
   const source = rulesSource({ branch: input.baseBranch, sha: input.baseSha });
   const directories = ruleDirectories(place);
   reader.load([...PROMPT_FILES, ...directories.flatMap((directory) => candidates(directory))]);
-  const outside = [input.agentDir, ...outsideDirectories(place)]
+  const outside = [input.agentDir, ...outsideDirectories(real)]
     .map((directory) => onDisk(directory))
     .filter((found) => found !== null);
   const fromBase = (directory: string, root: string) => {

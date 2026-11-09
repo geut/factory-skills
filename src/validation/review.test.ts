@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
+import { fileDiffHashes } from '../diff.ts';
 import type { FactorySnapshot, RunRecord, SessionRecord } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import {
@@ -165,6 +166,7 @@ const context: ReviewContext = {
   earlierFindings: [],
   lineCount: (file) => ({ 'src/filter.test.ts': 20, 'src/filter.ts': 40 })[file] ?? null,
   rules: [],
+  worktree: '/repo/.factory/worktrees/proj-1',
 };
 
 const verified = [
@@ -388,7 +390,11 @@ test('isolation outranks a stale diff, which outranks a malformed result', async
 
 // A review of task 01, whose one criterion is about the README the
 // worker changed to two lines.
-function validateTask(cwd: string, verification: string) {
+function validateTask(
+  cwd: string,
+  verification: string,
+  setup: (snapshot: FactorySnapshot) => void = (snapshot) => addTasks(snapshot, 1),
+) {
   const factoryDir = mkdtempSync(path.join(tmpdir(), 'factory-review-ticket-'));
   roots.push(factoryDir);
   writeFileSync(
@@ -396,12 +402,45 @@ function validateTask(cwd: string, verification: string) {
     '# Demo\n\n## Acceptance criteria\n\n- [ ] The README says it changed.\n',
   );
   return validate(cwd, (run, _owner, snapshot) => {
-    addTasks(snapshot, 1);
+    setup(snapshot);
     task(snapshot, '01').taskFile = '01-task.md';
     snapshot.execution.factoryDir = factoryDir;
     run.resultJson = JSON.stringify({ output: verifying('approve', verification) });
   });
 }
+
+test('a rule change an earlier task’s review accepted needs no line until it changes again', async () => {
+  const cwd = worktree();
+  writeFileSync(path.join(cwd, 'AGENTS.md'), 'Tests may call the network.\n');
+  const missing = await validateTask(cwd, '- AC1: verified — README.md:2');
+  assert.match(
+    missing.status === 'failed' ? missing.failures.join('\n') : '',
+    /no line for AGENTS\.md/,
+  );
+  const collected = collectWorkDiff(cwd);
+  const hashes = 'message' in collected ? {} : fileDiffHashes(collected.diff);
+  const acceptedBy02 = (snapshot: FactorySnapshot) => {
+    addTasks(snapshot, 2);
+    task(snapshot, '02').summaries.review = {
+      counts: {},
+      label: 'approve',
+      round: 1,
+      rules: { 'AGENTS.md': hashes['AGENTS.md'] ?? '' },
+    };
+  };
+  const accepted = await validateTask(cwd, '- AC1: verified — README.md:2', acceptedBy02);
+  assert.equal(accepted.status, 'passed');
+  // The pass carries the hash, for an approval to record again.
+  assert.deepEqual(accepted.status === 'passed' ? accepted.detail.rules : null, {
+    'AGENTS.md': hashes['AGENTS.md'],
+  });
+  writeFileSync(path.join(cwd, 'AGENTS.md'), 'Tests may call the network and the disk.\n');
+  const changedAgain = await validateTask(cwd, '- AC1: verified — README.md:2', acceptedBy02);
+  assert.match(
+    changedAgain.status === 'failed' ? changedAgain.failures.join('\n') : '',
+    /no line for AGENTS\.md/,
+  );
+});
 
 test('a review is checked against the task file and the worktree', async () => {
   const cwd = worktree();
@@ -480,6 +519,24 @@ test('each changed project rule file needs a Verification line, and out_of_scope
     failuresOf(verifying('changes_requested', outOfScope, elsewhere), 1, rules),
     /AGENTS\.md is out_of_scope, but no Critical or Major finding names it/,
   );
+  // A finding may name the file from the worktree root or by its absolute path.
+  for (const location of ['./AGENTS.md:3', '/repo/.factory/worktrees/proj-1/AGENTS.md:3']) {
+    assert.equal(
+      parseReview(
+        verifying(
+          'changes_requested',
+          outOfScope,
+          reported
+            .replace('AGENTS.md relaxes', 'The rule file relaxes')
+            .replace('AGENTS.md:3', location),
+        ),
+        1,
+        rules,
+      ).kind,
+      'valid',
+      location,
+    );
+  }
   // A rule line for a file the diff does not change is refused.
   assert.match(
     failuresOf(verifying('approve', `${verified}\n- CLAUDE.md: in_scope — x`), 1, rules),

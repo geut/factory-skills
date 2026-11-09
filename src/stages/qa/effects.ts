@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../../config.ts';
-import { changedPaths } from '../../diff.ts';
+import { changedPaths, diffSections } from '../../diff.ts';
 import { sha256 } from '../../hash.ts';
 import {
   errorReport,
@@ -36,15 +36,9 @@ type QaBaseline = { files: Record<string, string>; workChecks: Array<ValidationC
 
 // Each changed file's diff, hashed, by path.
 function fileDiffs(diff: string): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const part of diff.split(/^(?=diff --git )/m)) {
-    const [file] = changedPaths(part);
-    if (file !== undefined) {
-      // Trimmed: the diff joins untracked files' parts with a newline.
-      files[file] = sha256(part.trim());
-    }
-  }
-  return files;
+  return Object.fromEntries(
+    diffSections(diff).map(({ file, text }) => [file.to, sha256(text.trim())]),
+  );
 }
 
 // The QaBaseline JSON for a worktree with `diff`.

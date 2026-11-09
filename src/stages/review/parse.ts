@@ -23,6 +23,8 @@ export type ReviewContext = {
   lineCount: (file: string) => number | null;
   // Repository paths of the project rule files the reviewed diff changes.
   rules: ReadonlyArray<string>;
+  // The worktree's absolute path, which a finding may name a file under.
+  worktree: string | null;
 };
 
 export type ParsedReview =
@@ -280,11 +282,17 @@ function unexpectedLine(id: string, context: ReviewContext): string {
   return `${id} is not a project rule file this diff changes (${context.rules.join(', ') || 'none'}).`;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 // Whether `text` names `file` as a whole path: `.factory/AGENTS.md` does not
-// name `AGENTS.md`, while `AGENTS.md:3` and `AGENTS.md.` do.
-function namesPath(text: string, file: string): boolean {
-  const escaped = file.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  return new RegExp(String.raw`(?<![\w./-])${escaped}(?!\.?[\w/-])`).test(text);
+// name `AGENTS.md`, while `AGENTS.md:3`, `AGENTS.md.`, `./AGENTS.md`, and the
+// file under the worktree's absolute path do.
+function namesPath(text: string, file: string, worktree: string | null): boolean {
+  const prefixes = ['./', ...(worktree === null ? [] : [`${worktree.replace(/\/+$/, '')}/`])];
+  const prefix = `(?:${prefixes.map((item) => escapeRegExp(item)).join('|')})?`;
+  return new RegExp(String.raw`(?<![\w./-])${prefix}${escapeRegExp(file)}(?!\.?[\w/-])`).test(text);
 }
 
 // A rule change the task did not ask for is a Major finding, so an
@@ -292,6 +300,7 @@ function namesPath(text: string, file: string): boolean {
 function unreportedRuleChanges(
   verification: Array<ReviewVerification>,
   findings: Array<ReviewFinding>,
+  worktree: string | null,
 ): Array<string> {
   return verification
     .filter((line) => line.status === 'out_of_scope')
@@ -301,7 +310,7 @@ function unreportedRuleChanges(
           (finding) =>
             finding.blocking &&
             [finding.title, finding.location ?? '', finding.finding].some((text) =>
-              namesPath(text, line.id),
+              namesPath(text, line.id, worktree),
             ),
         ),
     )
@@ -352,7 +361,7 @@ export function parseReview(
     verificationSection === null ? [] : parseVerification(verificationSection, failures, context);
   const findings = findingsSection === null ? [] : parseFindings(findingsSection, round, failures);
   if (context !== null) {
-    failures.push(...unreportedRuleChanges(verification, findings));
+    failures.push(...unreportedRuleChanges(verification, findings, context.worktree));
   }
   const blocking = findings.filter((finding) => finding.blocking);
   if (verdict === 'approve' && blocking.length > 0) {

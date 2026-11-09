@@ -1,18 +1,19 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { diffPaths } from '../diff.ts';
+import { fileDiffHashes } from '../diff.ts';
 import type { ReviewValidationReport } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { stageTools } from '../stages/index.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria } from '../stages/qa/criteria.ts';
+import { reviewedRules } from '../stages/review/definition.ts';
 import {
   earlierFindings,
   parseReview,
   REVIEW_CONTRACT,
   type ReviewContext,
 } from '../stages/review/parse.ts';
-import { changedRules, rulesSource, type RulesPlace } from '../stages/review/rules.ts';
+import { ruleHashes, rulesSource } from '../stages/review/rules.ts';
 import {
   errorReport,
   failedReport,
@@ -33,6 +34,8 @@ function reviewChecks(input: {
   resultStatus: 'pending' | 'valid' | 'invalid';
   reviewedDiffHash: string | null;
   reviewModel: string;
+  // The diff hash of each rule file the diff changes, for an approval to record.
+  ruleHashes: Record<string, string>;
   // Where the reviewer's project rules came from, such as `main at 1a2b3c4`.
   rulesSource: string | null;
   tools: string;
@@ -108,7 +111,7 @@ function reviewChecks(input: {
   if (schemaFailures.length > 0) {
     return failedReport(version, checks, schemaFailures, { reason: 'malformed' });
   }
-  return passedReport(version, checks, null);
+  return passedReport(version, checks, { rules: input.ruleHashes });
 }
 
 // The line count of a file in the worktree, or null when it is missing or
@@ -138,7 +141,10 @@ function validateReview(input: {
   reviewedDiffHash: string | null;
   reviewModel: string;
   round: number;
-  rules: RulesPlace & { source: string | null };
+  // The rule files a diff changes: those this review judges, and those an
+  // earlier task's review accepted.
+  rules: (diff: string) => ReturnType<typeof reviewedRules>;
+  rulesSource: string | null;
   tools: string;
   workModel: string;
 }): ReviewValidationReport {
@@ -148,16 +154,17 @@ function validateReview(input: {
   }
   // The run's parse checked the template; its Verification lines are checked
   // here against the task and the worktree.
-  const context = {
-    ...input.context,
-    rules: changedRules(input.rules, diffPaths(collected.diff)),
-  };
+  const rules = input.rules(collected.diff);
+  const context = { ...input.context, rules: rules.changed };
   const parsed =
     input.resultStatus === 'valid' ? parseReview(input.output, input.round, context) : null;
   return reviewChecks({
     ...input,
     currentDiffHash: sha256(collected.diff),
-    rulesSource: input.rules.source,
+    ruleHashes: ruleHashes(
+      [...rules.accepted.map((item) => item.file), ...rules.changed],
+      fileDiffHashes(collected.diff),
+    ),
     verificationFailures: parsed?.kind === 'invalid' ? parsed.failures : [],
   });
 }
@@ -185,6 +192,7 @@ export const reviewValidator: Validator<'review'> = {
             (finding) => finding.id,
           ),
           lineCount: worktreeLines(worktree),
+          worktree,
         },
         cwd: worktree,
         output: runOutput(run),
@@ -193,17 +201,14 @@ export const reviewValidator: Validator<'review'> = {
         reviewedDiffHash: run.diffHash,
         reviewModel: session.model,
         round: run.semanticRound,
-        rules: {
-          codeRoot: snapshot.execution.policy.codeRoot,
-          source:
-            snapshot.execution.worktreeBaseSha === null
-              ? null
-              : rulesSource({
-                  branch: snapshot.execution.worktreeBaseBranch,
-                  sha: snapshot.execution.worktreeBaseSha,
-                }),
-          worktree,
-        },
+        rules: (diff) => reviewedRules(snapshot, session.taskId, diff),
+        rulesSource:
+          snapshot.execution.worktreeBaseSha === null
+            ? null
+            : rulesSource({
+                branch: snapshot.execution.worktreeBaseBranch,
+                sha: snapshot.execution.worktreeBaseSha,
+              }),
         tools: stageTools('review'),
         workModel: workSession?.model ?? snapshot.execution.policy.models.work,
       }),

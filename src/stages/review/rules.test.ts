@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { taskId } from '../../domain.ts';
 import {
+  acceptedRules,
   changedRules,
   isRulePath,
   outsideDirectories,
   ruleCandidates,
+  ruleChanges,
   ruleDirectories,
+  ruleHashes,
   rulesSource,
 } from './rules.ts';
 
@@ -52,4 +56,49 @@ test('the rules’ source names the base branch and short SHA', () => {
   const sha = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b';
   assert.equal(rulesSource({ branch: 'main', sha }), 'main at 1a2b3c4');
   assert.equal(rulesSource({ branch: null, sha }), 'the base commit 1a2b3c4');
+});
+
+test('an earlier task’s accepted rule change is judged again only when it changed since', () => {
+  const tasks = [3, 1, 2].map((ordinal) => {
+    const id = taskId(`0${ordinal}`);
+    return {
+      blockedBy: [],
+      ordinal,
+      specHash: null,
+      stage: null,
+      status: 'done' as const,
+      summaries: {
+        review: {
+          counts: {},
+          label: 'approve',
+          round: 1,
+          rules: { 'AGENTS.md': `hash-${ordinal}` },
+        },
+      },
+      taskFile: `0${ordinal}-task.md`,
+      taskId: id,
+      title: `Task ${ordinal}`,
+    };
+  });
+  // The latest task's acceptance wins, and the task under review's own is left out.
+  assert.deepEqual(acceptedRules(tasks, taskId('03')).get('AGENTS.md'), {
+    hash: 'hash-2',
+    taskId: taskId('02'),
+  });
+  const accepted = acceptedRules(tasks, taskId('03'));
+  assert.deepEqual(
+    ruleChanges({
+      accepted,
+      changed: ['AGENTS.md', 'CLAUDE.md'],
+      hashes: { 'AGENTS.md': 'hash-2', 'CLAUDE.md': 'c' },
+    }),
+    { accepted: [{ file: 'AGENTS.md', taskId: taskId('02') }], judged: ['CLAUDE.md'] },
+  );
+  assert.deepEqual(
+    ruleChanges({ accepted, changed: ['AGENTS.md'], hashes: { 'AGENTS.md': 'edited' } }).judged,
+    ['AGENTS.md'],
+  );
+  assert.deepEqual(ruleHashes(['AGENTS.md', 'gone.md'], { 'AGENTS.md': 'a' }), {
+    'AGENTS.md': 'a',
+  });
 });

@@ -1,3 +1,5 @@
+import { sha256 } from './hash.ts';
+
 // The files a git patch touches, read from its `diff --git a/<from> b/<to>`
 // headers. collectWorkDiff asks git for the a/ and b/ prefixes, whatever the
 // repository's diff config says.
@@ -65,4 +67,25 @@ export function diffPaths(diff: string): Array<string> {
 // The paths the patch leaves changed: each file's new side.
 export function changedPaths(diff: string): Array<string> {
   return [...new Set(diffFiles(diff).map((file) => file.to))];
+}
+
+// Each file's section of the patch, its header through the next header.
+export function diffSections(diff: string): Array<{ file: DiffFile; text: string }> {
+  return diff.split(/^(?=diff --git )/m).flatMap((text) => {
+    const [file] = diffFiles(text);
+    return file === undefined ? [] : [{ file, text }];
+  });
+}
+
+// Each changed path's section hash, by both sides of a rename: what the
+// change to that file is, apart from the rest of the patch.
+export function fileDiffHashes(diff: string): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const { file, text } of diffSections(diff)) {
+    // Trimmed: the work diff joins untracked files' parts with a newline.
+    const hash = sha256(text.trim());
+    hashes[file.from] = hash;
+    hashes[file.to] = hash;
+  }
+  return hashes;
 }

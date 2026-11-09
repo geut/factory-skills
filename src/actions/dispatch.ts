@@ -332,7 +332,13 @@ async function launch(
   } catch (error: unknown) {
     applyActionEvent(
       input,
-      { actionId: action.id, kind: 'launch_failed', message: messageOf(error), runId: run.id },
+      {
+        actionId: action.id,
+        code: 'project_rules',
+        kind: 'launch_failed',
+        message: messageOf(error),
+        runId: run.id,
+      },
       `launch-failed:${action.id}`,
     );
     return null;

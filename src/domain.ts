@@ -301,8 +301,10 @@ export type ReviewResult = {
 
 // `malformed` resumes the reviewer, `stale` re-validates the worker's diff,
 // and `unsafe` pauses: the reviewer was not isolated from the worker.
+// A passed review carries the diff hash of each rule file the reviewed diff
+// changes, which an approval records.
 export type ReviewValidationReport = ValidationReport<
-  null,
+  { rules: Record<string, string> },
   { reason: 'malformed' | 'stale' | 'unsafe' }
 >;
 
@@ -389,7 +391,15 @@ export type ControllerEvent =
       runId: RunId;
       sessionFile: string;
     }
-  | { actionId: ActionId; kind: 'launch_failed'; message: string; runId: RunId }
+  | {
+      actionId: ActionId;
+      // `project_rules`: the stage's project rules could not be read, which a
+      // retry of the same launch would not change, so the ticket pauses.
+      code?: 'project_rules';
+      kind: 'launch_failed';
+      message: string;
+      runId: RunId;
+    }
   | {
       actor?: Actor;
       answer: string;
@@ -473,7 +483,14 @@ export type ExecutionRecord = {
 
 // What one per-task stage last concluded about a task, for display and for
 // later stages: the round it reached, a short label, and counts behind it.
-export type TaskSummary = { counts: Record<string, number>; label: string; round: number };
+export type TaskSummary = {
+  counts: Record<string, number>;
+  label: string;
+  round: number;
+  // An approving review's rule files, each with its diff hash: the rule
+  // changes later tasks' reviews take as accepted while they stay unchanged.
+  rules?: Record<string, string>;
+};
 
 export type TaskRecord = {
   blockedBy: Array<TaskId>;

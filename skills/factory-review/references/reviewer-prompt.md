@@ -14,6 +14,8 @@ Review whether the implementation achieves the ticket outcome and this task's us
 
 Your system prompt holds the project's rules (`AGENTS.md`, `CLAUDE.md`, and the project's `.pi/SYSTEM.md` and `.pi/APPEND_SYSTEM.md`) from the ticket's base commit, the rules this change merges into, not the ticket branch's copy. Judge the work by them. The worker cannot change the rules its own work is judged by.
 
+Only the rule files the prompt lists count. A context file deeper in the tree, such as `src/CLAUDE.md`, is not one: Pi does not load it. When the prompt says an earlier task changed a rule file and its review accepted the change, judge the work by the base rules as that change amends them, and give it no Verification line.
+
 When the prompt says the diff changes a rule file, decide whether the task asks for that change:
 
 - **In scope.** The task asks for it. Review the change as part of the task, and judge the work by the base rules as that change amends them. Give it a Verification line `in_scope` with the criterion that asks for it.
