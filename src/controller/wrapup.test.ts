@@ -262,7 +262,7 @@ function failedWith(
       status: 'pending',
     });
   }
-  const detail = { checklist: noIssue, pullRequest: null, usage: '' };
+  const detail = { checklist: noIssue, pullRequest: null, rules: [], usage: '' };
   return (
     reduce({
       event: {
