@@ -5,6 +5,7 @@ export type ParsedCommand =
   | { answer: string; kind: 'reply'; ref: string }
   | { kind: 'retry'; ref: string }
   | { kind: 'complete'; ref: string }
+  | { kind: 'feedback'; note: string | null; ref: string }
   | { kind: 'stop'; ref: string }
   | { kind: 'rerun'; ref: string }
   | { kind: 'cancel'; reason: string | null; ref: string }
@@ -19,7 +20,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -67,6 +68,21 @@ export function parseFactoryCommand(args: string): ParsedCommand {
         return { kind: 'invalid', message: 'Usage: /factory complete <ticket>' };
       }
       return { kind: 'complete', ref: rest };
+    case 'feedback': {
+      if (rest.length === 0) {
+        return { kind: 'invalid', message: 'Usage: /factory feedback <ticket> ["note"]' };
+      }
+      const cut = rest.indexOf(' ');
+      let note = cut === -1 ? '' : rest.slice(cut + 1).trim();
+      if (note.startsWith('"') && note.endsWith('"') && note.length >= 2) {
+        note = note.slice(1, -1);
+      }
+      return {
+        kind: 'feedback',
+        note: note.length === 0 ? null : note,
+        ref: cut === -1 ? rest : rest.slice(0, cut),
+      };
+    }
     case 'cancel': {
       if (rest.length === 0) {
         return { kind: 'invalid', message: 'Usage: /factory cancel <ticket> ["reason"]' };
@@ -105,7 +121,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
       };
   }
 }

@@ -12,6 +12,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory reply <ticket> "answer"
 /factory retry <ticket>
 /factory complete <ticket>
+/factory feedback <ticket> ["note"]
 /factory stop <ticket>
 /factory cancel <ticket> ["reason"]
 /factory rerun <ticket>
@@ -71,6 +72,17 @@ The wrap-up agent returns the `factory.wrapup.v2` handoff. The controller keeps 
 - with it on, wrap-up commits the approved work on the ticket branch. Its commits sit on top of the commit wrap-up started from, with no merge and no rewritten history, and hold only paths `## Files` lists. Once anything is committed the worktree must be clean, and with a clean worktree the pull request must exist for the branch with the local HEAD as its head and the title `codeHost.pullRequestTitle` gives. If committing fails, the worktree stays uncommitted, nothing is pushed, and the commands are printed instead.
 
 A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. When validation fails with exactly the failures of the latest correction, the agent could not fix them, so the ticket pauses with `wrapup_failure_repeated` instead: `/factory retry` validates the latest run again once the cause is fixed, and a reply resumes the agent. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session, `🔀 <ticket>` shows the ticket's diff since its base commit, in [Hunk](https://hunk.dev) when `hunk` is on PATH, else in Fresh; `FACTORY_HUNK_BIN` and `FACTORY_FRESH_BIN` name other binaries; in Hunk the diff carries notes from the handoff: what each `## Files` line says about its file, each decision on the lines it cites, and each open review finding at its location), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. On a tracker issue, the controller ticks the met items through the tracker and posts one handoff comment with the decisions and the items left open; a rerun replaces that comment. An item someone changed on the issue stays unticked, and the comment and a warning on the ticket say so. None of this can fail the handoff.
+
+### Feedback rounds
+
+`/factory feedback <ticket> ["note"]` takes the feedback the ticket's pull request got after handoff back through work, review, and wrap-up, on the same worktree and branch, and ends with a new commit pushed to the same pull request. It works only at `wrapup / ready_for_handoff` with an open pull request recorded for the ticket; anything else is refused with `invalid_state`, and nothing changes.
+
+- **What counts.** The server reads the pull request with one `gh api graphql` call: unresolved review threads with a comment posted since the ticket last reached handoff (the factory's last push), shown whole for context, and review bodies and conversation comments posted since. Only collaborators' feedback counts, by GitHub's author association (`OWNER`, `MEMBER`, `COLLABORATOR`), plus the logins in `codeHost.feedback.authors`, such as a review bot (`"feedback": { "authors": ["coderabbitai"] }`; a trailing `[bot]` doesn't matter). The rest is listed as skipped. Resolved threads and the factory's own comments are left out. The note, when given, is one more item. With nothing to address and no note, the command is refused.
+- **The round is a task.** The controller adds task `F<n>` to the ticket, with its task file at `tickets/<slug>/feedback/<n>/task.md`. Its acceptance criteria are the items `F1..Fn`, and the file quotes each one in full, framed as review requests to weigh, not instructions. The task goes through work, QA when it is on, and review like any task, then wrap-up runs again in its own session.
+- **Work** starts from the pull request's head, so work validation checks that nothing is committed past that commit. The reply answers every item under `## Feedback responses`, one line each, `- F1: addressed — what changed` or `- F2: declined — why`. Work validation fails an item left unanswered, answered twice, unknown, or declined without a reason.
+- **Review** sees only the round's diff, with the items as its criteria, and treats an item declined without a sound reason as a Major finding.
+- **Wrap-up** takes a fresh baseline for the round, commits on top of the branch, pushes to the same pull request, with no amend, rebase, or force-push, and updates the pull request body. The ticket returns to `ready_for_handoff`.
+- `limits.feedbackRounds` (default 3) bounds the rounds per ticket; one past the limit is refused with a message.
 
 The tracker adapter decides what an issue's checklist is: wrap-up's input preparation asks it for the items, numbers the open ones `B1`..`Bn`, and keeps each one's key in the wrap-up baseline, so corrections and validation judge the same list. On GitHub the checklist is the Markdown boxes (`- [ ]`, `1. [ ]`) in the issue body, outside code fences, each keyed by its text and which box of that text it is; ticking re-reads the body and flips only those marks, leaving every other byte as it was. A tracker without a `checklist` capability gives wrap-up no boxes, and the factory only comments. A tracker that cannot be read leaves wrap-up without boxes and says why in its prompt. Merge the work yourself, then `/factory complete <ticket>` moves it to `done / complete`. Repeating `start` on a ticket ready for handoff only reports its state. Merge and worktree cleanup always stay with you. Commit and push do too unless `codeHost.pullRequests` is on.
 
@@ -149,17 +161,18 @@ Reads need a `read` token.
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.
 
-| Route                                     | Pi equivalent       |
-| ----------------------------------------- | ------------------- |
-| `POST /v1/tickets {ref}` or `{id, text}`  | `/factory start`    |
-| `POST /v1/tickets/{key}/replies {answer}` | `/factory reply`    |
-| `POST /v1/tickets/{key}/retries`          | `/factory retry`    |
-| `POST /v1/tickets/{key}/complete`         | `/factory complete` |
-| `POST /v1/tickets/{key}/cancel {reason?}` | `/factory cancel`   |
-| `POST /v1/tickets/{key}/reruns`           | `/factory rerun`    |
-| `POST /v1/runs/{id}/stop`                 | `/factory stop`     |
+| Route                                            | Pi equivalent       |
+| ------------------------------------------------ | ------------------- |
+| `POST /v1/tickets {ref}` or `{id, text}`         | `/factory start`    |
+| `POST /v1/tickets/{key}/replies {answer}`        | `/factory reply`    |
+| `POST /v1/tickets/{key}/retries`                 | `/factory retry`    |
+| `POST /v1/tickets/{key}/complete`                | `/factory complete` |
+| `POST /v1/tickets/{key}/feedback-rounds {note?}` | `/factory feedback` |
+| `POST /v1/tickets/{key}/cancel {reason?}`        | `/factory cancel`   |
+| `POST /v1/tickets/{key}/reruns`                  | `/factory rerun`    |
+| `POST /v1/runs/{id}/stop`                        | `/factory stop`     |
 
-- Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
+- Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `code_host_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
 - Cancel ends a ticket for good: its agents stop, its tab closes, open questions and tasks are cancelled, and the ticket is `done / cancelled`. Its worktree, branch, and pull request stay for you to keep or clean up. A ticket from the tracker gets a comment, and its factory status label is removed.
 - Rerun runs a complete, cancelled, or failed ticket again as generation N+1: it fetches the issue again and works in `<ticket dir>/r<N>` on its own worktree and branch (`factory/<key>-r<N>`), with the models in `FACTORY.json`. Earlier generations stay readable through `GET /v1/tickets/{key}/executions` and `?execution=<n>` on the ticket and run routes.
 - Stop closes a running agent's pane and pauses the ticket. A reply resumes that agent's session with your instructions; a retry relaunches it.

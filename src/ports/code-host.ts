@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { CodeHostConfig } from '../config.ts';
+import { FEEDBACK_QUERY, feedbackFrom, type PullRequestFeedback } from './pull-request-feedback.ts';
 
-// The code host port: how the factory reads pull requests and checks webhook
-// deliveries. It only reads; the wrap-up agent opens the pull request itself.
+// The code host port: how the factory reads pull requests, their feedback, and
+// checks webhook deliveries. It only reads; the wrap-up agent opens the pull
+// request itself.
 // GitHub is the only adapter so far, through gh.
 
 export type PullRequestInfo = {
@@ -42,6 +44,9 @@ export type CodeHost = {
   kind: string;
   // Null when no pull request exists at `url`. Throws on infrastructure errors.
   pullRequest: (url: string) => PullRequestInfo | null;
+  // The feedback posted on `pullRequest` after `since`, the factory's last
+  // push, sorted into what a feedback round addresses and what it skips.
+  pullRequestFeedback: (pullRequest: PullRequestInfo, since: string) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
@@ -196,6 +201,22 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
         }
         throw error;
       }
+    },
+    pullRequestFeedback: (pullRequest, since) => {
+      const [owner, name] = repoOf(pullRequest.url).split('/');
+      const payload = gh([
+        'api',
+        'graphql',
+        '-f',
+        `query=${FEEDBACK_QUERY}`,
+        '-F',
+        `owner=${owner ?? ''}`,
+        '-F',
+        `repo=${name ?? ''}`,
+        '-F',
+        `number=${pullRequest.number}`,
+      ]);
+      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], since });
     },
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;

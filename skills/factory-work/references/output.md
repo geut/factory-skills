@@ -27,6 +27,13 @@ none
 
 - R1-01: fixed — tests/filter.test.ts:88
 
+## Feedback responses
+
+none
+
+- F1: addressed — renamed the flag in src/filter.ts
+- F2: declined — the README has no flag section yet
+
 ## Plan changed
 
 false
@@ -40,6 +47,6 @@ none
 none
 ```
 
-`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Evidence` unless a screenshot or transcript path helps a reviewer. The controller checks the worktree diff and `validation.work.commands`; it does not read this template or an evidence manifest. Each test line is `command: passed|failed|not_run` plus an optional note. Leave the work uncommitted.
+`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Feedback responses` unless the task is a feedback round (`F<n>`); then answer every item of its task file once, `addressed` with what changed or `declined` with why. The controller checks those lines: an item left out, answered twice, or declined without a reason comes back as a correction. Use `none` under `Evidence` unless a screenshot or transcript path helps a reviewer. The controller checks the worktree diff, `validation.work.commands`, and a feedback round's `Feedback responses`; it reads nothing else of this template, and no evidence manifest. Each test line is `command: passed|failed|not_run` plus an optional note. Leave the work uncommitted.
 
 After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision.

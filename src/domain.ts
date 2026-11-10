@@ -359,6 +359,20 @@ export type ControllerEvent =
   | InputReady
   | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
+  // A person asked for a feedback round on the open pull request: task
+  // `F<round>`, whose file the service wrote with `items` feedback items and
+  // `skipped` left out, starts from `startHead`.
+  | {
+      idempotencyKey: string;
+      items: number;
+      kind: 'feedback';
+      round: number;
+      skipped: number;
+      startHead: string;
+      taskFile: string;
+      ticketId: TicketId;
+      title: string;
+    }
   // A person cancelled the ticket for good. `by` names them for the tracker.
   | {
       by: string | null;
@@ -468,6 +482,9 @@ export type ExecutionRecord = {
   planPath: string | null;
   policy: Policy;
   retry: Retry | null;
+  // The commit the current feedback round started from, which its work
+  // leaves uncommitted on top of; null before the first round.
+  roundBaseSha: string | null;
   stage: Stage;
   status: ExecutionStatus;
   statusReason: string | null;

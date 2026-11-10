@@ -108,3 +108,21 @@ export function recordCommit(
        committed_at = coalesce(excluded.committed_at, committed_at)`,
   ).run(fact.executionId, fact.sha, fact.committedAt);
 }
+
+// The pull request recorded for an execution, if any.
+export function pullRequestUrlOf(db: DatabaseSync, executionId: string): string | null {
+  const found = db.prepare('SELECT url FROM pull_requests WHERE execution_id = ?').get(executionId);
+  return found === undefined ? null : String(found['url']);
+}
+
+// When the execution last reached ready_for_handoff: the factory's last push
+// to its pull request came just before.
+export function lastHandoffAt(db: DatabaseSync, executionId: string): string | null {
+  const found = db
+    .prepare(
+      `SELECT max(started_at) AS at FROM status_history
+       WHERE execution_id = ? AND task_id IS NULL AND status = 'ready_for_handoff'`,
+    )
+    .get(executionId);
+  return found === undefined || found['at'] === null ? null : String(found['at']);
+}

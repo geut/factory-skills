@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
+import { taskId } from '../domain.ts';
 import { validationContext } from './fixture.ts';
 import { collectWorkDiff, COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
@@ -287,4 +288,56 @@ test('an untracked OS metadata file is not part of the work diff, and a tracked 
   git(cwd, ['add', '.DS_Store']);
   const tracked = collectWorkDiff(cwd);
   assert.match('diff' in tracked ? tracked.diff : '', /\.DS_Store/);
+});
+
+test('a feedback round works on top of the round start, and its reply answers every item', async () => {
+  const { baseSha, cwd } = repo();
+  // Wrap-up committed the first pass; the round starts from that commit.
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nfirst pass\n');
+  git(cwd, ['-c', 'commit.gpgsign=false', 'commit', '-qam', 'first pass']);
+  const roundBase = git(cwd, ['rev-parse', 'HEAD']);
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nfirst pass\nround one\n');
+  mkdirSync(path.join(cwd, '.ticket', 'feedback', '1'), { recursive: true });
+  writeFileSync(
+    path.join(cwd, '.ticket', 'feedback', '1', 'task.md'),
+    "# Feedback round 1\n\n## Acceptance criteria\n\n- [ ] F1: comment (alice): Rename it.\n- [ ] F2: the operator's note: Explain it.\n",
+  );
+  const round = (output: string, roundBaseSha: string | null) =>
+    workValidator.validate(
+      validationContext('work', (snapshot, finished, owner) => {
+        snapshot.execution.worktreePath = cwd;
+        snapshot.execution.worktreeBaseSha = baseSha;
+        snapshot.execution.roundBaseSha = roundBaseSha;
+        snapshot.execution.factoryDir = path.join(cwd, '.ticket');
+        owner.taskId = taskId('F1');
+        snapshot.tasks.push({
+          blockedBy: [],
+          ordinal: 2,
+          specHash: null,
+          stage: 'work',
+          status: 'active',
+          summaries: {},
+          taskFile: 'feedback/1/task.md',
+          taskId: taskId('F1'),
+          title: 'Feedback round 1',
+        });
+        finished.resultJson = JSON.stringify({ output });
+      }),
+    );
+  const answered =
+    '## Feedback responses\n\n- F1: addressed — renamed it\n- F2: declined — the docs already say so\n';
+  const passed = await round(answered, roundBase);
+  assert.equal(passed.status, 'passed', passed.status === 'failed' ? passed.summary : '');
+  assert.ok(passed.checks.some((check) => check.name === 'feedback responses'));
+  // Without the round start, the first pass's commit is one work made.
+  const committed = await round(answered, null);
+  assert.match(committed.status === 'failed' ? committed.summary : '', /unexpected commit/);
+  const unanswered = await round(
+    '## Feedback responses\n\n- F1: addressed — renamed it\n',
+    roundBase,
+  );
+  assert.match(
+    unanswered.status === 'failed' ? unanswered.summary : '',
+    /## Feedback responses has no line for F2/,
+  );
 });

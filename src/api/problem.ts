@@ -3,6 +3,7 @@ import { z } from 'zod';
 // RFC 9457 problem details. `type` is a stable code clients switch on; the
 // codes, their statuses, and their titles live here so every route agrees.
 export const problemTypes = {
+  code_host_unavailable: { status: 502, title: 'Code host unavailable' },
   insufficient_scope: { status: 403, title: 'Insufficient scope' },
   internal_error: { status: 500, title: 'Internal error' },
   invalid_state: { status: 409, title: 'Invalid state' },

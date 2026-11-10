@@ -1936,6 +1936,7 @@ function codeHostWith(
     },
     kind: 'github',
     pullRequest: () => null,
+    pullRequestFeedback: () => ({ items: [], skipped: [], truncated: false }),
     pullRequestOutcome: (current) => ({
       commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
       pullRequest: current,
@@ -2529,4 +2530,142 @@ test('a failing worktree setup stops the ticket with its output, and retry reuse
   writeFileSync(flag, '');
   await service.command('retry proj-123');
   await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
+});
+
+// A code host whose open pull request has one review thread to address.
+function codeHostWithFeedback(sinces: Array<string>): CodeHost {
+  const found: Array<string> = [];
+  const host = codeHostWith('open', found);
+  return {
+    ...host,
+    pullRequest: (url) => ({
+      ...(host.findPullRequest('factory/proj-123') ?? noPullRequest()),
+      url,
+    }),
+    pullRequestFeedback: (_pullRequest, since) => {
+      sinces.push(since);
+      return {
+        items: [
+          {
+            comments: [
+              {
+                author: 'reviewer',
+                body: 'Name the flag after what it keeps.',
+                createdAt: '2026-10-16T11:00:00Z',
+                url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
+              },
+            ],
+            kind: 'thread',
+            line: 1,
+            path: 'change.txt',
+            threadId: 'PRRT_1',
+          },
+        ],
+        skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+        truncated: false,
+      };
+    },
+  };
+}
+
+function noPullRequest(): never {
+  throw new Error('the fake code host has no pull request');
+}
+
+test('a feedback round takes the pull request feedback back through work, review, and wrap-up', async () => {
+  const sinces: Array<string> = [];
+  const harness = await reachWrapup({ limits: { feedbackRounds: 1 } }, () =>
+    codeHostWithFeedback(sinces),
+  );
+  const { branch, db, runtime, service, work, wrapup } = harness;
+  // Not at handoff yet: no round.
+  assert.match(
+    await service.command('feedback proj-123'),
+    /proj-123 is wrapup\/active, not ready for handoff/,
+  );
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await service.syncPullRequests();
+
+  const started = await service.command('feedback proj-123 "Also mention the flag in the README."');
+  assert.match(started, /stage: work/);
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const roundWork = launchesOf(runtime, 'work')[1];
+  assert.equal(roundWork?.cwd, work.cwd);
+  assert.match(roundWork?.prompt ?? '', /Task: F1 Feedback round 1/);
+  assert.match(
+    roundWork?.prompt ?? '',
+    /This task is feedback round 1 on the ticket's pull request/,
+  );
+  // Feedback since the ticket reached handoff.
+  assert.equal(sinces.length, 1);
+  const factoryDir = String(
+    db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
+      'factory_dir'
+    ],
+  );
+  const taskFile = path.join(factoryDir, 'feedback', '1', 'task.md');
+  const task = readFileSync(taskFile, 'utf8');
+  assert.match(task, /^qa: none$/m);
+  assert.match(task, /^- \[ \] F1: review thread on `change.txt:1` \(reviewer\): Name the flag/m);
+  assert.match(task, /^- \[ \] F2: the operator's note: Also mention the flag in the README\.$/m);
+  assert.match(task, /- 1 from coderabbitai: not a collaborator/);
+
+  // A reply that does not answer every item is corrected.
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  writeFileSync(path.join(work.cwd, 'flag.txt'), 'keepFilter\n');
+  runtime.emit(roundWork?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output:
+      '## Status\n\nready_for_review\n\n## Feedback responses\n\n- F1: addressed — renamed the flag\n',
+    usage: sampleUsage(40),
+  });
+  await waitFor(() => launchesOf(runtime, 'work').length === 3);
+  const corrected = launchesOf(runtime, 'work')[2];
+  assert.match(corrected?.prompt ?? '', /## Feedback responses has no line for F2/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(corrected?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output:
+      '## Status\n\nready_for_review\n\n## Feedback responses\n\n- F1: addressed — renamed the flag\n- F2: declined — the README has no flag section yet\n',
+    usage: sampleUsage(50),
+  });
+
+  // Review sees the round, then wrap-up starts again in its own session.
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const roundReview = launchesOf(runtime, 'review')[1];
+  assert.match(roundReview?.prompt ?? '', /This task is feedback round 1/);
+  assert.match(roundReview?.prompt ?? '', /AC1: F1: review thread on `change.txt:1`/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(roundReview?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output: reviewOutput('approve', 'none', 'Checked the round.', ['AC2']),
+    usage: sampleUsage(20),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 2);
+  const roundWrapup = launchesOf(runtime, 'wrapup')[1];
+  assert.equal(roundWrapup?.sessionId, wrapup.sessionId);
+  assert.equal(roundWrapup?.mode, 'resume');
+  assert.match(roundWrapup?.prompt ?? '', /This wrap-up closes feedback round 1 \(task F1\)/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(roundWrapup?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch, ['change.txt', 'flag.txt']),
+    usage: sampleUsage(40),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  assert.equal(
+    String(db.prepare("SELECT status FROM tasks WHERE task_id = 'F1'").get()?.['status']),
+    'done',
+  );
+  // The limit is one round here.
+  assert.match(
+    await service.command('feedback proj-123 "more"'),
+    /proj-123 has had 1 feedback round, the limit \(limits\.feedbackRounds\)/,
+  );
+  await closeWhenIdle(db);
 });

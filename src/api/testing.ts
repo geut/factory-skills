@@ -8,6 +8,7 @@ const unused = (): never => {
 export const unusedCommands: FactoryCommands = {
   cancel: unused,
   complete: unused,
+  feedback: unused,
   reply: unused,
   rerun: unused,
   retry: unused,

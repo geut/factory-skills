@@ -7,6 +7,7 @@ import {
   type StageCheck,
   type StageView,
 } from '../definition.ts';
+import { feedbackRoundOf } from '../feedback.ts';
 import { childInstructions } from '../prompt.ts';
 import type { Criterion } from '../qa/criteria.ts';
 import {
@@ -24,6 +25,8 @@ export type ReviewInput = {
   displayRef: string;
   // From round 2: the blocking findings of the previous review, to verify.
   earlierFindings: Array<ReviewFinding>;
+  // The feedback round this task is, or null for a planned task.
+  feedbackRound: number | null;
   planPath: string;
   rawOutput: string;
   round: number;
@@ -217,6 +220,7 @@ export const review = defineStage<ReviewInput, 'review'>({
       diff: handoff.diff,
       displayRef: snapshot.ticket.displayRef,
       earlierFindings: earlierFindings(snapshot, task.taskId, round),
+      feedbackRound: feedbackRoundOf(task),
       planPath: snapshot.execution.planPath ?? '',
       rawOutput: handoff.output,
       round,
@@ -270,6 +274,11 @@ export const review = defineStage<ReviewInput, 'review'>({
           ? 'Verify each earlier blocking finding below and report it in Verification. Keep the same finding number for a problem that remains.'
           : 'This is the first review of this task.',
         'Read only. Do not edit files.',
+        ...(input.feedbackRound === null
+          ? []
+          : [
+              `This task is feedback round ${input.feedbackRound} on the ticket's pull request. Each acceptance criterion is a reviewer's feedback item, F1..Fn, and the diff is only this round's change. The worker's reply answers each item under ## Feedback responses: verify an addressed item in the diff, and judge whether a declined item's reason holds. An item declined without a sound reason is a Major finding.`,
+            ]),
         '',
         ...projectRules(input.rules),
         'Acceptance criteria (one Verification line each):',

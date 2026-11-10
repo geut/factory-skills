@@ -21,8 +21,13 @@ export type WorkCommand = {
   timeoutMs: number;
 };
 
-// The controller's own limit, then each stage's (see src/stages/index.ts).
-const limitSpecs = { infrastructureRetries: { default: 3, min: 0 }, ...stageLimits };
+// The controller's own limits, then each stage's (see src/stages/index.ts).
+// `feedbackRounds` bounds the feedback rounds a ticket's pull request gets.
+const limitSpecs = {
+  feedbackRounds: { default: 3, min: 0 },
+  infrastructureRetries: { default: 3, min: 0 },
+  ...stageLimits,
+};
 
 export type Limits = Record<keyof typeof limitSpecs, number>;
 
@@ -99,6 +104,9 @@ export const DEFAULT_TRACKER_UPDATES: TrackerUpdates = { checklist: true, commen
 
 // Where the repository and its pull requests live.
 export type CodeHostConfig = {
+  // `feedback.authors`: logins whose pull request feedback a feedback round
+  // takes besides collaborators', such as a review bot's.
+  feedbackAuthors: Array<string>;
   host: string;
   kind: 'github';
   owner: string;
@@ -594,14 +602,35 @@ function readCodeHost(value: unknown): CodeHostConfig | null | string {
   if (typeof title === 'string') {
     return title;
   }
+  const feedbackAuthors = readFeedbackAuthors(value['feedback']);
+  if (typeof feedbackAuthors === 'string') {
+    return feedbackAuthors;
+  }
   return {
     ...place,
+    feedbackAuthors,
     kind: 'github',
     pullRequests,
     pullRequestTitle: title.template,
     syncMinutes,
     webhookSecretEnv: secret ?? null,
   };
+}
+
+// `codeHost.feedback.authors`: GitHub logins, such as `coderabbitai`. A message
+// on error.
+function readFeedbackAuthors(value: unknown): Array<string> | string {
+  if (value === undefined) {
+    return [];
+  }
+  const authors = isRecord(value) ? (value['authors'] ?? []) : null;
+  if (
+    !Array.isArray(authors) ||
+    !authors.every((author) => typeof author === 'string' && author.trim().length > 0)
+  ) {
+    return 'FACTORY.json codeHost.feedback.authors must be a list of GitHub logins, such as ["coderabbitai"].';
+  }
+  return authors.map((author: string) => author.trim());
 }
 
 // `codeHost.pullRequestTitle`, trimmed, because GitHub trims titles. A message

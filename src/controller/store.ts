@@ -632,6 +632,8 @@ function hydrate(
     statusReasonCode: nullableText(executionRow, 'status_reason_code'),
     ticketId: ticket.id,
     version: integer(executionRow, 'version'),
+    // The column predates feedback rounds; it holds the round's start commit.
+    roundBaseSha: nullableText(executionRow, 'worktree_head_sha'),
     worktreeBaseBranch: nullableText(executionRow, 'worktree_base_branch'),
     worktreeBaseSha: nullableText(executionRow, 'worktree_base_sha'),
     worktreeBranch: nullableText(executionRow, 'worktree_branch'),
@@ -1055,8 +1057,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
        retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
-       message, message_at, created_at, updated_at, factory_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       worktree_head_sha, message, message_at, created_at, updated_at, factory_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -1079,6 +1081,7 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     execution.worktreeBaseBranch,
     execution.worktreeStatus,
     execution.worktreeBaseSha,
+    execution.roundBaseSha,
     execution.message,
     now,
     now,
@@ -1133,7 +1136,7 @@ function updateExecution(
        SET stage = ?, status = ?, version = ?, status_reason_code = ?, status_reason = ?,
            retryable = ?, status_details_json = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
            worktree_base_branch = ?, worktree_status = ?, worktree_base_sha = ?,
-           message = ?, message_at = ?, updated_at = ?,
+           worktree_head_sha = ?, message = ?, message_at = ?, updated_at = ?,
            finished_at = CASE
              WHEN ? IN ('complete', 'cancelled') THEN coalesce(finished_at, ?)
              ELSE NULL
@@ -1154,6 +1157,7 @@ function updateExecution(
       after.worktreeBaseBranch,
       after.worktreeStatus,
       after.worktreeBaseSha,
+      after.roundBaseSha,
       after.message,
       now,
       now,
@@ -1577,6 +1581,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'reply':
     case 'retry':
     case 'complete':
+    case 'feedback':
     case 'pull_request_closed':
     case 'cancel':
       return loadCurrentByTicketKey(db, event.ticketId);
@@ -1635,6 +1640,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'input_ready':
     case 'input_failed':
     case 'complete':
+    case 'feedback':
     case 'pull_request_closed':
     case 'cancel':
     case 'rerun':

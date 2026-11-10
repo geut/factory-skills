@@ -60,7 +60,7 @@ git -C "<worktree>" push -u origin "<ticket-branch>"
 gh pr list --head "<ticket-branch>" --state open --json number,url
 ```
 
-Never amend, rebase, reset, or force-push, never make a merge commit, and never switch to or change the base branch. Existing commits stay as they are. A later change, such as a validation correction or feedback on the pull request from a reviewer or another agent, goes in a new commit on top, staged the same way, then pushed.
+Never amend, rebase, reset, or force-push, never make a merge commit, and never switch to or change the base branch. Existing commits stay as they are. A later change, such as a validation correction or a feedback round's work (task `F<n>`, which the prompt names), goes in a new commit on top, staged the same way, then pushed to the same pull request, whose body you update with what the round changed.
 
 When that list is non-empty, update the open pull request instead of creating another:
 

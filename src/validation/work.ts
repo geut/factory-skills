@@ -1,8 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
+import { feedbackItemIds, feedbackResponseFailures, feedbackRoundOf } from '../stages/feedback.ts';
+import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
   errorReport,
@@ -207,12 +210,25 @@ export function commandCheck(
   };
 }
 
+// A file's text, or empty when it cannot be read.
+function readText(file: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
+  // The commit work leaves its changes uncommitted on: the ticket's base, or
+  // the start of the feedback round.
   baseSha: string;
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   cwd: string;
+  // A feedback round's item ids, which the reply must each answer.
+  feedback: { ids: Array<string>; output: string } | null;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -237,6 +253,22 @@ async function validateWork(input: {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
+  if (input.feedback !== null) {
+    const answers = feedbackResponseFailures(input.feedback.output, input.feedback.ids);
+    checks.push({
+      command: null,
+      details:
+        answers.length === 0
+          ? `${input.feedback.ids.length} feedback item(s) answered`
+          : answers.join('\n'),
+      durationMs: null,
+      exitCode: null,
+      kind: 'schema',
+      name: 'feedback responses',
+      outputExcerpt: null,
+      status: answers.length === 0 ? 'passed' : 'failed',
+    });
+  }
   for (const command of input.commands) {
     const result = await runCommand(command, input.cwd);
     if (result.spawnError !== null) {
@@ -263,19 +295,27 @@ async function validateWork(input: {
 
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
-  validate: ({ session, snapshot }) => {
-    const { factoryDir, policy, worktreeBaseSha, worktreePath } = snapshot.execution;
+  validate: ({ run, session, snapshot }) => {
+    const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
     }
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
+    const round = task === null ? null : feedbackRoundOf(task);
     return validateWork({
       allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
-      baseSha: worktreeBaseSha,
+      baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
+      feedback:
+        task === null || round === null
+          ? null
+          : {
+              ids: feedbackItemIds(readText(path.join(factoryDir, task.taskFile))),
+              output: runOutput(run),
+            },
     });
   },
   version: WORK_VALIDATOR_VERSION,

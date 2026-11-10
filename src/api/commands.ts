@@ -56,6 +56,7 @@ const accepted = {
 };
 
 const refusals: Record<Exclude<CommandOutcome, { kind: 'accepted' }>['reason'], ProblemType> = {
+  code_host_unavailable: 'code_host_unavailable',
   factory_config: 'internal_error',
   invalid_ref: 'validation_error',
   invalid_state: 'invalid_state',
@@ -170,6 +171,34 @@ const cancelTicket = defineRoute({
   tags: ['commands'],
 });
 
+const startFeedbackRound = defineRoute({
+  handler: ({ actor, body, context, headers, params }) =>
+    answer(context.commands.feedback(params.key, body?.note ?? null, options(actor, headers))),
+  method: 'POST',
+  operationId: 'startFeedbackRound',
+  path: '/v1/tickets/{key}/feedback-rounds',
+  request: {
+    body: z
+      .object({
+        note: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .meta({ description: "The operator's own feedback, addressed as the last item." }),
+      })
+      .optional()
+      .meta({ id: 'StartFeedbackRound' }),
+    headers: CommandHeaders,
+    params: TicketParams,
+  },
+  responses: accepted,
+  scope: 'act',
+  summary:
+    "Take the open pull request's new feedback back through work, review, and wrap-up on the same branch. Only at ready_for_handoff.",
+  tags: ['commands'],
+});
+
 const rerunTicket = defineRoute({
   handler: async ({ actor, context, headers, params }) =>
     answer(await context.commands.rerun(params.key, options(actor, headers))),
@@ -204,6 +233,7 @@ export const commandRoutes = [
   retryTicket,
   completeTicket,
   cancelTicket,
+  startFeedbackRound,
   rerunTicket,
   stopRun,
 ];

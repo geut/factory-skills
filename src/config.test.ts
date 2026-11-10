@@ -109,6 +109,21 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
   });
   assert.equal(parsed.config.codeHost?.pullRequests, true);
   assert.equal(pullRequestsAllowed(parsed.config), true);
+  // Feedback rounds take collaborators' feedback, and listed authors' too.
+  assert.deepEqual(parsed.config.codeHost?.feedbackAuthors, []);
+  const listed = parseFactoryConfig({
+    codeHost: {
+      feedback: { authors: [' coderabbitai ', 'copilot-pull-request-reviewer'] },
+      kind: 'github',
+      owner: 'geut',
+      repo: 'factory-skills',
+    },
+    models,
+  });
+  assert.deepEqual(listed.kind === 'ok' ? listed.config.codeHost?.feedbackAuthors : null, [
+    'coderabbitai',
+    'copilot-pull-request-reviewer',
+  ]);
 
   const bare = parseFactoryConfig({ models });
   assert.equal(bare.kind === 'ok' && pullRequestsAllowed(bare.config), true);
@@ -119,6 +134,9 @@ test('tracker and codeHost parse, and pull requests default to on', () => {
     { tracker: { kind: 'github', owner: 'a', repo: 'b', status: { done: { label: 'x' } } } },
     { codeHost: { kind: 'github', owner: 'a', pullRequests: 'yes', repo: 'b' } },
     { codeHost: { kind: 'github', owner: 'a', repo: 'b', webhookSecretEnv: 'lower case' } },
+    { codeHost: { feedback: { authors: 'coderabbitai' }, kind: 'github', owner: 'a', repo: 'b' } },
+    { codeHost: { feedback: { authors: [''] }, kind: 'github', owner: 'a', repo: 'b' } },
+    { codeHost: { feedback: [], kind: 'github', owner: 'a', repo: 'b' } },
   ]) {
     assert.equal(parseFactoryConfig({ models, ...bad }).kind, 'error', JSON.stringify(bad));
   }

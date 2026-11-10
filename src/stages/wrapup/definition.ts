@@ -1,6 +1,7 @@
 import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
+import { feedbackRounds } from '../feedback.ts';
 import { childInstructions, childToolList } from '../prompt.ts';
 import { formatFinding, latestReviews } from '../review/parse.ts';
 import type { IssueBox } from './checklist.ts';
@@ -35,6 +36,8 @@ export type WrapupInput = {
   contextPath: string | null;
   displayRef: string;
   factoryRoot: string;
+  // The feedback round this wrap-up closes, or null for the first wrap-up.
+  feedbackRound: number | null;
   // The issue's open checklist items, B1..Bn.
   issueBoxes: Array<IssueBox>;
   issueBoxesUnread: string | null;
@@ -126,6 +129,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
       factoryRoot: factoryRootOf(execution.factoryDir),
+      feedbackRound: feedbackRounds(snapshot.tasks) === 0 ? null : feedbackRounds(snapshot.tasks),
       issueBoxes: prepared.boxes,
       issueBoxesUnread: prepared.boxesUnread,
       minorFindings: notes.findings,
@@ -250,6 +254,11 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         input.pullRequests
           ? `codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD. Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it; pass the title to gh in single quotes.`
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
+        ...(input.feedbackRound === null
+          ? []
+          : [
+              `This wrap-up closes feedback round ${input.feedbackRound} (task F${input.feedbackRound}) on the open pull request. Commit the round's changes as a new commit on top of the branch and push it to the same pull request: no amend, rebase, or force-push, and no new pull request. Update the pull request's body to say what the round changed, keep its title, and keep ## Files listing every path the ticket changes.`,
+            ]),
       ].join('\n'),
   },
   runBaseline: (prepared) => prepared.baseline,

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
+import { prepareFeedbackRound } from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
@@ -42,7 +43,14 @@ import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
-import { markPullRequestSynced, recordCommit, recordPullRequest, recordReview } from './facts.ts';
+import {
+  lastHandoffAt,
+  markPullRequestSynced,
+  pullRequestUrlOf,
+  recordCommit,
+  recordPullRequest,
+  recordReview,
+} from './facts.ts';
 import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
@@ -76,6 +84,7 @@ export type { TicketDetail, TicketRunRow } from './view.ts';
 
 // Why the API refused a command, before anything changed.
 export type CommandRefusal =
+  | 'code_host_unavailable'
   | 'factory_config'
   | 'invalid_ref'
   | 'invalid_state'
@@ -102,6 +111,9 @@ export type FactoryCommands = {
   // Ends a ticket for good; its worktree, branch, and pull request stay.
   cancel: (key: string, reason: string | null, options: CommandOptions) => CommandOutcome;
   complete: (key: string, options: CommandOptions) => CommandOutcome;
+  // Takes the open pull request's new feedback back through work, review, and
+  // wrap-up on the same branch, as task F<n>.
+  feedback: (key: string, note: string | null, options: CommandOptions) => CommandOutcome;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
@@ -686,6 +698,54 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
+  function feedbackCommitted(
+    snapshot: FactorySnapshot,
+    note: string | null,
+    options: CommandOptions,
+  ): Committed {
+    const prepared = prepareFeedbackRound({
+      codeHost: codeHost(),
+      note,
+      pullRequestUrl: pullRequestUrlOf(db, snapshot.execution.id),
+      since: lastHandoffAt(db, snapshot.execution.id),
+      snapshot,
+    });
+    if ('reason' in prepared) {
+      return { kind: 'refused', message: prepared.message, reason: prepared.reason };
+    }
+    const key = `feedback:${snapshot.ticket.id}:${prepared.round}`;
+    const applied = apply(
+      {
+        idempotencyKey: key,
+        items: prepared.items,
+        kind: 'feedback',
+        round: prepared.round,
+        skipped: prepared.skipped,
+        startHead: prepared.startHead,
+        taskFile: prepared.taskFile,
+        ticketId: snapshot.ticket.id,
+        title: prepared.title,
+      },
+      dedupe(options, key),
+      'command',
+      options.actor,
+    );
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  async function feedback(ref: string, note: string | null): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    const result = feedbackCommitted(snapshot, note, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
+    await drain();
+    return report(result.applied, ref);
+  }
+
   async function start(source: TicketSource): Promise<string> {
     const result = await startCommitted(source, piCommand);
     if (result.kind === 'refused') {
@@ -930,6 +990,8 @@ export function createFactoryService(input: {
     cancel: (key, reason, options) =>
       byKey(key, (snapshot) => cancelCommitted(snapshot, reason, options)),
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
+    feedback: (key, note, options) =>
+      byKey(key, (snapshot) => feedbackCommitted(snapshot, note, options)),
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
     rerun: async (key, options) => {
@@ -994,6 +1056,8 @@ export function createFactoryService(input: {
           return retry(parsed.ref);
         case 'complete':
           return complete(parsed.ref);
+        case 'feedback':
+          return feedback(parsed.ref, parsed.note);
         case 'stop':
           return stopAgent(parsed.ref);
         case 'cancel':

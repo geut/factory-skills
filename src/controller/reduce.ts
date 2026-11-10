@@ -22,7 +22,8 @@ import {
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
-import { nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
+import { feedbackRounds, feedbackTaskId } from '../stages/feedback.ts';
+import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
@@ -769,6 +770,7 @@ function reduceStart(
       planPath: null,
       policy: event.policy,
       retry: null,
+      roundBaseSha: null,
       stage: 'plan',
       status: 'queued',
       statusReason: null,
@@ -912,6 +914,19 @@ function sessionOf(
   taskId: TaskId | null,
 ): SessionRecord | null {
   return snapshot.sessions.find((item) => item.stage === stage && item.taskId === taskId) ?? null;
+}
+
+// Whether a closing stage, whose session already ran, starts again: once for
+// each feedback round, whose task went through the per-task stages since.
+function startsAgain(snapshot: FactorySnapshot, session: SessionRecord): boolean {
+  if (!flow.closing.some((stage) => stage === session.stage)) {
+    return false;
+  }
+  const starts = snapshot.runs.filter(
+    (run) =>
+      run.sessionId === session.id && (run.purpose === 'initial' || run.purpose === 'reentry'),
+  ).length;
+  return starts < 1 + feedbackRounds(snapshot.tasks);
 }
 
 function latestTerminalRun(snapshot: FactorySnapshot, session: SessionRecord): RunRecord | null {
@@ -1204,6 +1219,11 @@ function handOff(
       notice,
       '',
       `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
+      ...(pullRequestUrl === null
+        ? []
+        : [
+            `To address feedback on the pull request, run /factory feedback ${snapshot.ticket.commandRef} ["note"].`,
+          ]),
     ].join('\n'),
     runId: run.id,
     status: 'open',
@@ -1363,7 +1383,7 @@ function inputReady(
   const title = task?.title ?? snapshot.ticket.title;
   const forTask = task === null ? '' : ` for task ${task.taskId}`;
   if (action.purpose === 'initial') {
-    if (session !== null && !definition.rounds) {
+    if (session !== null && !definition.rounds && !startsAgain(snapshot, session)) {
       return unchanged(existing, `${definition.label} already started.`);
     }
     return finish(
@@ -1594,6 +1614,51 @@ export function reduce(input: {
         retry: { kind: 'input' },
       });
       return finish(snapshot, event.message);
+    }
+    case 'feedback': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'Feedback does not match the current ticket.');
+      }
+      if (snapshot.execution.status !== 'ready_for_handoff') {
+        return reject(
+          existing,
+          `${snapshot.ticket.displayRef} is ${snapshot.execution.stage}/${snapshot.execution.status}, not ready for handoff.`,
+        );
+      }
+      const rounds = feedbackRounds(snapshot.tasks);
+      const limit = snapshot.execution.policy.limits.feedbackRounds;
+      if (rounds >= limit) {
+        return reject(
+          existing,
+          `${snapshot.ticket.displayRef} has had ${rounds} feedback round${rounds === 1 ? '' : 's'}, the limit (limits.feedbackRounds).`,
+        );
+      }
+      if (event.round !== rounds + 1) {
+        return reject(existing, `Feedback round ${event.round} is not the next round.`);
+      }
+      resolveOpen(snapshot);
+      snapshot.tasks.push({
+        blockedBy: [],
+        ordinal: Math.max(0, ...snapshot.tasks.map((task) => task.ordinal)) + 1,
+        specHash: null,
+        stage: null,
+        status: 'pending',
+        summaries: {},
+        taskFile: event.taskFile,
+        taskId: feedbackTaskId(event.round),
+        title: event.title,
+      });
+      snapshot.execution.roundBaseSha = event.startHead;
+      trackerUpdate(snapshot, ids, {
+        comment: `The factory started feedback round ${event.round} on the pull request.`,
+        issueStatus: 'in_progress',
+        key: `feedback:${event.round}`,
+        update: 'started',
+      });
+      return finish(
+        snapshot,
+        `Feedback round ${event.round} for ${snapshot.ticket.displayRef}: ${event.items} item${event.items === 1 ? '' : 's'}, ${event.skipped} skipped. ${begin(snapshot, nextStep(snapshot, 'plan', null), ids, null)}`,
+      );
     }
     case 'complete': {
       if (event.ticketId !== snapshot.ticket.id) {

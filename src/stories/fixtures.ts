@@ -78,6 +78,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         worktreeSetup: [],
       },
       retry: null,
+      roundBaseSha: null,
       stage: 'plan',
       status: 'active',
       statusReason: null,

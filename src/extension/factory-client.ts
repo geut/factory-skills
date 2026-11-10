@@ -153,6 +153,16 @@ export function createFactoryClient(input: {
         return `No factory execution matches ${parsed.ref}.`;
       }
       sent = await post(url, `/v1/tickets/${key}/reruns`, undefined);
+    } else if (parsed.kind === 'feedback') {
+      const key = keyFor(open, parsed.ref);
+      if (key === null) {
+        return `No factory execution matches ${parsed.ref}.`;
+      }
+      sent = await post(
+        url,
+        `/v1/tickets/${key}/feedback-rounds`,
+        parsed.note === null ? undefined : { note: parsed.note },
+      );
     } else if (parsed.kind === 'cancel') {
       const key = keyFor(open, parsed.ref);
       if (key === null) {
