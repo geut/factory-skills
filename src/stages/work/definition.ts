@@ -1,7 +1,7 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
 import { runsForTask } from '../flow.ts';
 import { workerSummary } from '../output.ts';
-import { childInstructions, childToolList } from '../prompt.ts';
+import { childInstructions, childToolList, END_TO_END } from '../prompt.ts';
 
 // What work's input preparation found in the factory files.
 export type WorkPrepared = {
@@ -116,8 +116,9 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         `Tools: ${childToolList(tools)}`,
         `Work only in ${input.worktree}.`,
         'Leave the work uncommitted.',
+        END_TO_END,
         input.qaRuns
-          ? "QA runs for this task: write unit and component tests, keep the existing end-to-end suite passing, and add no end-to-end tests for this task's acceptance criteria."
+          ? "QA runs for this task and owns its end-to-end tests: write unit tests (and component tests where the project has them), keep the existing end-to-end suite passing, and leave every end-to-end test of this task's acceptance criteria, API requests included, to QA."
           : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',

@@ -90,7 +90,7 @@ The independently observable result this task delivers.
 
 ## Scope
 
-What belongs in this task and what explicitly does not.
+What belongs in this task and what explicitly does not. For a `qa: e2e` task when FACTORY.json enables QA, the end-to-end tests of the task's criteria (browser, API, job or CLI) belong to QA: Scope names the code and the unit tests the worker changes, and leaves those tests out.
 
 ## Acceptance criteria
 
@@ -101,7 +101,7 @@ One behavior per criterion. Phrase it as an outcome a user can see in the runnin
 The frontmatter holds exactly these three fields, and all three are required:
 
 - `type`: one of `bug`, `feature`, `performance`, `refactor`, `investigation`.
-- `qa`: whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the product: a page, a component's look or state, an HTTP response, a CLI's output. QA then proves it at the cheapest layer, not necessarily end to end. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. A `none` task still lists its acceptance criteria.
+- `qa`: whether the QA stage runs for the task when FACTORY.json enables it. Use `e2e` when at least one criterion is observable in the product: a page, a component's look or state, an HTTP response, a CLI's output. QA then proves it at the cheapest layer that runs the real code: a browser test, a component test or story, or for a project without a UI a request through its test client, a job run, or a command run. `e2e` means from the outside, not through a browser. Use `none` when every criterion is internal, such as a data layer change covered by unit tests, documentation, an ADR, or a skill. The task then goes from work straight to review. A `none` task still lists its acceptance criteria.
 - `blocked_by`: the task files this one waits for, as a list of their numbers, such as `["01", "02"]`, or `[]` when it waits for none. A number that matches no task file, the task's own number, or tasks that wait on each other fail plan validation.
 
 Do not add other fields. The controller tracks each task's status in its own store, never in the file.

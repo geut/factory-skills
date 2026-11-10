@@ -37,7 +37,7 @@ Keep this sketch in the session unless it changes the durable plan. Do not scaff
 
 Tests should exercise public behavior, not mirror implementation. For a behavior that cannot reasonably begin with a failing test, state why and use the closest reliable validation. Do not add test-only production interfaces.
 
-The prompt says whether QA runs for this task. When it does, QA owns the end-to-end tests for the task's acceptance criteria: write unit and component tests (and stories where the project has them), keep the existing end-to-end suite passing, and add no end-to-end tests for the task's criteria. When QA does not run, add or update end-to-end coverage for the task's user stories when the project has a viable harness; if automation is unavailable or disproportionately expensive, record the reason and a concrete human verification path in the task.
+An end-to-end test proves a criterion from outside the code: through a browser, an HTTP API (a request through the framework's test client), a job, or a CLI. The prompt says whether QA runs for this task. When it does, QA owns the end-to-end tests for the task's acceptance criteria: write unit tests (and component tests and stories where the project has them), keep the existing end-to-end suite passing, and leave every from-the-outside test of the task's criteria, API requests included, to QA. When QA does not run, add or update end-to-end coverage for the task's user stories when the project has a viable harness; if automation is unavailable or disproportionately expensive, record the reason and a concrete human verification path in the task.
 
 Run focused checks while working, then the relevant broader suite once. Do not spend budget repeatedly running an unchanged full suite.
 

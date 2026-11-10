@@ -36,7 +36,7 @@ The reviewer returns the `factory.review.v5` template. Its `## Verification` sec
 
 Launch failures and crashes use `limits.infrastructureRetries` and never spend a correction or a review round.
 
-QA is an optional stage between work and review, on when `FACTORY.json` sets `stages.qa.enabled` and lists at least one `stages.qa.commands`. It reads the task file's `## Acceptance criteria` (AC1..ACn) and launches the `factory-qa` agent on `models.work` in the worktree. QA owns the task's end-to-end tests: the work prompt says so, and the worker writes unit and component tests instead. The agent proves each criterion a user can observe at the cheapest layer that runs the real code (an end-to-end test for a user path through the running app, a component test or story for a component's look or state), extending the feature's existing spec rather than a per-task file, lists the others in the ledger with what covers them, and `test-plan.md`, `ledger.md`, and `screenshots/` under `tickets/<slug>/qa/<task>/`. The controller checks that every criterion is tested or in the ledger with a reason and that each screenshot exists, then runs the QA commands itself:
+QA is an optional stage between work and review, on when `FACTORY.json` sets `stages.qa.enabled` and lists at least one `stages.qa.commands`. It reads the task file's `## Acceptance criteria` (AC1..ACn) and launches the `factory-qa` agent on `models.work` in the worktree. QA owns the task's end-to-end tests, the ones that prove a criterion from outside the code: through a browser, an HTTP API, a job, or a CLI. The work prompt says so, and the worker writes unit and component tests instead. The agent proves each criterion a user can observe at the cheapest layer that runs the real code (a browser end-to-end test for a user path through the running app, a component test or story for a component's look or state, a request through the framework's test client for an API, a synchronous run for a job, a run of the command for a CLI; see [the API reference](skills/factory-qa/references/api.md)), extending the feature's existing spec rather than a per-task file, lists the others in the ledger with what covers them, and `test-plan.md`, `ledger.md`, and `screenshots/` under `tickets/<slug>/qa/<task>/`. The controller checks that every criterion is tested or in the ledger with a reason and that each screenshot exists, then runs the QA commands itself:
 
 - missing or incomplete QA output resumes the QA agent with the failures, up to `limits.qaCorrections` (default 2) per round;
 - a failing QA command returns the task to work with the failure; work's validation runs again, then QA again. `limits.qaRounds` (default 3) bounds the rounds; at the limit the ticket pauses and `reply` resumes the QA agent;
@@ -45,7 +45,18 @@ QA is an optional stage between work and review, on when `FACTORY.json` sets `st
 
 Every stage after work is given the worker's latest reply for the task, in every round. When a later round's reply is empty, the last reply with text stands in, marked as such.
 
-With QA on, the plan must give every task at least one acceptance criterion. A task file opts out with `qa: none` in its frontmatter when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. With `qa: e2e`, QA runs.
+For a service without a browser harness, the QA command is the project's test runner, and the screenshots stay `none`:
+
+```json
+"stages": {
+  "qa": {
+    "enabled": true,
+    "commands": [{ "name": "api", "argv": ["uv", "run", "pytest", "tests/api", "-x"], "timeoutMs": 300000 }]
+  }
+}
+```
+
+With QA on, the plan must give every task at least one acceptance criterion. A task file opts out with `qa: none` in its frontmatter when no criterion is observable in the running product (a data layer change, docs, an ADR): the task goes from work straight to review, and its QA summary reads `skipped`. With `qa: e2e`, QA runs, for an API, job or CLI criterion too: `e2e` means from the outside, not through a browser.
 
 After the last approval, the controller checks the wrap-up input in code: every task is done with an approving review, the plan and task files exist, the worktree is ready on its branch, and no other child runs. It records the worktree, refs, and factory files as a baseline, then launches the `factory-wrapup` agent on `models.work` in the worktree. A failed check pauses the ticket; `retry` checks again.
 

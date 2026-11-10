@@ -2,6 +2,11 @@
 
 const handshakeTools = ['caller_ping', 'subagent_done'] as const;
 
+// What work and QA mean by an end-to-end test, the kind QA owns when it runs.
+// A project without a UI has one too: its API, jobs, or CLI are its outside.
+export const END_TO_END =
+  "An end-to-end test proves a criterion from outside the code: through a browser, an HTTP API (one request through the framework's test client), a job run synchronously, or a CLI run.";
+
 export function childToolList(tools: ReadonlyArray<string>): string {
   return [...tools, ...handshakeTools].join(',');
 }

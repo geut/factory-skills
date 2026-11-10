@@ -3,7 +3,7 @@ import type { Policy } from '../../domain.ts';
 import type { ValidationCheck, ValidationReport } from '../../validation/report.ts';
 import { defineStage, type LimitSpec, type SettingsResult } from '../definition.ts';
 import { runOutput, workerSummary } from '../output.ts';
-import { childInstructions, childToolList } from '../prompt.ts';
+import { childInstructions, childToolList, END_TO_END } from '../prompt.ts';
 import type { Criterion } from './criteria.ts';
 
 // QA failed either because its own output is incomplete (a correction) or
@@ -258,9 +258,10 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
         'Worker summary:',
         input.workerSummary.length > 0 ? input.workerSummary : 'none',
         '',
-        'Prove each criterion a user can observe at the cheapest layer that runs the real code; use end-to-end tests for user paths through the running app. Put every other criterion in the ledger with the check or unit test that covers it.',
+        END_TO_END,
+        "Prove each criterion a user can observe at the cheapest layer that runs the real code: a browser end-to-end test for a user path through the running app; a component test or story for a component's look or state; a test-client request, a synchronous job run, or a CLI run for an API, a job, or a command. Put every other criterion in the ledger with the check or unit test that covers it.",
         'Search the existing tests first: a criterion an existing test already proves gets that test in the plan, not a new one. Extend the existing spec for the feature rather than starting a file for this task, and name a new file after the feature or user flow, not the ticket or task.',
-        `Write ${input.dir}/test-plan.md with a | AC | Test | Screenshot | row per proven criterion, citing the end-to-end test, component test, or story that proves it; screenshot paths are relative to the QA directory, under screenshots/.`,
+        `Write ${input.dir}/test-plan.md with a | AC | Test | Screenshot | row per proven criterion, citing the end-to-end test, component test, or story that proves it; screenshot paths are relative to the QA directory, under screenshots/, and a criterion with nothing on screen has none.`,
         `Write ${input.dir}/ledger.md with a "- ACn: reason" line for every criterion the tests do not prove, and for any other gap.`,
         'The controller runs these commands in the worktree and fails QA when one fails:',
         ...input.commands.map((command) => `- ${command.name}: ${command.argv.join(' ')}`),
