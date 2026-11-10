@@ -44,9 +44,9 @@ export type CodeHost = {
   kind: string;
   // Null when no pull request exists at `url`. Throws on infrastructure errors.
   pullRequest: (url: string) => PullRequestInfo | null;
-  // The feedback posted on `pullRequest` after `since`, the factory's last
-  // push, sorted into what a feedback round addresses and what it skips.
-  pullRequestFeedback: (pullRequest: PullRequestInfo, since: string) => PullRequestFeedback;
+  // The feedback posted on `pullRequest` since its head commit, the factory's
+  // last push, sorted into what a feedback round addresses and what it skips.
+  pullRequestFeedback: (pullRequest: PullRequestInfo) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
@@ -65,7 +65,8 @@ export function codeHostRepo(config: Pick<CodeHostConfig, 'owner' | 'repo'>): st
 export type GhJson = (args: Array<string>) => unknown;
 
 export const ghJson: GhJson = (args) => {
-  const result = spawnSync('gh', args, { encoding: 'utf8' });
+  // A pull request's feedback can run past spawnSync's 1 MiB default.
+  const result = spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'gh failed').trim());
   }
@@ -202,21 +203,22 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
         throw error;
       }
     },
-    pullRequestFeedback: (pullRequest, since) => {
+    pullRequestFeedback: (pullRequest) => {
       const [owner, name] = repoOf(pullRequest.url).split('/');
       const payload = gh([
         'api',
         'graphql',
         '-f',
         `query=${FEEDBACK_QUERY}`,
-        '-F',
+        // -f keeps a name such as `2048` a string; -F types the number.
+        '-f',
         `owner=${owner ?? ''}`,
-        '-F',
+        '-f',
         `repo=${name ?? ''}`,
         '-F',
         `number=${pullRequest.number}`,
       ]);
-      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], since });
+      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [] });
     },
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;

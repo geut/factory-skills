@@ -227,8 +227,9 @@ async function validateWork(input: {
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   cwd: string;
-  // A feedback round's item ids, which the reply must each answer.
-  feedback: { ids: Array<string>; output: string } | null;
+  // A feedback round's item ids, which its replies must each answer, and the
+  // replies of the round's work session so far, oldest first.
+  feedback: { ids: Array<string>; outputs: Array<string> } | null;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -254,7 +255,7 @@ async function validateWork(input: {
   }
   checks.push(commit);
   if (input.feedback !== null) {
-    const answers = feedbackResponseFailures(input.feedback.output, input.feedback.ids);
+    const answers = feedbackResponseFailures(input.feedback.outputs, input.feedback.ids);
     checks.push({
       command: null,
       details:
@@ -314,7 +315,10 @@ export const workValidator: Validator<'work'> = {
           ? null
           : {
               ids: feedbackItemIds(readText(path.join(factoryDir, task.taskFile))),
-              output: runOutput(run),
+              outputs: snapshot.runs
+                .filter((item) => item.sessionId === session.id && item.sequence <= run.sequence)
+                .toSorted((left, right) => left.sequence - right.sequence)
+                .map((item) => (item.id === run.id ? runOutput(run) : runOutput(item))),
             },
     });
   },

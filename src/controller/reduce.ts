@@ -22,7 +22,7 @@ import {
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
-import { feedbackRounds, feedbackTaskId } from '../stages/feedback.ts';
+import { feedbackRoundRefusal, feedbackRounds, feedbackTaskId } from '../stages/feedback.ts';
 import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
@@ -1619,20 +1619,11 @@ export function reduce(input: {
       if (event.ticketId !== snapshot.ticket.id) {
         return reject(existing, 'Feedback does not match the current ticket.');
       }
-      if (snapshot.execution.status !== 'ready_for_handoff') {
-        return reject(
-          existing,
-          `${snapshot.ticket.displayRef} is ${snapshot.execution.stage}/${snapshot.execution.status}, not ready for handoff.`,
-        );
+      const refusal = feedbackRoundRefusal(snapshot);
+      if (refusal !== null) {
+        return reject(existing, refusal);
       }
       const rounds = feedbackRounds(snapshot.tasks);
-      const limit = snapshot.execution.policy.limits.feedbackRounds;
-      if (rounds >= limit) {
-        return reject(
-          existing,
-          `${snapshot.ticket.displayRef} has had ${rounds} feedback round${rounds === 1 ? '' : 's'}, the limit (limits.feedbackRounds).`,
-        );
-      }
       if (event.round !== rounds + 1) {
         return reject(existing, `Feedback round ${event.round} is not the next round.`);
       }

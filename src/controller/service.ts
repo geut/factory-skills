@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
-import { prepareFeedbackRound } from '../actions/feedback-round.ts';
+import { prepareFeedbackRound, writeFeedbackTask } from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
@@ -44,7 +44,6 @@ import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import {
-  lastHandoffAt,
   markPullRequestSynced,
   pullRequestUrlOf,
   recordCommit,
@@ -707,13 +706,13 @@ export function createFactoryService(input: {
       codeHost: codeHost(),
       note,
       pullRequestUrl: pullRequestUrlOf(db, snapshot.execution.id),
-      since: lastHandoffAt(db, snapshot.execution.id),
       snapshot,
     });
     if ('reason' in prepared) {
       return { kind: 'refused', message: prepared.message, reason: prepared.reason };
     }
-    const key = `feedback:${snapshot.ticket.id}:${prepared.round}`;
+    // Per execution: a rerun's round 1 is a new round, not a repeat.
+    const key = `feedback:${snapshot.execution.id}:${prepared.round}`;
     const applied = apply(
       {
         idempotencyKey: key,
@@ -730,6 +729,11 @@ export function createFactoryService(input: {
       'command',
       options.actor,
     );
+    // Written once the round is accepted, before any agent can read it: this
+    // runs synchronously after the commit, and agents launch on drain.
+    if (applied.response.kind !== 'rejected') {
+      writeFeedbackTask(snapshot.execution.factoryDir, prepared);
+    }
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 

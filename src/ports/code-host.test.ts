@@ -144,8 +144,8 @@ function node(input: { association?: string; at: string; author?: string | null;
   };
 }
 
-function page<T>(nodes: Array<T>, hasNextPage = false) {
-  return { nodes, pageInfo: { hasNextPage } };
+function page<T>(nodes: Array<T>, hasPreviousPage = false) {
+  return { nodes, pageInfo: { hasPreviousPage } };
 }
 
 const openPullRequest: PullRequestInfo = {
@@ -169,12 +169,14 @@ const feedbackPayload = {
   data: {
     repository: {
       pullRequest: {
+        // The head commit, the factory's last push: what came after is new.
         comments: page([
           node({ at: after, body: 'Please also update the README.' }),
           node({ at: before, body: 'An old comment before the push.' }),
           node({ association: 'NONE', at: after, author: 'passerby', body: 'Rewrite it in Rust.' }),
           node({ at: after, body: 'Addressed. <!-- factory:feedback:1:F1 -->' }),
         ]),
+        commits: { nodes: [{ commit: { committedDate: pushed } }] },
         reviews: page([
           {
             ...node({ at: after, body: 'Two things to fix.' }),
@@ -193,6 +195,7 @@ const feedbackPayload = {
             comments: page([
               node({ at: before, body: 'Is this name right?' }),
               node({ at: after, body: 'It still reads oddly.' }),
+              node({ association: 'NONE', at: after, author: 'outsider', body: 'Use Rust.' }),
             ]),
             id: 'PRRT_open',
             isResolved: false,
@@ -240,8 +243,11 @@ const feedbackPayload = {
 test('feedback since the last push: unresolved threads, review bodies and comments from collaborators', () => {
   const calls: Array<string> = [];
   const host = createGithubCodeHost(config, gh({ 'api graphql': feedbackPayload }, calls));
-  const feedback = host.pullRequestFeedback(openPullRequest, pushed);
-  assert.match(calls[0] ?? '', /owner=geut -F repo=factory-skills -F number=7$/);
+  const feedback = host.pullRequestFeedback(openPullRequest);
+  // Names stay strings (-f); the number is typed (-F).
+  assert.match(calls[0] ?? '', /-f owner=geut -f repo=factory-skills -F number=7$/);
+  assert.match(calls[0] ?? '', /reviewThreads\(last: 100\)/);
+  assert.equal(feedback.since, pushed);
   assert.deepEqual(
     feedback.items.map((item) =>
       item.kind === 'thread'
@@ -259,7 +265,8 @@ test('feedback since the last push: unresolved threads, review bodies and commen
   // empty review bodies, and comments from before the push are left out.
   assert.deepEqual(
     feedback.skipped.map((item) => `${item.kind} ${item.author}`),
-    ['thread coderabbitai', 'review coderabbitai', 'comment passerby'],
+    // A thread's new comment from someone who doesn't count is skipped too.
+    ['thread outsider', 'thread coderabbitai', 'review coderabbitai', 'comment passerby'],
   );
   assert.equal(feedback.truncated, false);
 });
@@ -270,10 +277,10 @@ test('a listed bot counts, whichever way its login is spelled', () => {
       { ...config, feedbackAuthors: [listed] },
       gh({ 'api graphql': feedbackPayload }),
     );
-    const feedback = host.pullRequestFeedback(openPullRequest, pushed);
+    const feedback = host.pullRequestFeedback(openPullRequest);
     assert.deepEqual(
       feedback.skipped.map((item) => item.author),
-      ['passerby'],
+      ['outsider', 'passerby'],
       listed,
     );
     assert.equal(feedback.items.length, 5);
@@ -282,12 +289,12 @@ test('a listed bot counts, whichever way its login is spelled', () => {
 
 test('a feedback list longer than one page is flagged, and an unexpected payload fails', () => {
   const long = structuredClone(feedbackPayload);
-  long.data.repository.pullRequest.comments.pageInfo.hasNextPage = true;
+  long.data.repository.pullRequest.comments.pageInfo.hasPreviousPage = true;
   const host = createGithubCodeHost(config, gh({ 'api graphql': long }));
-  assert.equal(host.pullRequestFeedback(openPullRequest, pushed).truncated, true);
+  assert.equal(host.pullRequestFeedback(openPullRequest).truncated, true);
   const broken = createGithubCodeHost(config, gh({ 'api graphql': { data: null } }));
   assert.throws(
-    () => broken.pullRequestFeedback(openPullRequest, pushed),
+    () => broken.pullRequestFeedback(openPullRequest),
     /Unexpected pull request feedback from GitHub/,
   );
 });

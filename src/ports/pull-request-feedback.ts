@@ -35,37 +35,43 @@ export type SkippedFeedback = {
 
 export type PullRequestFeedback = {
   items: Array<FeedbackItem>;
+  // What "new" meant: when the pull request's head commit was made, the
+  // factory's last push; null when GitHub reported no commit.
+  since: string | null;
   skipped: Array<SkippedFeedback>;
-  // Whether a list was longer than one page, so some feedback was not read.
+  // Whether a list was longer than one page, so its oldest items were not read.
   truncated: boolean;
 };
 
+// The newest items of each list: GitHub orders them oldest first, and a round
+// wants what came last.
 const PAGE = 100;
 
 // One query reads all three lists for a pull request.
 export const FEEDBACK_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: ${PAGE}) {
-        pageInfo { hasNextPage }
+      commits(last: 1) { nodes { commit { committedDate } } }
+      reviewThreads(last: ${PAGE}) {
+        pageInfo { hasPreviousPage }
         nodes {
           id
           isResolved
           path
           line
           originalLine
-          comments(first: ${PAGE}) {
-            pageInfo { hasNextPage }
+          comments(last: ${PAGE}) {
+            pageInfo { hasPreviousPage }
             nodes { author { login } authorAssociation body createdAt url }
           }
         }
       }
-      reviews(first: ${PAGE}) {
-        pageInfo { hasNextPage }
+      reviews(last: ${PAGE}) {
+        pageInfo { hasPreviousPage }
         nodes { author { login } authorAssociation body state submittedAt url }
       }
-      comments(first: ${PAGE}) {
-        pageInfo { hasNextPage }
+      comments(last: ${PAGE}) {
+        pageInfo { hasPreviousPage }
         nodes { author { login } authorAssociation body createdAt url }
       }
     }
@@ -74,7 +80,7 @@ export const FEEDBACK_QUERY = `query($owner: String!, $repo: String!, $number: I
 
 // A deleted account has no author.
 const author = z.object({ login: z.string() }).nullable();
-const pageInfo = z.object({ hasNextPage: z.boolean() });
+const pageInfo = z.object({ hasPreviousPage: z.boolean() });
 
 const commentNode = z.object({
   author,
@@ -89,6 +95,9 @@ const feedbackResponse = z.object({
     repository: z.object({
       pullRequest: z.object({
         comments: z.object({ nodes: z.array(commentNode), pageInfo }),
+        commits: z.object({
+          nodes: z.array(z.object({ commit: z.object({ committedDate: z.string() }) })),
+        }),
         reviews: z.object({
           nodes: z.array(
             z.object({
@@ -153,17 +162,20 @@ function authorOf(node: { author: { login: string } | null }): string {
 }
 
 // Sorts a pull request's feedback into what the round addresses and what it
-// skips. Only what was posted after `since`, the factory's last push, is new.
+// skips. Only what was posted after the head commit, the factory's last push,
+// is new: wrap-up pushes before it hands off, and a review bot answers a push
+// within minutes.
 export function feedbackFrom(
   payload: unknown,
-  options: { authors: ReadonlyArray<string>; since: string },
+  options: { authors: ReadonlyArray<string> },
 ): PullRequestFeedback {
   const parsed = feedbackResponse.safeParse(payload);
   if (!parsed.success) {
     throw new Error(`Unexpected pull request feedback from GitHub: ${parsed.error.message}`);
   }
   const pull = parsed.data.data.repository.pullRequest;
-  const since = Date.parse(options.since);
+  const head = pull.commits.nodes.at(-1)?.commit.committedDate ?? null;
+  const since = head === null ? Number.NEGATIVE_INFINITY : Date.parse(head);
   const isNew = (at: string | null) => at !== null && Date.parse(at) > since;
   const counts = (node: { author: { login: string } | null; authorAssociation: string }) =>
     countsAsReviewer(
@@ -191,6 +203,13 @@ export function feedbackFrom(
       );
       continue;
     }
+    // New comments from people who don't count stay out of the item, and are
+    // listed as skipped like any other.
+    skipped.push(
+      ...fresh
+        .filter((node) => !counts(node))
+        .map((node) => ({ author: authorOf(node), kind: 'thread' as const, url: node.url })),
+    );
     items.push({
       comments: thread.comments.nodes
         .filter((node) => !own(node.body) && counts(node))
@@ -240,9 +259,9 @@ export function feedbackFrom(
     });
   }
   const truncated =
-    pull.reviewThreads.pageInfo.hasNextPage ||
-    pull.reviews.pageInfo.hasNextPage ||
-    pull.comments.pageInfo.hasNextPage ||
-    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage);
-  return { items, skipped, truncated };
+    pull.reviewThreads.pageInfo.hasPreviousPage ||
+    pull.reviews.pageInfo.hasPreviousPage ||
+    pull.comments.pageInfo.hasPreviousPage ||
+    pull.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasPreviousPage);
+  return { items, since: head, skipped, truncated };
 }

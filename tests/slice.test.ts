@@ -1936,7 +1936,7 @@ function codeHostWith(
     },
     kind: 'github',
     pullRequest: () => null,
-    pullRequestFeedback: () => ({ items: [], skipped: [], truncated: false }),
+    pullRequestFeedback: () => ({ items: [], since: null, skipped: [], truncated: false }),
     pullRequestOutcome: (current) => ({
       commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
       pullRequest: current,
@@ -2542,8 +2542,8 @@ function codeHostWithFeedback(sinces: Array<string>): CodeHost {
       ...(host.findPullRequest('factory/proj-123') ?? noPullRequest()),
       url,
     }),
-    pullRequestFeedback: (_pullRequest, since) => {
-      sinces.push(since);
+    pullRequestFeedback: (pullRequest) => {
+      sinces.push(pullRequest.url);
       return {
         items: [
           {
@@ -2561,6 +2561,7 @@ function codeHostWithFeedback(sinces: Array<string>): CodeHost {
             threadId: 'PRRT_1',
           },
         ],
+        since: '2026-10-16T10:00:00Z',
         skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
         truncated: false,
       };
@@ -2601,8 +2602,18 @@ test('a feedback round takes the pull request feedback back through work, review
     roundWork?.prompt ?? '',
     /This task is feedback round 1 on the ticket's pull request/,
   );
-  // Feedback since the ticket reached handoff.
-  assert.equal(sinces.length, 1);
+  // Deduped per execution, so a rerun's round 1 is a new round.
+  const execution = String(
+    db.prepare('SELECT id FROM ticket_executions WHERE is_current = 1').get()?.['id'],
+  );
+  assert.equal(
+    String(
+      db.prepare("SELECT dedupe_key FROM events WHERE kind = 'feedback'").get()?.['dedupe_key'],
+    ),
+    `feedback:${execution}:1`,
+  );
+  // The feedback of the ticket's own pull request.
+  assert.deepEqual(sinces, ['https://github.com/geut/factory-skills/pull/7']);
   const factoryDir = String(
     db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
       'factory_dir'

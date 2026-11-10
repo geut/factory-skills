@@ -1,4 +1,4 @@
-import { taskId, type TaskId, type TaskRecord } from '../domain.ts';
+import { taskId, type FactorySnapshot, type TaskId, type TaskRecord } from '../domain.ts';
 import type {
   FeedbackItem,
   PullRequestFeedback,
@@ -217,32 +217,71 @@ export function feedbackResponses(output: string): Array<FeedbackResponse> | nul
   });
 }
 
-// What a work reply for a round gets wrong: an item it does not answer, an
-// unknown or repeated id, or an item declined without a reason.
+// What a round's work replies get wrong, read oldest first: an item no reply
+// answers, an unknown id, an item answered twice in one reply, or an item whose
+// latest answer declines it without a reason. A later reply, after a review or
+// a correction, may update some lines; the others stand.
 export function feedbackResponseFailures(
-  output: string,
+  outputs: ReadonlyArray<string>,
   ids: ReadonlyArray<string>,
 ): Array<string> {
-  const responses = feedbackResponses(output);
   const expected = `one line per item, \`- F1: addressed — what changed\` or \`- F2: declined — why\``;
-  if (responses === null) {
+  const replies = outputs.map((output) => feedbackResponses(output));
+  if (replies.every((responses) => responses === null)) {
     return [`## Feedback responses is missing: answer ${ids.join(', ')}, ${expected}.`];
   }
   const failures: Array<string> = [];
-  const seen = new Set<string>();
-  for (const response of responses) {
-    if (!ids.includes(response.id)) {
-      failures.push(`${response.id} is not a feedback item of this round (${ids.join(', ')}).`);
-    } else if (seen.has(response.id)) {
-      failures.push(`${response.id} is answered more than once.`);
-    } else if (response.status === 'declined' && response.note.length === 0) {
-      failures.push(`${response.id} is declined without a reason.`);
+  const latest = new Map<string, FeedbackResponse>();
+  for (const [index, responses] of replies.entries()) {
+    const seen = new Set<string>();
+    for (const response of responses ?? []) {
+      const current = index === replies.length - 1;
+      if (!ids.includes(response.id)) {
+        if (current) {
+          failures.push(`${response.id} is not a feedback item of this round (${ids.join(', ')}).`);
+        }
+        continue;
+      }
+      if (seen.has(response.id)) {
+        if (current) {
+          failures.push(`${response.id} is answered more than once.`);
+        }
+        continue;
+      }
+      seen.add(response.id);
+      latest.set(response.id, response);
     }
-    seen.add(response.id);
   }
-  const missing = ids.filter((id) => !seen.has(id));
+  for (const id of ids) {
+    const response = latest.get(id);
+    if (response?.status === 'declined' && response.note.length === 0) {
+      failures.push(`${id} is declined without a reason.`);
+    }
+  }
+  const missing = ids.filter((id) => !latest.has(id));
   if (missing.length > 0) {
     failures.push(`## Feedback responses has no line for ${missing.join(', ')}: ${expected}.`);
   }
   return failures;
+}
+
+// Why a ticket cannot start its next feedback round now, or null when it can.
+// The command checks it before reading the pull request, and the controller
+// again when it applies the round, so both say the same thing.
+export function feedbackRoundRefusal(
+  snapshot: Pick<FactorySnapshot, 'execution' | 'tasks' | 'ticket'>,
+): string | null {
+  const { execution, ticket } = snapshot;
+  const ref = ticket.displayRef;
+  if (execution.status !== 'ready_for_handoff') {
+    return `${ref} is ${execution.stage}/${execution.status}, not ready for handoff.`;
+  }
+  if (!execution.policy.pullRequests) {
+    return `${ref} cannot have feedback rounds: codeHost.pullRequests is off, and a round pushes its commit to the pull request.`;
+  }
+  const rounds = feedbackRounds(snapshot.tasks);
+  if (rounds >= execution.policy.limits.feedbackRounds) {
+    return `${ref} has had ${rounds} feedback round${rounds === 1 ? '' : 's'}, the limit (limits.feedbackRounds).`;
+  }
+  return null;
 }

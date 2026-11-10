@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { FactorySnapshot } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
 import {
+  feedbackRoundRefusal,
   feedbackRounds,
   feedbackTaskFile,
   renderFeedbackTask,
@@ -12,16 +13,18 @@ import {
 import { stageEnabled } from '../stages/flow.ts';
 
 // Prepares a feedback round on a ticket's open pull request: reads the
-// feedback posted since the factory's last push, writes the round's task file,
-// and says what the `feedback` event carries. Nothing in the controller changes
-// here, so a refusal leaves the ticket as it was.
+// feedback posted since the factory's last push and renders the round's task
+// file. Nothing changes here, so a refusal leaves the ticket as it was; the
+// caller writes the file once the controller has accepted the round.
 
 export type FeedbackRound = {
   items: number;
   round: number;
   skipped: number;
   startHead: string;
+  // Where the task file goes, relative to the ticket directory, and its text.
   taskFile: string;
+  taskText: string;
   title: string;
 };
 
@@ -39,53 +42,47 @@ function headOf(worktree: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function readFeedback(codeHost: CodeHost, url: string) {
+  try {
+    const pullRequest = codeHost.pullRequest(url);
+    if (pullRequest === null || pullRequest.state !== 'open') {
+      return refuse(`${url} is ${pullRequest?.state ?? 'gone'}, not open.`);
+    }
+    return { feedback: codeHost.pullRequestFeedback(pullRequest), pullRequest };
+  } catch (error: unknown) {
+    const failed: FeedbackRefusal = {
+      message: `Cannot read ${url}: ${error instanceof Error ? error.message : String(error)}`,
+      reason: 'code_host_unavailable',
+    };
+    return failed;
+  }
+}
+
 export function prepareFeedbackRound(input: {
   codeHost: CodeHost;
   note: string | null;
-  // The pull request recorded at handoff, and when the ticket last got there.
+  // The pull request recorded for the ticket, if any.
   pullRequestUrl: string | null;
-  since: string | null;
   snapshot: FactorySnapshot;
 }): FeedbackRound | FeedbackRefusal {
   const { execution, ticket } = input.snapshot;
-  const ref = ticket.displayRef;
-  if (execution.status !== 'ready_for_handoff') {
-    return refuse(`${ref} is ${execution.stage}/${execution.status}, not ready for handoff.`);
-  }
-  const rounds = feedbackRounds(input.snapshot.tasks);
-  if (rounds >= execution.policy.limits.feedbackRounds) {
-    return refuse(
-      `${ref} has had ${rounds} feedback round${rounds === 1 ? '' : 's'}, the limit (limits.feedbackRounds).`,
-    );
+  const refusal = feedbackRoundRefusal(input.snapshot);
+  if (refusal !== null) {
+    return refuse(refusal);
   }
   if (input.pullRequestUrl === null) {
-    return refuse(`${ref} has no pull request to take feedback from.`);
+    return refuse(`${ticket.displayRef} has no pull request to take feedback from.`);
   }
   const worktree = execution.worktreePath;
   const head = worktree === null ? null : headOf(worktree);
   if (worktree === null || head === null) {
-    return refuse(`${ref} has no worktree to work in.`);
+    return refuse(`${ticket.displayRef} has no worktree to work in.`);
   }
-  let pullRequest;
-  let feedback;
-  try {
-    pullRequest = input.codeHost.pullRequest(input.pullRequestUrl);
-    feedback =
-      pullRequest === null || pullRequest.state !== 'open'
-        ? null
-        : input.codeHost.pullRequestFeedback(
-            pullRequest,
-            input.since ?? pullRequest.openedAt ?? '',
-          );
-  } catch (error: unknown) {
-    return {
-      message: `Cannot read ${input.pullRequestUrl}: ${error instanceof Error ? error.message : String(error)}`,
-      reason: 'code_host_unavailable',
-    };
+  const read = readFeedback(input.codeHost, input.pullRequestUrl);
+  if ('reason' in read) {
+    return read;
   }
-  if (pullRequest === null || pullRequest.state !== 'open') {
-    return refuse(`${input.pullRequestUrl} is ${pullRequest?.state ?? 'gone'}, not open.`);
-  }
+  const { feedback, pullRequest } = read;
   // The round commits on top of what the pull request shows; a commit pushed
   // there from elsewhere would make wrap-up's push fail.
   if (pullRequest.headSha !== null && pullRequest.headSha !== head) {
@@ -93,33 +90,47 @@ export function prepareFeedbackRound(input: {
       `${input.pullRequestUrl} is at ${pullRequest.headSha.slice(0, 7)}, the worktree at ${head.slice(0, 7)}. Bring the worktree to the pull request's head first.`,
     );
   }
-  const items = roundItems(feedback ?? { items: [], skipped: [], truncated: false }, input.note);
-  if (items.length === 0 || feedback === null) {
-    const skipped = feedback?.skipped.length ?? 0;
+  const items = roundItems(feedback, input.note);
+  if (items.length === 0) {
+    const skipped =
+      feedback.skipped.length === 0
+        ? ''
+        : ` (${feedback.skipped.length} skipped: not from collaborators or codeHost.feedback.authors)`;
+    const truncated = feedback.truncated
+      ? ' GitHub had more than one page, so only the newest 100 of each list were read.'
+      : '';
     return refuse(
-      `No new feedback on ${input.pullRequestUrl} since the last push${skipped === 0 ? '' : ` (${skipped} skipped: not from collaborators or codeHost.feedback.authors)`}. Add a note to start a round anyway.`,
+      `No new feedback on ${input.pullRequestUrl} since the last push${skipped}.${truncated} Add a note to start a round anyway.`,
     );
   }
-  const round = rounds + 1;
-  const taskFile = feedbackTaskFile(round);
-  const file = path.join(execution.factoryDir, taskFile);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(
-    file,
-    renderFeedbackTask({
+  const round = feedbackRounds(input.snapshot.tasks) + 1;
+  return {
+    items: items.length,
+    round,
+    skipped: feedback.skipped.length,
+    startHead: head,
+    taskFile: feedbackTaskFile(round),
+    taskText: renderFeedbackTask({
       feedback,
       items,
       pullRequestUrl: input.pullRequestUrl,
       qa: stageEnabled(execution.policy, 'qa'),
       round,
     }),
-  );
-  return {
-    items: items.length,
-    round,
-    skipped: feedback.skipped.length,
-    startHead: head,
-    taskFile,
     title: `Feedback round ${round}`,
   };
+}
+
+// Writes an accepted round's task file into the ticket directory, unless it is
+// there already: a repeated command must not change a round that is running.
+export function writeFeedbackTask(factoryDir: string, round: FeedbackRound): void {
+  const file = path.join(factoryDir, round.taskFile);
+  mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    writeFileSync(file, round.taskText, { flag: 'wx' });
+  } catch (error: unknown) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
+      throw error;
+    }
+  }
 }
