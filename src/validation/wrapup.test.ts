@@ -461,6 +461,34 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', a
   assert.match(text, /changed \.factory\/wrapup\.md/);
 });
 
+test('OS metadata a host writes or removes is not a wrap-up change, unless the repository tracks it', async () => {
+  const value = fixture();
+  // Finder wrote one before wrap-up started, and rewrites it while it runs.
+  writeFileSync(path.join(value.factoryRoot, '.DS_Store'), 'finder 1');
+  const baseline = value.baseline();
+  writeFileSync(path.join(value.factoryRoot, '.DS_Store'), 'finder 2');
+  writeFileSync(path.join(value.factoryRoot, '._CONTEXT.md'), 'apple double');
+  mkdirSync(path.join(value.factoryRoot, 'learnings'));
+  writeFileSync(path.join(value.factoryRoot, 'learnings/Thumbs.db'), 'thumbs');
+  writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/desktop.ini'), 'explorer');
+  writeFileSync(path.join(value.worktree, '.DS_Store'), 'finder');
+  writeFileSync(path.join(value.worktree, 'src/.DS_Store'), 'finder');
+  assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
+  rmSync(path.join(value.factoryRoot, '.DS_Store'));
+  assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
+
+  // A repository that commits one: changing it is still a change.
+  const tracked = fixture();
+  writeFileSync(path.join(tracked.worktree, '.DS_Store'), 'committed');
+  spawnSync('git', ['add', '.DS_Store'], { cwd: tracked.worktree });
+  spawnSync('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add finder file'], {
+    cwd: tracked.worktree,
+  });
+  const trackedBaseline = tracked.baseline();
+  writeFileSync(path.join(tracked.worktree, '.DS_Store'), 'edited');
+  assert.match(failures(await validate(tracked, trackedBaseline, handoff(tracked))), /\.DS_Store/);
+});
+
 test('an unexpected commit fails', async () => {
   const value = fixture();
   const baseline = value.baseline();

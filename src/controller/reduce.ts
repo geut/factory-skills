@@ -445,9 +445,33 @@ function enqueueInput(
   });
 }
 
+// Whether `failures` are exactly what the session's latest correction asked
+// it to fix: the correction did not help, and another would not either.
+function repeatsLastCorrection(
+  snapshot: FactorySnapshot,
+  session: SessionRecord,
+  failures: Array<string>,
+): boolean {
+  const last = snapshot.actions.findLast(
+    (action) =>
+      action.kind === 'prepare_input' &&
+      action.purpose === 'validation_correction' &&
+      action.stage === session.stage &&
+      action.taskId === session.taskId,
+  );
+  if (last?.kind !== 'prepare_input') {
+    return false;
+  }
+  const before = last.failures.toSorted();
+  const now = failures.toSorted();
+  return before.length === now.length && before.every((failure, index) => failure === now[index]);
+}
+
 // Asks the stage's agent to fix what its validator failed, within the
 // stage's correction budget. At the limit the ticket pauses on the run, so a
-// reply resumes that agent with the person's guidance.
+// reply resumes that agent with the person's guidance. A stage without a
+// limit pauses the same way when it fails exactly as it did before its
+// latest correction, since the agent could not fix that.
 function correct(
   snapshot: FactorySnapshot,
   session: SessionRecord,
@@ -478,6 +502,25 @@ function correct(
         'Reply to resume the agent with what it needs.',
       ].join('\n'),
       retry: null,
+      runId: parent.id,
+    });
+    return 'paused';
+  }
+  if (policy.limit === null && repeatsLastCorrection(snapshot, session, failures)) {
+    if (task !== null) {
+      task.status = 'blocked';
+    }
+    pauseWithNotice(snapshot, {
+      code: `${session.stage}_failure_repeated`,
+      failures,
+      ids,
+      question: [
+        `${stage.label} validation failed the same way after its correction:`,
+        ...failures.map((failure) => `- ${failure}`),
+        'The agent could not fix this. Fix the cause outside the session, then run',
+        `/factory retry ${snapshot.ticket.commandRef} to validate again, or reply to resume the agent with what it needs.`,
+      ].join('\n'),
+      retry: { kind: 'validate' },
       runId: parent.id,
     });
     return 'paused';

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
 import { validationContext } from './fixture.ts';
-import { COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
+import { collectWorkDiff, COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
 const roots: Array<string> = [];
 const gitEnv = {
@@ -273,4 +273,18 @@ test('empty diffs, commits, timeouts, and command results are checks, and whites
     cwd: failing.cwd,
   });
   assert.equal(crashed.status, 'error');
+});
+
+test('an untracked OS metadata file is not part of the work diff, and a tracked one is', () => {
+  const { cwd } = repo();
+  writeFileSync(path.join(cwd, 'notes.md'), 'new\n');
+  writeFileSync(path.join(cwd, '.DS_Store'), 'finder');
+  writeFileSync(path.join(cwd, '._notes.md'), 'apple double');
+  const untracked = collectWorkDiff(cwd);
+  const diff = 'diff' in untracked ? untracked.diff : '';
+  assert.match(diff, /notes\.md/);
+  assert.doesNotMatch(diff, /DS_Store|\._notes/);
+  git(cwd, ['add', '.DS_Store']);
+  const tracked = collectWorkDiff(cwd);
+  assert.match('diff' in tracked ? tracked.diff : '', /\.DS_Store/);
 });

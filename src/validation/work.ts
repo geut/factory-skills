@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
+import { isOsMetadata } from '../os-metadata.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
   errorReport,
@@ -46,7 +47,9 @@ function untrackedPaths(cwd: string): Array<string> | { message: string } {
   if (listed.code !== 0) {
     return { message: listed.stderr.trim() || 'cannot list untracked files' };
   }
-  return listed.stdout.split('\0').filter((item) => item.length > 0);
+  // An untracked OS metadata file, such as a host Finder's `.DS_Store`, is
+  // nobody's change.
+  return listed.stdout.split('\0').filter((item) => item.length > 0 && !isOsMetadata(item));
 }
 
 // The a/ and b/ prefixes every diff parser reads, whatever diff.noprefix or

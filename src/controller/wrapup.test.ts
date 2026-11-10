@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '../domain.ts';
 import { wrapupRunning } from '../stories/scenarios.ts';
-import { errorReport, passedReport } from '../validation/report.ts';
+import { errorReport, failedReport, passedReport } from '../validation/report.ts';
 import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
 import { reduce } from './reduce.ts';
@@ -234,5 +234,89 @@ test('complete is a command, and only a ready-for-handoff ticket can be complete
   assert.match(
     early.response.kind === 'rejected' ? early.response.message : '',
     /not ready for handoff/,
+  );
+});
+
+// Wrap-up validation of `runId` failing with `failures`.
+function failedWith(
+  snapshot: FactorySnapshot,
+  runId: FactorySnapshot['runs'][number]['id'],
+  failures: Array<string>,
+): FactorySnapshot {
+  const pending = snapshot.actions.some(
+    (action) => action.kind === 'validate_run' && action.status === 'pending',
+  );
+  if (!pending) {
+    // The correction's run finished and is validated again.
+    snapshot.actions.push({
+      attempts: 0,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      id: randomIds().action(),
+      idempotencyKey: `validate-again:${snapshot.actions.length}`,
+      kind: 'validate_run',
+      lastError: null,
+      maxAttempts: 3,
+      retryOfActionId: null,
+      runId,
+      status: 'pending',
+    });
+  }
+  const detail = { checklist: noIssue, pullRequest: null, usage: '' };
+  return (
+    reduce({
+      event: {
+        actionId: validation(snapshot).id,
+        kind: 'validation_finished',
+        report: failedReport(
+          WRAPUP_VALIDATOR_VERSION,
+          [
+            {
+              details: failures.join('\n'),
+              kind: 'policy',
+              name: 'factory files',
+              status: 'failed',
+            },
+          ],
+          failures,
+          detail,
+        ),
+        runId,
+        stage: 'wrapup',
+      },
+      ids: randomIds(),
+      now,
+      snapshot,
+    }).snapshot ?? snapshot
+  );
+}
+
+test('wrap-up corrections have no limit, but the same failure after a correction pauses', () => {
+  const { runId, snapshot } = finishedWrapup();
+  const stuck = [
+    'Wrap-up changed .factory/.DS_Store; only CONTEXT.md, PRD.md, and learnings/ may change.',
+  ];
+  // The first failure asks the agent to fix it.
+  const corrected = failedWith(snapshot, runId, stuck);
+  assert.equal(corrected.execution.status, 'active');
+  const corrections = corrected.actions.filter(
+    (action) => action.kind === 'prepare_input' && action.purpose === 'validation_correction',
+  );
+  assert.equal(corrections.length, 1);
+  // A different failure is another correction.
+  const other = failedWith(structuredClone(corrected), runId, ['## Files is missing.']);
+  assert.equal(other.execution.status, 'active');
+  // The same failure again: the correction did not help, so the ticket pauses.
+  const paused = failedWith(corrected, runId, stuck);
+  assert.equal(paused.execution.status, 'paused');
+  assert.equal(paused.execution.statusReasonCode, 'wrapup_failure_repeated');
+  assert.deepEqual(paused.execution.retry, { kind: 'validate' });
+  assert.match(paused.attention.at(-1)?.question ?? '', /failed the same way after its correction/);
+  assert.match(paused.attention.at(-1)?.question ?? '', /\.factory\/\.DS_Store/);
+  assert.equal(
+    paused.actions.filter(
+      (action) => action.kind === 'prepare_input' && action.purpose === 'validation_correction',
+    ).length,
+    1,
   );
 });
