@@ -4,7 +4,7 @@ import { parseFactoryConfig } from '../../config.ts';
 import { sessionId } from '../../domain.ts';
 import { addTasks, blank, run, session, task } from '../../stories/fixtures.ts';
 import { acceptanceCriteria, testGaps, testPlan } from './criteria.ts';
-import { changedFiles, qa, readQaSettings } from './definition.ts';
+import { qa, readQaSettings } from './definition.ts';
 import { QA_VALIDATOR_VERSION } from './effects.ts';
 
 const models = { review: 'review-model', work: 'work-model' };
@@ -101,15 +101,6 @@ test('incomplete QA output is corrected; a failing product goes back to work unt
   ]);
   const limited = concluded('product', 3);
   assert.equal(limited.kind === 'pause' ? limited.code : null, 'qa_round_limit');
-});
-
-test('QA reads the files the worker changed from its diff', () => {
-  assert.deepEqual(
-    changedFiles(
-      'diff --git a/src/a.ts b/src/a.ts\n+x\ndiff --git a/old.ts b/new.ts\n-y\ndiff --git a/src/a.ts b/src/a.ts\n',
-    ),
-    ['src/a.ts', 'new.ts'],
-  );
 });
 
 // The worker summary QA's prompt shows for task 01, after `build` adds work runs.

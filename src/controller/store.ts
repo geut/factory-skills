@@ -323,7 +323,10 @@ function taskSummaries(json: string): TaskRecord['summaries'] {
       typeof value['label'] !== 'string' ||
       typeof value['round'] !== 'number' ||
       !isRecord(value['counts']) ||
-      !Object.values(value['counts']).every((count) => typeof count === 'number')
+      !Object.values(value['counts']).every((count) => typeof count === 'number') ||
+      (value['rules'] !== undefined &&
+        (!isRecord(value['rules']) ||
+          !Object.values(value['rules']).every((hash) => typeof hash === 'string')))
     ) {
       throw new FactoryDatabaseError(`the ${stage} task summary is malformed`);
     }
@@ -331,6 +334,7 @@ function taskSummaries(json: string): TaskRecord['summaries'] {
       counts: value['counts'] as Record<string, number>,
       label: value['label'],
       round: value['round'],
+      ...(isRecord(value['rules']) ? { rules: value['rules'] as Record<string, string> } : {}),
     };
   }
   return summaries;

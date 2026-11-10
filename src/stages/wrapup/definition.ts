@@ -100,6 +100,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           checklist: report.detail.checklist,
           kind: 'accept',
           notice: report.detail.usage,
+          rules: report.detail.rules,
           ...(report.detail.pullRequest === null
             ? {}
             : { pullRequestUrl: report.detail.pullRequest.url }),

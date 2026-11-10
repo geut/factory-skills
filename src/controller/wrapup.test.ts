@@ -109,7 +109,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
     report: passedReport(
       WRAPUP_VALIDATOR_VERSION,
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
-      { checklist: noIssue, pullRequest: null, usage: 'Stage  Sess  Input' },
+      { checklist: noIssue, pullRequest: null, rules: [], usage: 'Stage  Sess  Input' },
     ),
     runId,
     stage: 'wrapup' as const,
@@ -158,6 +158,7 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
           ],
         },
         pullRequest: null,
+        rules: [],
         usage: '',
       }),
       runId,
@@ -189,6 +190,34 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
       '- [ ] The filter is labelled. — Task 01 R1-2: no label yet',
     ].join('\n'),
   );
+});
+
+test('an accepted wrap-up names the project rule files the ticket changes', () => {
+  const { runId, snapshot } = finishedWrapup();
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: noIssue,
+        pullRequest: null,
+        rules: ['AGENTS.md'],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  const after = passed.snapshot ?? snapshot;
+  const comment = after.actions.find(
+    (item): item is Extract<ActionRecord, { kind: 'update_ticket_source' }> =>
+      item.kind === 'update_ticket_source' && item.update === 'handoff',
+  )?.comment;
+  assert.match(comment ?? '', /This ticket changes project rules: AGENTS\.md\./);
+  assert.match(after.attention.at(-1)?.question ?? '', /changes project rules: AGENTS\.md/);
 });
 
 test('complete is a command, and only a ready-for-handoff ticket can be completed', () => {

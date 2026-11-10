@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { build } from 'esbuild';
+import { EMBEDDED_SKILL_FILES, skillAssetKey } from '../src/server/embedded-skills.ts';
 import { sourceVersion } from '../src/version.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -45,6 +46,12 @@ writeFileSync(
       assets: {
         'child-handshake.ts': path.join(root, 'src', 'runtime', 'child-handshake.ts'),
         'schema.sql': path.join(root, 'src', 'state', 'schema.sql'),
+        ...Object.fromEntries(
+          EMBEDDED_SKILL_FILES.map((file) => [
+            skillAssetKey(file),
+            path.join(root, 'skills', file),
+          ]),
+        ),
       },
       disableExperimentalSEAWarning: true,
       // node:sqlite still warns that it is experimental on every start.

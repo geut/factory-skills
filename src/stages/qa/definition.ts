@@ -55,18 +55,6 @@ export type QaInput = {
   worktree: string;
 };
 
-// The paths a unified diff touches, in order.
-export function changedFiles(diff: string): Array<string> {
-  const files = new Set<string>();
-  for (const line of diff.split('\n')) {
-    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-    if (match?.[2] !== undefined) {
-      files.add(match[2]);
-    }
-  }
-  return [...files];
-}
-
 export type QaSettings = { commands: Array<WorkCommand>; enabled: boolean };
 
 const DEFAULT_TIMEOUT_MS = 60_000;

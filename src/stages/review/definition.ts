@@ -1,4 +1,5 @@
-import type { ReviewFinding, ReviewResult } from '../../domain.ts';
+import { diffPaths, fileDiffHashes } from '../../diff.ts';
+import type { FactorySnapshot, ReviewFinding, ReviewResult, TaskId } from '../../domain.ts';
 import {
   defineStage,
   type LimitSpec,
@@ -15,6 +16,7 @@ import {
   REVIEW_CONTRACT,
   runReview,
 } from './parse.ts';
+import { acceptedRules, changedRules, ruleChanges, rulesSource } from './rules.ts';
 
 export type ReviewInput = {
   criteria: Array<Criterion>;
@@ -25,6 +27,14 @@ export type ReviewInput = {
   planPath: string;
   rawOutput: string;
   round: number;
+  // Where the reviewer's project rules came from; the rule files the diff
+  // changes, each of which needs a Verification line; and the rule changes
+  // earlier tasks' reviews accepted, unchanged since.
+  rules: {
+    accepted: Array<{ file: string; taskId: string }>;
+    changed: Array<string>;
+    source: string | null;
+  };
   taskFile: string;
   taskTitle: string;
   validationSummary: string;
@@ -32,7 +42,13 @@ export type ReviewInput = {
 
 // The review verdict decides what happens to the task. The round limit lives
 // here because only review counts its rounds.
-function verdictOutcome({ snapshot, task }: StageView, result: ReviewResult): Outcome {
+// An approval records the reviewed rule files' diff hashes (`rules`), so
+// later tasks' reviews take those changes as accepted.
+function verdictOutcome(
+  { snapshot, task }: StageView,
+  result: ReviewResult,
+  rules: Record<string, string>,
+): Outcome {
   const id = task?.taskId ?? '?';
   const blocking = result.findings.filter((finding) => finding.blocking);
   const summary = {
@@ -43,7 +59,10 @@ function verdictOutcome({ snapshot, task }: StageView, result: ReviewResult): Ou
   const limit = snapshot.execution.policy.limits.reviewRounds;
   switch (result.verdict) {
     case 'approve':
-      return { kind: 'accept', summary };
+      return {
+        kind: 'accept',
+        summary: Object.keys(rules).length === 0 ? summary : { ...summary, rules },
+      };
     case 'changes_requested': {
       const lines = blocking.map((finding) => formatFinding(finding));
       if (result.round >= limit) {
@@ -98,6 +117,49 @@ function validationGroups(checks: Array<StageCheck>): string {
   return [...groups].flatMap(([stage, lines]) => [`${stage}:`, ...lines]).join('\n');
 }
 
+// The rule files `diff` changes that this task's review judges, and those an
+// earlier task's review accepted, unchanged since.
+export function reviewedRules(
+  snapshot: FactorySnapshot,
+  taskId: TaskId | null,
+  diff: string,
+): { accepted: Array<{ file: string; taskId: TaskId }>; changed: Array<string> } {
+  const worktree = snapshot.execution.worktreePath;
+  if (worktree === null) {
+    return { accepted: [], changed: [] };
+  }
+  const split = ruleChanges({
+    accepted: acceptedRules(snapshot.tasks, taskId),
+    changed: changedRules(
+      { codeRoot: snapshot.execution.policy.codeRoot, worktree },
+      diffPaths(diff),
+    ),
+    hashes: fileDiffHashes(diff),
+  });
+  return { accepted: split.accepted, changed: split.judged };
+}
+
+// Where the rules came from, and what to do about each rule file the diff
+// changes: the worker must not decide the rules its own work is judged by.
+function projectRules(rules: ReviewInput['rules']): Array<string> {
+  return [
+    `Project rules: your system prompt holds them from ${rules.source ?? 'the base commit'}, not from the ticket's branch. Judge the work by them.`,
+    ...(rules.accepted.length === 0
+      ? []
+      : [
+          `Earlier tasks changed project rules, and their reviews accepted the change: ${rules.accepted.map((item) => `${item.file} (task ${item.taskId})`).join(', ')}. Judge the work by the base rules as those changes amend them. They need no Verification line.`,
+        ]),
+    ...(rules.changed.length === 0
+      ? []
+      : [
+          `This diff changes project rules: ${rules.changed.join(', ')}. Decide for each whether the task asks for the change, and give it one Verification line:`,
+          '- `<file>: in_scope — <the task criterion that asks for it>`: review the change as part of the task, and judge the work by the base rules as that change amends them.',
+          '- `<file>: out_of_scope — <why>`: judge the work by the base rules, and report the change as a Major finding that names the file.',
+        ]),
+    '',
+  ];
+}
+
 const skill = 'factory-review';
 const contract = REVIEW_CONTRACT;
 
@@ -113,7 +175,7 @@ export const review = defineStage<ReviewInput, 'review'>({
       const parsed = runReview(run);
       return parsed.kind === 'invalid'
         ? { failures: parsed.failures, kind: 'correct' }
-        : verdictOutcome(view, parsed.result);
+        : verdictOutcome(view, parsed.result, report.detail.rules);
     }
     switch (report.detail.reason) {
       case 'unsafe':
@@ -158,6 +220,16 @@ export const review = defineStage<ReviewInput, 'review'>({
       planPath: snapshot.execution.planPath ?? '',
       rawOutput: handoff.output,
       round,
+      rules: {
+        ...reviewedRules(snapshot, task.taskId, handoff.diff),
+        source:
+          snapshot.execution.worktreeBaseSha === null
+            ? null
+            : rulesSource({
+                branch: snapshot.execution.worktreeBaseBranch,
+                sha: snapshot.execution.worktreeBaseSha,
+              }),
+      },
       taskFile: `${snapshot.execution.factoryDir}/${task.taskFile}`,
       taskTitle: task.title,
       validationSummary: validationGroups(handoff.checks),
@@ -173,6 +245,9 @@ export const review = defineStage<ReviewInput, 'review'>({
       : { error: parsed.failures.join('\n'), json: JSON.stringify({ output }), kind: 'invalid' };
   },
   preparesInput: false,
+  // The reviewer judges the work by the base commit's rules, not by rules the
+  // ticket's branch may have changed.
+  projectRules: 'base',
   // Later rounds resume the same reviewer so it can check its earlier findings.
   prompts: {
     correction: (failures) =>
@@ -196,6 +271,7 @@ export const review = defineStage<ReviewInput, 'review'>({
           : 'This is the first review of this task.',
         'Read only. Do not edit files.',
         '',
+        ...projectRules(input.rules),
         'Acceptance criteria (one Verification line each):',
         ...(input.criteria.length === 0
           ? ['none']

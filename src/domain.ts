@@ -278,9 +278,16 @@ export type ReviewFinding = {
 };
 
 // A reviewer's line on one acceptance criterion (`AC<n>`: verified or
-// not_verified) or one earlier blocking finding (`R<round>-<n>`: fixed or
-// still_open), with the locations or reason behind it.
-export type VerificationStatus = 'verified' | 'not_verified' | 'fixed' | 'still_open';
+// not_verified), one earlier blocking finding (`R<round>-<n>`: fixed or
+// still_open), or one project rule file the diff changes (its path: in_scope
+// or out_of_scope), with the locations or reason behind it.
+export type VerificationStatus =
+  | 'verified'
+  | 'not_verified'
+  | 'fixed'
+  | 'still_open'
+  | 'in_scope'
+  | 'out_of_scope';
 
 export type ReviewVerification = { evidence: string; id: string; status: VerificationStatus };
 
@@ -294,8 +301,10 @@ export type ReviewResult = {
 
 // `malformed` resumes the reviewer, `stale` re-validates the worker's diff,
 // and `unsafe` pauses: the reviewer was not isolated from the worker.
+// A passed review carries the diff hash of each rule file the reviewed diff
+// changes, which an approval records.
 export type ReviewValidationReport = ValidationReport<
-  null,
+  { rules: Record<string, string> },
   { reason: 'malformed' | 'stale' | 'unsafe' }
 >;
 
@@ -306,6 +315,8 @@ export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
   pullRequest: PullRequestInfo | null;
+  // The project rule files the ticket changes, from its worktree's changes.
+  rules: Array<string>;
   usage: string;
 };
 
@@ -380,7 +391,15 @@ export type ControllerEvent =
       runId: RunId;
       sessionFile: string;
     }
-  | { actionId: ActionId; kind: 'launch_failed'; message: string; runId: RunId }
+  | {
+      actionId: ActionId;
+      // `project_rules`: the stage's project rules could not be read, which a
+      // retry of the same launch would not change, so the ticket pauses.
+      code?: 'project_rules';
+      kind: 'launch_failed';
+      message: string;
+      runId: RunId;
+    }
   | {
       actor?: Actor;
       answer: string;
@@ -464,7 +483,14 @@ export type ExecutionRecord = {
 
 // What one per-task stage last concluded about a task, for display and for
 // later stages: the round it reached, a short label, and counts behind it.
-export type TaskSummary = { counts: Record<string, number>; label: string; round: number };
+export type TaskSummary = {
+  counts: Record<string, number>;
+  label: string;
+  round: number;
+  // An approving review's rule files, each with its diff hash: the rule
+  // changes later tasks' reviews take as accepted while they stay unchanged.
+  rules?: Record<string, string>;
+};
 
 export type TaskRecord = {
   blockedBy: Array<TaskId>;

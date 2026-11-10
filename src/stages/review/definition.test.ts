@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { fileDiffHashes } from '../../diff.ts';
 import {
   addTasks,
   blank,
@@ -28,10 +29,10 @@ function concluded(output: string, round: number) {
         summary: 'Reviewer could write files.',
         version: REVIEW_VALIDATOR_VERSION,
       }),
-    pass: () =>
+    pass: (rules: Record<string, string> = {}) =>
       reviewStage.conclude(view, finished, {
         checks: [],
-        detail: null,
+        detail: { rules },
         status: 'passed',
         summary: null,
         version: REVIEW_VALIDATOR_VERSION,
@@ -44,6 +45,16 @@ test('an approving review accepts the task with its summary', () => {
     kind: 'accept',
     summary: { counts: { blocking: 0, findings: 0 }, label: 'approve', round: 1 },
   });
+});
+
+test('an approval records the reviewed rule files’ diff hashes; a change request does not', () => {
+  const rules = { 'AGENTS.md': 'a1' };
+  assert.deepEqual(concluded(review('approve'), 1).pass(rules), {
+    kind: 'accept',
+    summary: { counts: { blocking: 0, findings: 0 }, label: 'approve', round: 1, rules },
+  });
+  const returned = concluded(review('changes_requested', majorFinding), 1).pass(rules);
+  assert.equal(returned.kind === 'return_to_work' ? returned.summary.rules : 'other', undefined);
 });
 
 test('blocking findings return the task to work until the round limit pauses', () => {
@@ -64,9 +75,21 @@ test('an unreadable verdict is corrected; a stale diff revalidates; isolation pa
   assert.equal(unsafe.kind === 'pause' && unsafe.reply, false);
 });
 
-function prompt(round: number, earlier: Array<string>) {
+function prompt(
+  round: number,
+  earlier: Array<string>,
+  diff = 'diff --git a/src/filter.ts b/src/filter.ts',
+  accepted: Record<string, string> = {},
+) {
   const snapshot = blank();
-  addTasks(snapshot, 1);
+  snapshot.execution.worktreeBaseSha = '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b';
+  addTasks(snapshot, 2);
+  task(snapshot, '02').summaries.review = {
+    counts: {},
+    label: 'approve',
+    round: 1,
+    rules: accepted,
+  };
   const owner = session(snapshot, 'review', '01');
   for (const [index, output] of earlier.entries()) {
     run(snapshot, owner, { output, round: index + 1 });
@@ -96,7 +119,7 @@ function prompt(round: number, earlier: Array<string>) {
           { id: 'AC1', text: 'The filter survives a reload.' },
           { id: 'AC2', text: 'An empty filter shows every ticket.' },
         ],
-        diff: 'diff --git a/src/filter.ts b/src/filter.ts',
+        diff,
         output: 'Stored the filter.',
       },
       prepared: null,
@@ -142,4 +165,33 @@ test('a later review asks to verify each earlier blocking finding, without claim
   assert.match(listed, /^- R1-1 \[major\] Missing DB_URL bypasses the typed error page/);
   // Minor findings do not block, so they are not re-verified.
   assert.doesNotMatch(listed, /R1-3/);
+});
+
+test('the reviewer is told its rules come from the base commit, and which rule files the diff changes', () => {
+  const plain = prompt(1, []);
+  assert.match(
+    plain,
+    /Project rules: your system prompt holds them from main at 1a2b3c4, not from the ticket's branch\./,
+  );
+  assert.doesNotMatch(plain, /This diff changes project rules/);
+  const changed = prompt(
+    1,
+    [],
+    ['diff --git a/AGENTS.md b/AGENTS.md', 'diff --git a/src/filter.ts b/src/filter.ts'].join('\n'),
+  );
+  assert.match(changed, /This diff changes project rules: AGENTS\.md\. Decide for each/);
+  assert.match(changed, /`<file>: in_scope — <the task criterion that asks for it>`/);
+  assert.match(changed, /report the change as a Major finding that names the file/);
+  // Task 02's approved change, still the same in the diff, needs no line.
+  const agents = 'diff --git a/AGENTS.md b/AGENTS.md\n+tests may call the network';
+  const same = prompt(1, [], agents, fileDiffHashes(agents));
+  assert.match(
+    same,
+    /Earlier tasks changed project rules, and their reviews accepted the change: AGENTS\.md \(task 02\)\. Judge the work by the base rules as those changes amend them\./,
+  );
+  assert.doesNotMatch(same, /This diff changes project rules/);
+  // Changed again since, it is this task's change to judge.
+  const again = prompt(1, [], `${agents}\n+and the filesystem`, fileDiffHashes(agents));
+  assert.match(again, /This diff changes project rules: AGENTS\.md\./);
+  assert.doesNotMatch(again, /Earlier tasks changed/);
 });

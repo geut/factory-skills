@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { inside } from '../paths.ts';
 import { readTaskFile } from '../validation/task-file.ts';
 
 export type WorkInputInspection =
@@ -11,11 +12,6 @@ export type WorkInputInspection =
       taskType: string | null;
     }
   | { failures: Array<string>; kind: 'failed' };
-
-function inside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
 
 export function contained(factoryRoot: string, worktreePath: string, target: string): boolean {
   return inside(factoryRoot, target) || inside(worktreePath, target);

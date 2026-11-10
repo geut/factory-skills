@@ -1038,6 +1038,44 @@ function revalidatePrevious(
   return finish(snapshot, `The worktree changed. Validating the ${previous} again.`);
 }
 
+// A stage whose project rules come from the base commit could not read them.
+// Launching again would fail the same way, so the ticket pauses until the
+// base commit is there; a retry validates the stage before it again, which
+// starts this stage with its full input.
+function pauseForProjectRules(
+  snapshot: FactorySnapshot,
+  run: RunRecord,
+  message: string,
+  ids: IdSource,
+): void {
+  const session = sessionFor(snapshot, run.sessionId);
+  const task =
+    session === null || session.taskId === null ? null : taskById(snapshot, session.taskId);
+  const previous =
+    session === null || task === null
+      ? null
+      : previousTaskStage(snapshot.execution.policy, session.stage, task);
+  if (task !== null) {
+    task.status = 'blocked';
+  }
+  const label = session === null ? 'the stage' : stages[session.stage].label.toLowerCase();
+  pauseWithNotice(snapshot, {
+    code: 'project_rules',
+    failures: [message],
+    ids,
+    question: [
+      message,
+      `Make the ticket's base commit ${snapshot.execution.worktreeBaseSha ?? '(unknown)'} available in ${snapshot.execution.policy.codeRoot}, for example with git fetch.`,
+      `Then run /factory retry ${snapshot.ticket.commandRef} to start ${label} again.`,
+    ].join('\n'),
+    retry:
+      previous === null || task === null
+        ? { kind: 'relaunch' }
+        : { kind: 'revalidate', stage: previous, taskId: task.taskId },
+    runId: run.id,
+  });
+}
+
 // The closing stage passed: the person takes it from here. Its session stays
 // open for reading, next to the diff.
 function handOff(
@@ -1048,7 +1086,16 @@ function handOff(
   ids: IdSource,
   pullRequestUrl: string | null,
   checklist: IssueChecklist | null,
+  rules: Array<string>,
 ): Reduction {
+  // A change to the project's rules is named before anyone merges it.
+  const ruleChanges =
+    rules.length === 0
+      ? []
+      : [
+          '',
+          `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`,
+        ];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
   snapshot.execution.status = 'ready_for_handoff';
@@ -1089,6 +1136,7 @@ function handOff(
       pullRequestUrl === null
         ? 'The factory finished this ticket. Its handoff has the merge commands.'
         : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
+      ...ruleChanges,
       ...(checklist === null || checklist.decisions.length === 0
         ? []
         : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)]),
@@ -1108,6 +1156,7 @@ function handOff(
     kind: 'manual_approval',
     question: [
       `${ref} is ready for handoff. The ${definition.label.toLowerCase()} session and the diff are open in their own panes.`,
+      ...ruleChanges,
       '',
       notice,
       '',
@@ -1223,6 +1272,7 @@ function applyOutcome(
           ids,
           outcome.pullRequestUrl ?? null,
           outcome.checklist ?? null,
+          outcome.rules ?? [],
         );
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;
@@ -1598,7 +1648,8 @@ export function reduce(input: {
       run.terminalKind = 'cancelled';
       run.endedAt = now;
       // Like a question, a stop blocks the task until a reply or a retry.
-      const task = session?.taskId == null ? null : taskById(snapshot, session.taskId);
+      const task =
+        session === null || session.taskId === null ? null : taskById(snapshot, session.taskId);
       if (task !== null && task.status === 'active') {
         task.status = 'blocked';
       }
@@ -1704,6 +1755,10 @@ export function reduce(input: {
       run.status = 'terminal';
       run.terminalKind = 'launch_failed';
       run.endedAt = now;
+      if (event.code === 'project_rules') {
+        pauseForProjectRules(snapshot, run, event.message, ids);
+        return finish(snapshot, event.message);
+      }
       scheduleInfrastructure(snapshot, run, event.message, ids);
       return finish(snapshot, event.message);
     }

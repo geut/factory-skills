@@ -49,8 +49,12 @@ function untrackedPaths(cwd: string): Array<string> | { message: string } {
   return listed.stdout.split('\0').filter((item) => item.length > 0);
 }
 
+// The a/ and b/ prefixes every diff parser reads, whatever diff.noprefix or
+// diff.mnemonicPrefix say.
+const DIFF_PREFIXES = ['--src-prefix=a/', '--dst-prefix=b/'];
+
 function trackedDiff(cwd: string, base: string): GitResult | { message: string } {
-  const diff = git(cwd, ['diff', '--no-ext-diff', base]);
+  const diff = git(cwd, ['diff', '--no-ext-diff', ...DIFF_PREFIXES, base]);
   if (gitFailure(diff)) {
     return { message: diff.stderr.trim() || 'cannot read the worktree diff' };
   }
@@ -58,7 +62,7 @@ function trackedDiff(cwd: string, base: string): GitResult | { message: string }
 }
 
 function untrackedDiff(cwd: string, file: string): GitResult {
-  return git(cwd, ['diff', '--no-index', '--', '/dev/null', file]);
+  return git(cwd, ['diff', '--no-index', ...DIFF_PREFIXES, '--', '/dev/null', file]);
 }
 
 // The worktree's changes since `base` (uncommitted by default), untracked files

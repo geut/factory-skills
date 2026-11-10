@@ -10,12 +10,29 @@ import type {
 // The Herdr tab a ticket's panes open in: one per ticket, named after it.
 export type TicketTab = { key: string; label: string };
 
+// Where an agent's project configuration comes from. `worktree`: Pi's own
+// discovery from its working directory, of the context files (AGENTS.md,
+// CLAUDE.md) and, when the project is trusted, of `.pi` prompt files,
+// extensions, skills, and settings. `base`: none of the worktree's. Pi treats
+// the project as untrusted, and gets the files the controller wrote from the
+// ticket's base commit, such as the reviewer's rules, and the stage's skill by
+// name from the factory's own skills.
+export type ProjectConfig =
+  | { kind: 'worktree' }
+  | {
+      appendSystemPrompt: Array<string>;
+      kind: 'base';
+      skill: string;
+      systemPrompt: string | null;
+    };
+
 export type LaunchSpec = {
   cwd: string;
   mode: 'launch' | 'resume';
   model: string;
   paneName: string;
   previousPaneId: string | null;
+  projectConfig: ProjectConfig;
   prompt: string;
   purpose: RunPurpose;
   runId: RunId;

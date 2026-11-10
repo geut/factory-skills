@@ -25,12 +25,13 @@ import type {
   RunId,
   RunRecord,
   SessionRecord,
+  StageName,
   TerminalOutcome,
   WrapupValidationDetail,
 } from '../domain.ts';
 import type { ConfiguredTracker } from '../ports/trackers.ts';
 import { paneLabel, taskProgressText } from '../runtime/policy.ts';
-import type { FactorySubagentRuntime, LaunchSpec } from '../runtime/runtime.ts';
+import type { FactorySubagentRuntime, LaunchSpec, ProjectConfig } from '../runtime/runtime.ts';
 import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
 import { contextGaps } from '../stages/plan/context.ts';
@@ -39,6 +40,7 @@ import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
 import { archiveStamp } from './leftovers.ts';
+import { piAgentDir, writeReviewRules } from './review-rules.ts';
 import {
   listProcesses,
   processAlive,
@@ -262,6 +264,36 @@ async function sweepStrayProcesses(
   input.notify(strayCard(snapshot, outcomes));
 }
 
+// A stage that takes its rules from the base commit gets them written beside
+// its session file, and none of the worktree's own configuration.
+function launchProjectConfig(
+  snapshot: FactorySnapshot,
+  stage: StageName,
+  cwd: string,
+  sessionFile: string,
+): ProjectConfig {
+  const definition = stages[stage];
+  if (definition.projectRules === 'worktree') {
+    return { kind: 'worktree' };
+  }
+  const { execution } = snapshot;
+  if (execution.worktreeBaseSha === null) {
+    throw new Error(`The ${stage} stage needs the ticket's base commit to read the project rules.`);
+  }
+  return {
+    ...writeReviewRules({
+      agentDir: piAgentDir(process.env),
+      baseBranch: execution.worktreeBaseBranch,
+      baseSha: execution.worktreeBaseSha,
+      codeRoot: execution.policy.codeRoot,
+      prefix: sessionFile,
+      worktree: cwd,
+    }),
+    kind: 'base',
+    skill: definition.skill,
+  };
+}
+
 async function launch(
   input: {
     db: DatabaseSync;
@@ -294,12 +326,30 @@ async function launch(
       );
     });
   }
+  let projectConfig: ProjectConfig;
+  try {
+    projectConfig = launchProjectConfig(snapshot, session.stage, action.cwd, sessionFile);
+  } catch (error: unknown) {
+    applyActionEvent(
+      input,
+      {
+        actionId: action.id,
+        code: 'project_rules',
+        kind: 'launch_failed',
+        message: messageOf(error),
+        runId: run.id,
+      },
+      `launch-failed:${action.id}`,
+    );
+    return null;
+  }
   const spec: LaunchSpec = {
     cwd: action.cwd,
     mode,
     model: session.model,
     paneName: paneName(snapshot, session),
     previousPaneId: mode === 'resume' ? previousPaneId(snapshot, run) : null,
+    projectConfig,
     prompt: action.prompt,
     purpose: run.purpose,
     runId: run.id,

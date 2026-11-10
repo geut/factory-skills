@@ -51,6 +51,8 @@ export type Outcome =
       plan?: { path: string; tasks: Array<PlannedTask> };
       // For the closing stage: the pull request it checked, if any.
       pullRequestUrl?: string;
+      // For the closing stage: the project rule files the ticket changes.
+      rules?: Array<string>;
       summary?: TaskSummary;
     }
   | { failures: Array<string>; kind: 'correct' }
@@ -141,6 +143,10 @@ export type StageDefinition<
   parse: (output: string, round: number) => ParsedOutput;
   // Whether runs wait for the stage's input preparation (its effects).
   preparesInput: boolean;
+  // Where the agent's project rules (AGENTS.md, CLAUDE.md) come from: its
+  // worktree, as Pi discovers them, or the ticket's base commit, so the work
+  // under review cannot change the rules it is judged by.
+  projectRules: 'base' | 'worktree';
   // Whether each first run or reentry of a task starts a new numbered round.
   rounds: boolean;
   // The state before the stage's first run, kept on that run for the
@@ -161,10 +167,11 @@ export type StageDefinition<
 
 type StageSpec<Input, Name extends StageName, Prepared> = Omit<
   StageDefinition<Input, Name, Prepared>,
-  'autoExit' | 'optional' | 'parse' | 'rounds' | 'spawning' | 'turn'
+  'autoExit' | 'optional' | 'parse' | 'projectRules' | 'rounds' | 'spawning' | 'turn'
 > & {
   optional?: boolean;
   parse?: (output: string, round: number) => ParsedOutput;
+  projectRules?: 'base' | 'worktree';
   prompts: {
     correction: (failures: Array<string>) => string;
     initial: (input: Input) => string;
@@ -185,6 +192,7 @@ export function defineStage<Input, const Name extends StageName, Prepared = null
     autoExit: true,
     optional: spec.optional ?? false,
     parse: spec.parse ?? ((output) => ({ json: JSON.stringify({ output }), kind: 'unchecked' })),
+    projectRules: spec.projectRules ?? 'worktree',
     rounds: spec.rounds ?? false,
     spawning: false,
     turn: (ask) => {
