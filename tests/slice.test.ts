@@ -1532,10 +1532,11 @@ test('a failed handoff resumes the same wrap-up session with no correction limit
     limits: { infrastructureRetries: 1, workCorrections: 1 },
   });
   let current = wrapup;
+  // Each attempt fails differently: the same failure twice pauses instead.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     runtime.emit(current.runId, {
       kind: 'subagent_done',
-      output: handoff(wrapup.cwd, branch, ['change.txt', 'ghost.txt']),
+      output: handoff(wrapup.cwd, branch, ['change.txt', `ghost${attempt}.txt`]),
       usage: sampleUsage(10 * attempt),
     });
     await waitFor(() => launchesOf(runtime, 'wrapup').length === attempt + 1);
@@ -1544,7 +1545,10 @@ test('a failed handoff resumes the same wrap-up session with no correction limit
     assert.equal(next?.mode, 'resume');
     assert.equal(next?.purpose, 'validation_correction');
     assert.equal(next?.cwd, wrapup.cwd);
-    assert.match(next?.prompt ?? '', /## Files lists ghost\.txt, which did not change/);
+    assert.match(
+      next?.prompt ?? '',
+      new RegExp(`## Files lists ghost${attempt}\\.txt, which did not change`),
+    );
     assert.match(service.status('proj-123'), /stage: wrapup/);
     await waitFor(() => service.status('proj-123').includes('Launched'));
     current = next ?? current;

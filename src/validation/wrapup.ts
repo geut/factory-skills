@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '../domain.ts';
+import { isOsMetadata } from '../os-metadata.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { shellQuote } from '../shell.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
@@ -71,7 +72,8 @@ function hashFile(file: string): string {
 }
 
 // Other tickets keep running beside this one, so only this ticket's
-// directory under `tickets/` is compared.
+// directory under `tickets/` is compared. OS metadata, such as a `.DS_Store`
+// a host's Finder writes through the mount, is not compared.
 function factoryFiles(root: string, ticketDir: string): Record<string, string> {
   const files: Record<string, string> = {};
   const ownTicket = path.relative(root, ticketDir).split(path.sep).join('/');
@@ -84,6 +86,9 @@ function factoryFiles(root: string, ticketDir: string): Record<string, string> {
     }
     for (const entry of entries) {
       if (prefix === '' && factoryInternal.has(entry)) {
+        continue;
+      }
+      if (isOsMetadata(entry)) {
         continue;
       }
       const absolute = path.join(directory, entry);
@@ -112,6 +117,10 @@ function worktreeChanges(worktree: string, baseSha: string): Record<string, stri
   for (let index = 0; index < parts.length; index += 1) {
     const entry = parts[index] ?? '';
     if (entry.length < 4) {
+      continue;
+    }
+    // An untracked OS metadata file is the host's, not wrap-up's.
+    if (entry.startsWith('??') && isOsMetadata(entry.slice(3))) {
       continue;
     }
     listed.add(entry.slice(3));
