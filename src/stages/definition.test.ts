@@ -4,6 +4,7 @@ import { addTasks, blank, task } from '../stories/fixtures.ts';
 import { effects } from './effects.ts';
 import { stages } from './index.ts';
 import type { PlanInput } from './plan/definition.ts';
+import { END_TO_END } from './prompt.ts';
 
 test('every stage builds its prompts from its own skill and contract', () => {
   for (const stage of Object.values(stages)) {
@@ -110,16 +111,25 @@ function workPrompt(qa: 'on' | 'off' | 'skipped'): string {
   return stages.work.turn({ input: input ?? assert.fail('no input'), kind: 'initial' });
 }
 
-test('work leaves end-to-end tests to QA exactly when QA runs for the task', () => {
+test('work leaves end-to-end tests, API requests included, to QA exactly when QA runs for the task', () => {
+  const on = workPrompt('on');
   assert.match(
-    workPrompt('on'),
-    /QA runs for this task: write unit and component tests, keep the existing end-to-end suite passing, and add no end-to-end tests for this task's acceptance criteria\./,
+    on,
+    /QA runs for this task and owns its end-to-end tests: write unit tests \(and component tests where the project has them\), keep the existing end-to-end suite passing, and leave every end-to-end test of this task's acceptance criteria, API requests included, to QA\./,
+  );
+  // Work and QA mean the same thing by end-to-end, a project without a UI included.
+  assert.ok(on.includes(END_TO_END));
+  assert.match(
+    END_TO_END,
+    /a browser, an HTTP API .*test client.*, a job run synchronously, or a CLI run/,
   );
   for (const qa of ['off', 'skipped'] as const) {
+    const off = workPrompt(qa);
     assert.match(
-      workPrompt(qa),
+      off,
       /QA does not run for this task: add or update end-to-end coverage for its acceptance criteria/,
     );
+    assert.ok(off.includes(END_TO_END));
   }
 });
 
@@ -143,10 +153,12 @@ test('QA proves each criterion at the cheapest layer that runs the real code', (
     },
     kind: 'initial',
   });
+  assert.ok(text.includes(END_TO_END));
   assert.match(
     text,
-    /Prove each criterion a user can observe at the cheapest layer that runs the real code; use end-to-end tests for user paths through the running app\./,
+    /Prove each criterion a user can observe at the cheapest layer that runs the real code: a browser end-to-end test for a user path through the running app; a component test or story for a component's look or state; a test-client request, a synchronous job run, or a CLI run for an API, a job, or a command\./,
   );
+  assert.match(text, /a criterion with nothing on screen has none/);
   assert.match(text, /Extend the existing spec for the feature/);
   assert.doesNotMatch(text, /one observable end-to-end test for each criterion/);
 });
