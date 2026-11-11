@@ -199,10 +199,6 @@ export function feedbackItemIds(taskText: string): Array<string> {
   return [...new Set(ids)];
 }
 
-// The name of work validation's check of a round's `## Feedback responses`;
-// its failures read `feedback responses: …`.
-export const FEEDBACK_RESPONSES_CHECK = 'feedback responses';
-
 export type FeedbackResponse = {
   id: string;
   note: string;
@@ -211,7 +207,8 @@ export type FeedbackResponse = {
 
 const RESPONSE = /^-\s*(F\d+)\s*:\s*(addressed|declined)\b\s*(?:[—–:-]\s*)?(.*)$/i;
 
-// The `## Feedback responses` lines of a work reply, one per item.
+// The `## Feedback responses` lines of a work reply, one per item: what the
+// worker says it did about each, for review and the pull request's threads.
 export function feedbackResponses(output: string): Array<FeedbackResponse> | null {
   const start = output.search(/^## Feedback responses\s*$/m);
   if (start === -1) {
@@ -227,54 +224,6 @@ export function feedbackResponses(output: string): Array<FeedbackResponse> | nul
     const status = match[2].toLowerCase() === 'addressed' ? 'addressed' : 'declined';
     return [{ id: match[1].toUpperCase(), note: (match[3] ?? '').trim(), status }];
   });
-}
-
-// What a round's work replies get wrong, read oldest first: an item no reply
-// answers, an unknown id, an item answered twice in one reply, or an item whose
-// latest answer declines it without a reason. A later reply, after a review or
-// a correction, may update some lines; the others stand.
-export function feedbackResponseFailures(
-  outputs: ReadonlyArray<string>,
-  ids: ReadonlyArray<string>,
-): Array<string> {
-  const expected = `one line per item, \`- F1: addressed — what changed\` or \`- F2: declined — why\``;
-  const replies = outputs.map((output) => feedbackResponses(output));
-  if (replies.every((responses) => responses === null)) {
-    return [`## Feedback responses is missing: answer ${ids.join(', ')}, ${expected}.`];
-  }
-  const failures: Array<string> = [];
-  const latest = new Map<string, FeedbackResponse>();
-  for (const [index, responses] of replies.entries()) {
-    const seen = new Set<string>();
-    for (const response of responses ?? []) {
-      const current = index === replies.length - 1;
-      if (!ids.includes(response.id)) {
-        if (current) {
-          failures.push(`${response.id} is not a feedback item of this round (${ids.join(', ')}).`);
-        }
-        continue;
-      }
-      if (seen.has(response.id)) {
-        if (current) {
-          failures.push(`${response.id} is answered more than once.`);
-        }
-        continue;
-      }
-      seen.add(response.id);
-      latest.set(response.id, response);
-    }
-  }
-  for (const id of ids) {
-    const response = latest.get(id);
-    if (response?.status === 'declined' && response.note.length === 0) {
-      failures.push(`${id} is declined without a reason.`);
-    }
-  }
-  const missing = ids.filter((id) => !latest.has(id));
-  if (missing.length > 0) {
-    failures.push(`## Feedback responses has no line for ${missing.join(', ')}: ${expected}.`);
-  }
-  return failures;
 }
 
 // Why a ticket cannot start its next feedback round now, or null when it can.

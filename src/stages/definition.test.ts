@@ -162,28 +162,3 @@ test('QA proves each criterion at the cheapest layer that runs the real code', (
   assert.match(text, /Extend the existing spec for the feature/);
   assert.doesNotMatch(text, /one observable end-to-end test for each criterion/);
 });
-
-test('a work correction asks for the reply only when a feedback round’s answers failed', () => {
-  const code = stages.work.turn({ failures: ['tests: 2 failed'], kind: 'correction' });
-  assert.match(code, /Work validation failed\. Fix these exact problems:\n- tests: 2 failed/);
-  assert.doesNotMatch(code, /feedback answers/);
-  const reply = stages.work.turn({
-    failures: [
-      'feedback responses: F2 is declined without a reason.\n## Feedback responses has no line for F3: …',
-    ],
-    kind: 'correction',
-  });
-  assert.doesNotMatch(reply, /Work validation failed/);
-  assert.match(
-    reply,
-    /Your reply's feedback answers are what failed, not the code:\n- F2 is declined without a reason\.\n- ## Feedback responses has no line for F3: …\nIn this feedback round, your reply must include ## Feedback responses as text/,
-  );
-  const both = stages.work.turn({
-    failures: ['tests: 2 failed', 'feedback responses: F1 is answered more than once.'],
-    kind: 'correction',
-  });
-  assert.match(
-    both,
-    /Fix these exact problems:\n- tests: 2 failed\nYour reply's feedback answers are what failed:/,
-  );
-});

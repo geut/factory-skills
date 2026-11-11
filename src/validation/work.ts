@@ -1,16 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
-import {
-  FEEDBACK_RESPONSES_CHECK,
-  feedbackItemIds,
-  feedbackResponseFailures,
-  feedbackRoundOf,
-} from '../stages/feedback.ts';
-import { runOutput } from '../stages/output.ts';
+import { feedbackRoundOf } from '../stages/feedback.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
   errorReport,
@@ -215,15 +208,6 @@ export function commandCheck(
   };
 }
 
-// A file's text, or empty when it cannot be read.
-function readText(file: string): string {
-  try {
-    return readFileSync(file, 'utf8');
-  } catch {
-    return '';
-  }
-}
-
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
   // The commit work leaves its changes uncommitted on: the ticket's base, or
@@ -232,9 +216,6 @@ async function validateWork(input: {
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   cwd: string;
-  // A feedback round's item ids, which its replies must each answer, and the
-  // replies of the round's work session so far, oldest first.
-  feedback: { ids: Array<string>; outputs: Array<string> } | null;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -259,22 +240,6 @@ async function validateWork(input: {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
-  if (input.feedback !== null) {
-    const answers = feedbackResponseFailures(input.feedback.outputs, input.feedback.ids);
-    checks.push({
-      command: null,
-      details:
-        answers.length === 0
-          ? `${input.feedback.ids.length} feedback item(s) answered`
-          : answers.join('\n'),
-      durationMs: null,
-      exitCode: null,
-      kind: 'schema',
-      name: FEEDBACK_RESPONSES_CHECK,
-      outputExcerpt: null,
-      status: answers.length === 0 ? 'passed' : 'failed',
-    });
-  }
   for (const command of input.commands) {
     const result = await runCommand(command, input.cwd);
     if (result.spawnError !== null) {
@@ -301,7 +266,7 @@ async function validateWork(input: {
 
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
-  validate: ({ run, session, snapshot }) => {
+  validate: ({ session, snapshot }) => {
     const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
@@ -309,22 +274,14 @@ export const workValidator: Validator<'work'> = {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const round = task === null ? null : feedbackRoundOf(task);
     return validateWork({
-      allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
+      // A feedback round may decline every item and change nothing; review
+      // judges each item either way.
+      allowsEmptyDiff: round !== null || allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
       baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
-      feedback:
-        task === null || round === null
-          ? null
-          : {
-              ids: feedbackItemIds(readText(path.join(factoryDir, task.taskFile))),
-              outputs: snapshot.runs
-                .filter((item) => item.sessionId === session.id && item.sequence <= run.sequence)
-                .toSorted((left, right) => left.sequence - right.sequence)
-                .map((item) => (item.id === run.id ? runOutput(run) : runOutput(item))),
-            },
     });
   },
   version: WORK_VALIDATOR_VERSION,

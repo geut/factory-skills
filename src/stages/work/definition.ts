@@ -1,5 +1,5 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
-import { FEEDBACK_RESPONSES_CHECK, feedbackRoundOf } from '../feedback.ts';
+import { feedbackRoundOf } from '../feedback.ts';
 import { runsForTask } from '../flow.ts';
 import { workerSummary } from '../output.ts';
 import { childInstructions, childToolList, END_TO_END } from '../prompt.ts';
@@ -32,12 +32,12 @@ export type WorkInput = {
 
 const skill = 'factory-work';
 
-// Work validation's failures of a feedback round's reply start with this.
-const FEEDBACK_CHECK = `${FEEDBACK_RESPONSES_CHECK}:`;
-
-// The one part of a feedback round's reply the controller reads.
+// What a feedback round's reply carries: the worker's answer to each item,
+// which review reads and the pull request's threads show. Asked for, not
+// checked: review judges every item either way.
 const FEEDBACK_REPLY =
-  'In this feedback round, your reply must include ## Feedback responses as text: one line per item of the task file, `- F1: addressed — what changed` or `- F1: declined — why`. The rest of the template is optional.';
+  'In this feedback round, end your reply with ## Feedback responses: one line per item of the task file, `- F1: addressed — what changed` or `- F1: declined — why`. Review reads them, and a declined item needs a reason it can judge. The rest of the template is optional.';
+
 const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
@@ -97,36 +97,13 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
   name: 'work',
   preparesInput: true,
   prompts: {
-    correction: (failures) => {
-      // A feedback round's reply is checked too; when that is what failed,
-      // the code is fine and only the answers are missing.
-      const reply = failures.filter((failure) => failure.startsWith(FEEDBACK_CHECK));
-      const code = failures.filter((failure) => !failure.startsWith(FEEDBACK_CHECK));
-      return [
+    correction: (failures) =>
+      [
         childInstructions(skill, contract),
         '',
-        ...(code.length === 0
-          ? []
-          : [
-              'Work validation failed. Fix these exact problems:',
-              ...code.map((failure) => `- ${failure}`),
-            ]),
-        ...(reply.length === 0
-          ? []
-          : [
-              `Your reply's feedback answers are what failed${code.length === 0 ? ', not the code' : ''}:`,
-              ...reply.flatMap((failure) =>
-                failure
-                  .slice(FEEDBACK_CHECK.length)
-                  .split('\n')
-                  .map((line) => line.trim())
-                  .filter((line) => line.length > 0)
-                  .map((line) => `- ${line}`),
-              ),
-              FEEDBACK_REPLY,
-            ]),
-      ].join('\n');
-    },
+        'Work validation failed. Fix these exact problems:',
+        ...failures.map((failure) => `- ${failure}`),
+      ].join('\n'),
     initial: (input) => {
       const commands = input.commands.map(
         (command) => `- ${command.name} passes: ${command.argv.join(' ')}`,
@@ -162,7 +139,10 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
           : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',
-        '- the worktree has a change (an investigation ticket may leave none)',
+        // A round may decline every item and change nothing.
+        ...(input.feedbackRound === null
+          ? ['- the worktree has a change (an investigation ticket may leave none)']
+          : []),
         input.feedbackRound === null
           ? '- nothing is committed: HEAD stays at the base commit'
           : "- nothing is committed: HEAD stays at the round's start commit, the pull request's head",

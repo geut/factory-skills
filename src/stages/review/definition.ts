@@ -277,7 +277,7 @@ export const review = defineStage<ReviewInput, 'review'>({
         ...(input.feedbackRound === null
           ? []
           : [
-              `This task is feedback round ${input.feedbackRound} on the ticket's pull request. Each acceptance criterion is a reviewer's feedback item, F1..Fn, and the diff is only this round's change. The worker's reply answers each item under ## Feedback responses: verify an addressed item in the diff, and judge whether a declined item's reason holds. An item declined without a sound reason is a Major finding.`,
+              `This task is feedback round ${input.feedbackRound} on the ticket's pull request. Each acceptance criterion is a reviewer's feedback item, F1..Fn, and the diff is only this round's change. Give each item its Verification line: verified, with the lines that address it in the diff or the code that already handles it; or not_verified, with why it is left as is. The worker's reply may answer the items under ## Feedback responses; use those answers when it does. The diff may be empty when every item is declined. An item left unaddressed without a sound reason, from the worker or from the code, is a Major finding.`,
             ]),
         '',
         ...projectRules(input.rules),

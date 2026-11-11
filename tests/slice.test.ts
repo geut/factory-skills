@@ -2618,7 +2618,7 @@ test('a feedback round takes the pull request feedback back through work, review
   );
   assert.match(
     roundWork?.prompt ?? '',
-    /edit factory state\.\nIn this feedback round, your reply must include ## Feedback responses as text/,
+    /edit factory state\.\nIn this feedback round, end your reply with ## Feedback responses/,
   );
   // Deduped per execution, so a rerun's round 1 is a new round.
   const execution = String(
@@ -2673,7 +2673,8 @@ test('a feedback round takes the pull request feedback back through work, review
     skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
   });
 
-  // A reply that does not answer every item is corrected.
+  // The worker's answers are asked for, not checked: a reply that answers one
+  // item, or none, goes on to review, which judges every item.
   await waitFor(() => service.status('proj-123').includes('Launched'));
   writeFileSync(path.join(work.cwd, 'flag.txt'), 'keepFilter\n');
   runtime.emit(roundWork?.runId ?? runId('missing'), {
@@ -2682,27 +2683,14 @@ test('a feedback round takes the pull request feedback back through work, review
       '## Status\n\nready_for_review\n\n## Feedback responses\n\n- F1: addressed — renamed the flag\n',
     usage: sampleUsage(40),
   });
-  await waitFor(() => launchesOf(runtime, 'work').length === 3);
-  const corrected = launchesOf(runtime, 'work')[2];
-  assert.match(
-    corrected?.prompt ?? '',
-    /Your reply's feedback answers are what failed, not the code:/,
-  );
-  assert.match(corrected?.prompt ?? '', /^- ## Feedback responses has no line for F2/m);
-  assert.doesNotMatch(corrected?.prompt ?? '', /Work validation failed/);
-  await waitFor(() => service.status('proj-123').includes('Launched'));
-  runtime.emit(corrected?.runId ?? runId('missing'), {
-    kind: 'subagent_done',
-    output:
-      '## Status\n\nready_for_review\n\n## Feedback responses\n\n- F1: addressed — renamed the flag\n- F2: declined — the README has no flag section yet\n',
-    usage: sampleUsage(50),
-  });
 
   // Review sees the round, then wrap-up starts again in its own session.
   await waitFor(() => launchesOf(runtime, 'review').length === 2);
   const roundReview = launchesOf(runtime, 'review')[1];
   assert.match(roundReview?.prompt ?? '', /This task is feedback round 1/);
   assert.match(roundReview?.prompt ?? '', /AC1: F1: review thread on `change.txt:1`/);
+  assert.match(roundReview?.prompt ?? '', /Give each item its Verification line/);
+  assert.equal(launchesOf(runtime, 'work').length, 2);
   await waitFor(() => service.status('proj-123').includes('Launched'));
   runtime.emit(roundReview?.runId ?? runId('missing'), {
     kind: 'subagent_done',
