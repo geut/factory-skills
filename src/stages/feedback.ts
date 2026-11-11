@@ -199,6 +199,10 @@ export function feedbackItemIds(taskText: string): Array<string> {
   return [...new Set(ids)];
 }
 
+// The name of work validation's check of a round's `## Feedback responses`;
+// its failures read `feedback responses: …`.
+export const FEEDBACK_RESPONSES_CHECK = 'feedback responses';
+
 export type FeedbackResponse = {
   id: string;
   note: string;

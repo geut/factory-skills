@@ -4,7 +4,12 @@ import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
-import { feedbackItemIds, feedbackResponseFailures, feedbackRoundOf } from '../stages/feedback.ts';
+import {
+  FEEDBACK_RESPONSES_CHECK,
+  feedbackItemIds,
+  feedbackResponseFailures,
+  feedbackRoundOf,
+} from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
@@ -265,7 +270,7 @@ async function validateWork(input: {
       durationMs: null,
       exitCode: null,
       kind: 'schema',
-      name: 'feedback responses',
+      name: FEEDBACK_RESPONSES_CHECK,
       outputExcerpt: null,
       status: answers.length === 0 ? 'passed' : 'failed',
     });

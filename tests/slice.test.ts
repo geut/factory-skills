@@ -2616,6 +2616,10 @@ test('a feedback round takes the pull request feedback back through work, review
     roundWork?.prompt ?? '',
     /This task is feedback round 1 on the ticket's pull request/,
   );
+  assert.match(
+    roundWork?.prompt ?? '',
+    /edit factory state\.\nIn this feedback round, your reply must include ## Feedback responses as text/,
+  );
   // Deduped per execution, so a rerun's round 1 is a new round.
   const execution = String(
     db.prepare('SELECT id FROM ticket_executions WHERE is_current = 1').get()?.['id'],
@@ -2680,7 +2684,12 @@ test('a feedback round takes the pull request feedback back through work, review
   });
   await waitFor(() => launchesOf(runtime, 'work').length === 3);
   const corrected = launchesOf(runtime, 'work')[2];
-  assert.match(corrected?.prompt ?? '', /## Feedback responses has no line for F2/);
+  assert.match(
+    corrected?.prompt ?? '',
+    /Your reply's feedback answers are what failed, not the code:/,
+  );
+  assert.match(corrected?.prompt ?? '', /^- ## Feedback responses has no line for F2/m);
+  assert.doesNotMatch(corrected?.prompt ?? '', /Work validation failed/);
   await waitFor(() => service.status('proj-123').includes('Launched'));
   runtime.emit(corrected?.runId ?? runId('missing'), {
     kind: 'subagent_done',

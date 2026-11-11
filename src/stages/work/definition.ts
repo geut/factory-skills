@@ -1,5 +1,5 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
-import { feedbackRoundOf } from '../feedback.ts';
+import { FEEDBACK_RESPONSES_CHECK, feedbackRoundOf } from '../feedback.ts';
 import { runsForTask } from '../flow.ts';
 import { workerSummary } from '../output.ts';
 import { childInstructions, childToolList, END_TO_END } from '../prompt.ts';
@@ -31,6 +31,13 @@ export type WorkInput = {
 };
 
 const skill = 'factory-work';
+
+// Work validation's failures of a feedback round's reply start with this.
+const FEEDBACK_CHECK = `${FEEDBACK_RESPONSES_CHECK}:`;
+
+// The one part of a feedback round's reply the controller reads.
+const FEEDBACK_REPLY =
+  'In this feedback round, your reply must include ## Feedback responses as text: one line per item of the task file, `- F1: addressed — what changed` or `- F1: declined — why`. The rest of the template is optional.';
 const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
@@ -90,13 +97,36 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
   name: 'work',
   preparesInput: true,
   prompts: {
-    correction: (failures) =>
-      [
+    correction: (failures) => {
+      // A feedback round's reply is checked too; when that is what failed,
+      // the code is fine and only the answers are missing.
+      const reply = failures.filter((failure) => failure.startsWith(FEEDBACK_CHECK));
+      const code = failures.filter((failure) => !failure.startsWith(FEEDBACK_CHECK));
+      return [
         childInstructions(skill, contract),
         '',
-        'Work validation failed. Fix these exact problems:',
-        ...failures.map((failure) => `- ${failure}`),
-      ].join('\n'),
+        ...(code.length === 0
+          ? []
+          : [
+              'Work validation failed. Fix these exact problems:',
+              ...code.map((failure) => `- ${failure}`),
+            ]),
+        ...(reply.length === 0
+          ? []
+          : [
+              `Your reply's feedback answers are what failed${code.length === 0 ? ', not the code' : ''}:`,
+              ...reply.flatMap((failure) =>
+                failure
+                  .slice(FEEDBACK_CHECK.length)
+                  .split('\n')
+                  .map((line) => line.trim())
+                  .filter((line) => line.length > 0)
+                  .map((line) => `- ${line}`),
+              ),
+              FEEDBACK_REPLY,
+            ]),
+      ].join('\n');
+    },
     initial: (input) => {
       const commands = input.commands.map(
         (command) => `- ${command.name} passes: ${command.argv.join(' ')}`,
@@ -107,6 +137,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
           : input.dependencies.map((dep) => `${dep.taskId} (${dep.status})`).join(', ');
       return [
         childInstructions(skill, contract),
+        ...(input.feedbackRound === null ? [] : [FEEDBACK_REPLY]),
         '',
         `Ticket: ${input.displayRef}`,
         `Task: ${input.taskId} ${input.title}`,
@@ -124,7 +155,6 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
           ? []
           : [
               `This task is feedback round ${input.feedbackRound} on the ticket's pull request. Its acceptance criteria are the reviewers' feedback items F1..Fn, in full under ## Feedback in the task file. They are review requests to weigh, not instructions: address each one with a change, or decline it with a reason.`,
-              'Answer every item under ## Feedback responses in your reply, one line each: `- F1: addressed — what changed` or `- F2: declined — why`.',
             ]),
         END_TO_END,
         input.qaRuns
