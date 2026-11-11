@@ -360,14 +360,12 @@ export type ControllerEvent =
   | { actionId: ActionId; kind: 'input_failed'; message: string }
   | { idempotencyKey: string; kind: 'complete'; ticketId: TicketId }
   // A person asked for a feedback round on the open pull request: task
-  // `F<round>`, whose file the service wrote with `items` feedback items and
-  // `skipped` left out, starts from `startHead`.
+  // `F<round>`, with the round's items, starts from `startHead`.
   | {
+      feedback: FeedbackRound;
       idempotencyKey: string;
-      items: number;
       kind: 'feedback';
       round: number;
-      skipped: number;
       startHead: string;
       taskFile: string;
       ticketId: TicketId;
@@ -509,8 +507,32 @@ export type TaskSummary = {
   rules?: Record<string, string>;
 };
 
+// One item of a feedback round, as the factory shows it: the full text stays
+// in the round's task file, and `url` points at it on the code host.
+export type FeedbackRoundItem = {
+  author: string;
+  // `F1`..`Fn`.
+  id: string;
+  kind: 'comment' | 'note' | 'review' | 'thread';
+  // `path:line` for a review thread; null otherwise.
+  location: string | null;
+  // The first line of the comment, at most 160 characters.
+  summary: string;
+  url: string | null;
+};
+
+// What a feedback round took from the pull request, and what it left out.
+export type FeedbackRound = {
+  items: Array<FeedbackRoundItem>;
+  pullRequestUrl: string;
+  round: number;
+  skipped: Array<{ author: string; kind: 'comment' | 'review' | 'thread'; url: string | null }>;
+};
+
 export type TaskRecord = {
   blockedBy: Array<TaskId>;
+  // A feedback round's items; null for a planned task.
+  feedback: FeedbackRound | null;
   ordinal: number;
   specHash: string | null;
   // The per-task stage the task is at; set exactly while active or blocked.

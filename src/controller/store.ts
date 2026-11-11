@@ -38,6 +38,7 @@ import {
   type WorktreeStatus,
   type TicketId,
 } from '../domain.ts';
+import { parseFeedbackRound } from '../stages/feedback.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { isTitleTemplate, type TitleTemplate } from '../stages/wrapup/title.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
@@ -683,8 +684,10 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
       )
       .all(execution, id);
     const stage = nullableText(record, 'stage');
+    const feedback = nullableText(record, 'feedback_json');
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
+      feedback: feedback === null ? null : parseFeedbackRound(feedback),
       ordinal: integer(record, 'ordinal'),
       specHash: nullableText(record, 'spec_hash'),
       stage: stage === null ? null : taskStage(stage),
@@ -1174,9 +1177,9 @@ function updateExecution(
 function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, now: string): void {
   db.prepare(
     `INSERT INTO tasks
-      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json,
+      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json, feedback_json,
        created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution,
     task.taskId,
@@ -1187,6 +1190,7 @@ function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, 
     task.status,
     task.stage,
     jsonText(task.summaries),
+    task.feedback === null ? null : jsonText(task.feedback),
     now,
     now,
   );
@@ -2063,21 +2067,46 @@ export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): vo
   ).run(now);
 }
 
+// `result` is what the action left behind, such as the pane it opened.
 export function finishLeasedAction(
   db: DatabaseSync,
   action: ActionId,
   now: string,
   outcome: 'succeeded' | 'failed',
   error: string | null,
+  result: Record<string, unknown> | null = null,
 ): void {
   immediateTransaction(db, () => {
     db.prepare(
       `UPDATE actions
        SET status = ?, last_error = ?, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
-           completed_at = ?, updated_at = ?
+           completed_at = ?, updated_at = ?, result_json = coalesce(?, result_json)
        WHERE id = ? AND status = 'leased'`,
-    ).run(outcome, error, now, now, action);
+    ).run(outcome, error, now, now, result === null ? null : JSON.stringify(result), action);
   });
+}
+
+// The handoff panes an execution opened, oldest first, with their pane ids.
+export function handoffPanes(
+  db: DatabaseSync,
+  executionId: ExecutionId,
+): Array<{ actionId: string; kind: 'open_diff' | 'open_pane'; paneId: string }> {
+  return db
+    .prepare(
+      `SELECT id, kind, json_extract(result_json, '$.paneId') AS pane_id FROM actions
+       WHERE execution_id = ? AND kind IN ('open_pane', 'open_diff') AND status = 'succeeded'
+         AND json_extract(result_json, '$.paneId') IS NOT NULL
+       ORDER BY created_at, id`,
+    )
+    .all(executionId)
+    .map((item) => {
+      const record = row(item);
+      return {
+        actionId: text(record, 'id'),
+        kind: text(record, 'kind') === 'open_diff' ? 'open_diff' : 'open_pane',
+        paneId: text(record, 'pane_id'),
+      };
+    });
 }
 
 export function loadSnapshotByRun(db: DatabaseSync, id: RunId): FactorySnapshot | null {

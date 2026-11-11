@@ -2656,6 +2656,17 @@
               "type": "string"
             }
           },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackRound"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A feedback round's items, for task `F<n>`; null for a planned task."
+          },
           "id": {
             "type": "string"
           },
@@ -2732,12 +2743,118 @@
         },
         "required": [
           "blockedBy",
+          "feedback",
           "id",
           "ordinal",
           "stage",
           "status",
           "summaries",
           "title"
+        ],
+        "additionalProperties": false
+      },
+      "FeedbackRound": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackRoundItem"
+            }
+          },
+          "pullRequestUrl": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "comment",
+                    "review",
+                    "thread"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "author",
+                "kind",
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Feedback left out: not from collaborators or codeHost.feedback.authors."
+          }
+        },
+        "required": [
+          "items",
+          "pullRequestUrl",
+          "round",
+          "skipped"
+        ],
+        "additionalProperties": false
+      },
+      "FeedbackRoundItem": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "`F1`..`Fn`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "note",
+              "review",
+              "thread"
+            ]
+          },
+          "location": {
+            "description": "`path:line` of a review thread; null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "author",
+          "id",
+          "kind",
+          "location",
+          "summary",
+          "url"
         ],
         "additionalProperties": false
       },

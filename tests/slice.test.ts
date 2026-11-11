@@ -2591,12 +2591,26 @@ test('a feedback round takes the pull request feedback back through work, review
   });
   await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
   await service.syncPullRequests();
+  // The first handoff opened the session and diff panes. Say the person closed
+  // the diff pane and Herdr gave its id to a pane of their own.
+  await waitFor(() => runtime.panes.length === 2);
+  const [sessionPane, diffPane] = ['pane-1', 'pane-2'];
+  runtime.paneProcesses.set(diffPane, [{ marker: 'their own shell', pid: 1 }]);
 
   const started = await service.command('feedback proj-123 "Also mention the flag in the README."');
   assert.match(started, /stage: work/);
   await waitFor(() => launchesOf(runtime, 'work').length === 2);
   const roundWork = launchesOf(runtime, 'work')[1];
+  // The round's card lists its items, for every Pi session.
+  const roundCard =
+    harness.notified.find((card) => card.includes('feedback round 1 · 2 items')) ?? '';
+  assert.match(roundCard, /item: F1 reviewer · change\.txt:1: Name the flag after what it keeps\./);
+  assert.match(roundCard, /item: F2 operator · note: Also mention the flag in the README\./);
+  assert.match(roundCard, /Full text: .*feedback\/1\/task\.md/);
   assert.equal(roundWork?.cwd, work.cwd);
+  // The round closes the earlier handoff's own pane, and only that one.
+  await waitFor(() => runtime.closedPanes.length > 0);
+  assert.deepEqual(runtime.closedPanes, [sessionPane]);
   assert.match(roundWork?.prompt ?? '', /Task: F1 Feedback round 1/);
   assert.match(
     roundWork?.prompt ?? '',
@@ -2625,6 +2639,35 @@ test('a feedback round takes the pull request feedback back through work, review
   assert.match(task, /^- \[ \] F1: review thread on `change.txt:1` \(reviewer\): Name the flag/m);
   assert.match(task, /^- \[ \] F2: the operator's note: Also mention the flag in the README\.$/m);
   assert.match(task, /- 1 from coderabbitai: not a collaborator/);
+  // The controller keeps each item's place and first line on task F1.
+  const stored: unknown = JSON.parse(
+    String(
+      db.prepare("SELECT feedback_json FROM tasks WHERE task_id = 'F1'").get()?.['feedback_json'],
+    ),
+  );
+  assert.deepEqual(stored, {
+    items: [
+      {
+        author: 'reviewer',
+        id: 'F1',
+        kind: 'thread',
+        location: 'change.txt:1',
+        summary: 'Name the flag after what it keeps.',
+        url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
+      },
+      {
+        author: 'operator',
+        id: 'F2',
+        kind: 'note',
+        location: null,
+        summary: 'Also mention the flag in the README.',
+        url: null,
+      },
+    ],
+    pullRequestUrl: 'https://github.com/geut/factory-skills/pull/7',
+    round: 1,
+    skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+  });
 
   // A reply that does not answer every item is corrected.
   await waitFor(() => service.status('proj-123').includes('Launched'));
@@ -2669,6 +2712,11 @@ test('a feedback round takes the pull request feedback back through work, review
     usage: sampleUsage(40),
   });
   await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  // The round's handoff opens a fresh session and diff pane, on the session's model.
+  await waitFor(() => runtime.panes.length === 4);
+  const reopened = runtime.panes[2]?.target;
+  assert.equal(reopened?.kind === 'session' ? reopened.model : null, 'work-model');
+  assert.match(runtime.panes[2]?.marker ?? '', /^handoff:/);
   assert.equal(
     String(db.prepare("SELECT status FROM tasks WHERE task_id = 'F1'").get()?.['status']),
     'done',

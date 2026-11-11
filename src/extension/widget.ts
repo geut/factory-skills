@@ -48,7 +48,9 @@ export function ticketLines(ticket: TicketProgress, theme: AgentTheme): Array<st
     `${theme.fg(tone, ticket.needsUser ? '▲' : '●')} ${parts.join(theme.fg('dim', ' · '))}`,
   ];
   if (ticket.current !== null) {
-    lines.push(`  ${ticket.current.label}`);
+    // One line: a long feedback item is cut to the width with the rest.
+    const detail = ticket.current.detail === null ? '' : ` · ${ticket.current.detail}`;
+    lines.push(`  ${ticket.current.label}${theme.fg('dim', detail)}`);
   }
   if (ticket.needsUser) {
     const next = ticket.next === null ? '' : ` · → ${ticket.next}`;

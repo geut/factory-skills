@@ -312,6 +312,7 @@ test('a feedback round works on top of the round start, and its reply answers ev
         owner.taskId = taskId('F1');
         snapshot.tasks.push({
           blockedBy: [],
+          feedback: null,
           ordinal: 2,
           specHash: null,
           stage: 'work',

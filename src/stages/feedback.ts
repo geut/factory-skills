@@ -1,4 +1,12 @@
-import { taskId, type FactorySnapshot, type TaskId, type TaskRecord } from '../domain.ts';
+import { z } from 'zod';
+import {
+  taskId,
+  type FactorySnapshot,
+  type FeedbackRound,
+  type FeedbackRoundItem,
+  type TaskId,
+  type TaskRecord,
+} from '../domain.ts';
 import type {
   FeedbackItem,
   PullRequestFeedback,
@@ -284,4 +292,82 @@ export function feedbackRoundRefusal(
     return `${ref} has had ${rounds} feedback round${rounds === 1 ? '' : 's'}, the limit (limits.feedbackRounds).`;
   }
   return null;
+}
+
+// The round as the controller keeps it: each item's author, place, and first
+// line, with the full text left in the task file.
+export function roundRecord(input: {
+  feedback: PullRequestFeedback;
+  items: ReadonlyArray<RoundItem>;
+  pullRequestUrl: string;
+  round: number;
+}): FeedbackRound {
+  return {
+    items: input.items.map((item): FeedbackRoundItem => {
+      if ('note' in item) {
+        return {
+          author: 'operator',
+          id: item.id,
+          kind: 'note',
+          location: null,
+          summary: firstLine(item.note),
+          url: null,
+        };
+      }
+      const { feedback } = item;
+      if (feedback.kind === 'thread') {
+        const last = feedback.comments.at(-1);
+        return {
+          author: last?.author ?? 'unknown',
+          id: item.id,
+          kind: 'thread',
+          location: feedback.line === null ? feedback.path : `${feedback.path}:${feedback.line}`,
+          summary: firstLine(last?.body ?? ''),
+          url: last?.url ?? null,
+        };
+      }
+      return {
+        author: feedback.author,
+        id: item.id,
+        kind: feedback.kind,
+        location: null,
+        summary: firstLine(feedback.body),
+        url: feedback.url,
+      };
+    }),
+    pullRequestUrl: input.pullRequestUrl,
+    round: input.round,
+    skipped: input.feedback.skipped.map((item) => ({
+      author: item.author,
+      kind: item.kind,
+      url: item.url,
+    })),
+  };
+}
+
+const feedbackRoundSchema = z.object({
+  items: z.array(
+    z.object({
+      author: z.string(),
+      id: z.string(),
+      kind: z.enum(['comment', 'note', 'review', 'thread']),
+      location: z.string().nullable(),
+      summary: z.string(),
+      url: z.string().nullable(),
+    }),
+  ),
+  pullRequestUrl: z.string(),
+  round: z.number().int().positive(),
+  skipped: z.array(
+    z.object({
+      author: z.string(),
+      kind: z.enum(['comment', 'review', 'thread']),
+      url: z.string().nullable(),
+    }),
+  ),
+}) satisfies z.ZodType<FeedbackRound>;
+
+// A stored round, as the store reads it back; throws on one it cannot read.
+export function parseFeedbackRound(json: string): FeedbackRound {
+  return feedbackRoundSchema.parse(JSON.parse(json));
 }

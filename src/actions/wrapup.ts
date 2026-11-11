@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { finishLeasedAction, ticketTab } from '../controller/store.ts';
-import type { ActionRecord, FactorySnapshot, IdSource, RunId } from '../domain.ts';
+import { finishLeasedAction, handoffPanes, ticketTab } from '../controller/store.ts';
+import type { ActionRecord, ExecutionId, FactorySnapshot, IdSource, RunId } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { runOutput } from '../stages/output.ts';
@@ -20,6 +20,42 @@ export function pullRequestLookup(codeHost: CodeHost): PullRequestLookup {
   return (url) => codeHost.pullRequest(url) ?? { missing: true };
 }
 
+// The marker a handoff pane's processes carry, as FACTORY_WORKTREE.
+export function handoffMarker(actionId: string): string {
+  return `handoff:${actionId}`;
+}
+
+// Closes the execution's earlier handoff panes of `kinds` that are still open,
+// so a feedback round's handoff replaces them instead of adding more, and the
+// round's wrap-up is the only Pi with the wrap-up session open. A recorded pane
+// is closed only while a process in it carries that pane's own marker: Herdr
+// can give a closed pane's id to another pane, which is left alone.
+export async function closeHandoffPanes(
+  input: { db: DatabaseSync; runtime: FactorySubagentRuntime },
+  executionId: ExecutionId,
+  kinds: ReadonlyArray<'open_diff' | 'open_pane'>,
+): Promise<Array<string>> {
+  const { runtime } = input;
+  if (runtime.closePane === undefined || runtime.paneCarries === undefined) {
+    return [];
+  }
+  const closed: Array<string> = [];
+  for (const pane of handoffPanes(input.db, executionId)) {
+    if (!kinds.includes(pane.kind)) {
+      continue;
+    }
+    // Called on the runtime, which may be a class: its methods need `this`.
+    const ours = await runtime
+      .paneCarries(pane.paneId, handoffMarker(pane.actionId))
+      .catch(() => false);
+    if (ours) {
+      await runtime.closePane(pane.paneId).catch(() => undefined);
+      closed.push(pane.paneId);
+    }
+  }
+  return closed;
+}
+
 // Opens a handoff pane. A failure retries here and never fails the handoff.
 export async function openHandoffPane(
   input: Context & { runtime: FactorySubagentRuntime },
@@ -30,7 +66,7 @@ export async function openHandoffPane(
   const session =
     run === null ? null : (snapshot.sessions.find((item) => item.id === run.sessionId) ?? null);
   const sessionFile = session?.sessionFile ?? null;
-  if (sessionFile === null) {
+  if (session === null || sessionFile === null) {
     finishLeasedAction(
       input.db,
       action.id,
@@ -41,7 +77,10 @@ export async function openHandoffPane(
     return null;
   }
   const worktree = snapshot.execution.worktreePath ?? snapshot.execution.policy.codeRoot;
+  // A feedback round's handoff replaces the panes of the one before.
+  await closeHandoffPanes(input, snapshot.execution.id, [action.kind]);
   let lastError = 'herdr pane open failed';
+  let opened: { paneId: string } | null = null;
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
       if (action.kind === 'open_diff') {
@@ -63,23 +102,32 @@ export async function openHandoffPane(
         if (notesFile !== null) {
           writeFileSync(notesFile, `${JSON.stringify(notes, null, 2)}\n`);
         }
-        await input.runtime.openPane({
+        opened = await input.runtime.openPane({
           cwd: action.cwd,
+          marker: handoffMarker(action.id),
           name: action.name,
           scriptFile: `${sessionFile}.diff.sh`,
           tab: ticketTab(snapshot),
           target: { file, kind: 'diff', notes: notesFile },
         });
       } else {
-        await input.runtime.openPane({
+        opened = await input.runtime.openPane({
           cwd: worktree,
+          marker: handoffMarker(action.id),
           name: action.name,
           scriptFile: `${sessionFile}.inspect.sh`,
           tab: ticketTab(snapshot),
-          target: { kind: 'session', sessionFile },
+          target: {
+            kind: 'session',
+            model: session.model,
+            sessionFile,
+            thinking: session.thinking,
+          },
         });
       }
-      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
+      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null, {
+        paneId: opened.paneId,
+      });
       return null;
     } catch (error: unknown) {
       lastError = error instanceof Error ? error.message : String(error);

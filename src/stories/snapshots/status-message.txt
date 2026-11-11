@@ -813,6 +813,127 @@
   Merge it yourself, then run /factory complete dpaez/factory-dashboard#11.
   → /factory complete dpaez/factory-dashboard#11
 
+== feedback round started · 40 cols ==
+● dpaez/factory-dashboard#11 · work ·
+  feedback round 1 · 2 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpa…
+  • F1 dpaez · comment: When a feedback
+    round starts the ticket is moved to
+    `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-in
+    spector.png` look like if the task
+    is on `plan` stage.
+  • F2 dpaez ·
+    src/lib/factory/ticket-actions.ts:42
+    : Make it visually clear that this
+    is a feedback round.
+  +8 lines · expand to read
+
+== feedback round started · 60 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 2
+  items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard…
+  • F1 dpaez · comment: When a feedback round starts the
+    ticket is moved to `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look
+    like if the task is on `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it
+    visually clear that this is a feedback round.
+  +5 lines · expand to read
+
+== feedback round started · 80 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 2 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard-11/feedback/1/task.…
+  • F1 dpaez · comment: When a feedback round starts the ticket is moved to
+    `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on
+    `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that
+    this is a feedback round.
+  +3 lines · expand to read
+
+== feedback round started · 120 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 2 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard-11/feedback/1/task.md
+  • F1 dpaez · comment: When a feedback round starts the ticket is moved to `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that this is a feedback round.
+  +2 lines · expand to read
+
+== feedback round started: many items · 40 cols ==
+● dpaez/factory-dashboard#11 · work ·
+  feedback round 1 · 8 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpa…
+  • F1 dpaez · comment: When a feedback
+    round starts the ticket is moved to
+    `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-in
+    spector.png` look like if the task
+    is on `plan` stage.
+  • F2 dpaez ·
+    src/lib/factory/ticket-actions.ts:42
+    : Make it visually clear that this
+    is a feedback round.
+  • F3 dpaez · comment: Bot finding 3:
+    rename the helper.
+  • F4 dpaez · comment: Bot finding 4:
+    rename the helper.
+  • F5 dpaez · comment: Bot finding 5:
+    rename the helper.
+  • +3 more in the task file
+  +8 lines · expand to read
+
+== feedback round started: many items · 60 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 8
+  items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard…
+  • F1 dpaez · comment: When a feedback round starts the
+    ticket is moved to `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look
+    like if the task is on `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it
+    visually clear that this is a feedback round.
+  • F3 dpaez · comment: Bot finding 3: rename the helper.
+  • F4 dpaez · comment: Bot finding 4: rename the helper.
+  • F5 dpaez · comment: Bot finding 5: rename the helper.
+  • +3 more in the task file
+  +5 lines · expand to read
+
+== feedback round started: many items · 80 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 8 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard-11/feedback/1/task.…
+  • F1 dpaez · comment: When a feedback round starts the ticket is moved to
+    `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on
+    `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that
+    this is a feedback round.
+  • F3 dpaez · comment: Bot finding 3: rename the helper.
+  • F4 dpaez · comment: Bot finding 4: rename the helper.
+  • F5 dpaez · comment: Bot finding 5: rename the helper.
+  • +3 more in the task file
+  +3 lines · expand to read
+
+== feedback round started: many items · 120 cols ==
+● dpaez/factory-dashboard#11 · work · feedback round 1 · 8 items
+  F1 Feedback round 1 · 6/7 done
+  Full text: /repo/.factory/tickets/dpaez-factory-dashboard-11/feedback/1/task.md
+  • F1 dpaez · comment: When a feedback round starts the ticket is moved to `work` stage, screenshots like
+    `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on `plan` stage.
+  • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that this is a feedback round.
+  • F3 dpaez · comment: Bot finding 3: rename the helper.
+  • F4 dpaez · comment: Bot finding 4: rename the helper.
+  • F5 dpaez · comment: Bot finding 5: rename the helper.
+  • +3 more in the task file
+  +2 lines · expand to read
+
 == /factory complete · 40 cols ==
 ● dpaez/factory-dashboard#11 · done ·
   complete

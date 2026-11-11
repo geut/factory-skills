@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FactorySnapshot } from '../domain.ts';
+import type { FactorySnapshot, FeedbackRound } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
 import {
   feedbackRoundRefusal,
@@ -9,6 +9,7 @@ import {
   feedbackTaskFile,
   renderFeedbackTask,
   roundItems,
+  roundRecord,
 } from '../stages/feedback.ts';
 import { stageEnabled } from '../stages/flow.ts';
 
@@ -17,10 +18,10 @@ import { stageEnabled } from '../stages/flow.ts';
 // file. Nothing changes here, so a refusal leaves the ticket as it was; the
 // caller writes the file once the controller has accepted the round.
 
-export type FeedbackRound = {
-  items: number;
+export type PreparedRound = {
+  // What the controller keeps about the round.
+  feedback: FeedbackRound;
   round: number;
-  skipped: number;
   startHead: string;
   // Where the task file goes, relative to the ticket directory, and its text.
   taskFile: string;
@@ -64,7 +65,7 @@ export function prepareFeedbackRound(input: {
   // The pull request recorded for the ticket, if any.
   pullRequestUrl: string | null;
   snapshot: FactorySnapshot;
-}): FeedbackRound | FeedbackRefusal {
+}): PreparedRound | FeedbackRefusal {
   const { execution, ticket } = input.snapshot;
   const refusal = feedbackRoundRefusal(input.snapshot);
   if (refusal !== null) {
@@ -105,9 +106,8 @@ export function prepareFeedbackRound(input: {
   }
   const round = feedbackRounds(input.snapshot.tasks) + 1;
   return {
-    items: items.length,
+    feedback: roundRecord({ feedback, items, pullRequestUrl: input.pullRequestUrl, round }),
     round,
-    skipped: feedback.skipped.length,
     startHead: head,
     taskFile: feedbackTaskFile(round),
     taskText: renderFeedbackTask({
@@ -123,7 +123,7 @@ export function prepareFeedbackRound(input: {
 
 // Writes an accepted round's task file into the ticket directory, unless it is
 // there already: a repeated command must not change a round that is running.
-export function writeFeedbackTask(factoryDir: string, round: FeedbackRound): void {
+export function writeFeedbackTask(factoryDir: string, round: PreparedRound): void {
   const file = path.join(factoryDir, round.taskFile);
   mkdirSync(path.dirname(file), { recursive: true });
   try {

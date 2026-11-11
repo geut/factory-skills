@@ -63,6 +63,7 @@ test('an earlier task’s accepted rule change is judged again only when it chan
     const id = taskId(`0${ordinal}`);
     return {
       blockedBy: [],
+      feedback: null,
       ordinal,
       specHash: null,
       stage: null,

@@ -50,7 +50,7 @@ import {
 } from './strays.ts';
 import { applyTicketUpdate, trackerIssueOf } from './ticket-source.ts';
 import { prepareWorktree, setUpWorktree } from './worktree.ts';
-import { openHandoffPane } from './wrapup.ts';
+import { closeHandoffPanes, openHandoffPane } from './wrapup.ts';
 
 function messageOf(error: unknown): string {
   if (
@@ -318,6 +318,13 @@ async function launch(
   mkdirSync(snapshot.execution.factoryDir, { recursive: true });
   const sessionFile = session.sessionFile ?? newSessionFile(input.factoryRoot, snapshot, session);
   const mode = action.kind === 'resume_run' ? 'resume' : action.mode;
+  // A feedback round reopens the wrap-up session later; until then, the earlier
+  // handoff's panes would show a stale session and diff, and keep the session
+  // file open beside the round's agents.
+  const roundTask = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
+  if (roundTask?.feedback !== null && roundTask?.feedback !== undefined) {
+    await closeHandoffPanes(input, snapshot.execution.id, ['open_pane', 'open_diff']);
+  }
   if (session.stage === 'work' || session.stage === 'qa') {
     // Cleanup never holds up the run: a sweep that fails is only reported.
     await sweepStrayProcesses(input, snapshot, run).catch((error: unknown) => {

@@ -1,6 +1,8 @@
+import path from 'node:path';
 import type {
   ActionRecord,
   FactorySnapshot,
+  FeedbackRoundItem,
   ReviewVerdict,
   RunId,
   RunRecord,
@@ -339,6 +341,49 @@ export function attentionCard(snapshot: FactorySnapshot, message: string): strin
       stage: snapshot.execution.stage,
       task: currentStep(snapshot),
       tone: status === 'failed' ? 'failed' : 'attention',
+    }),
+  );
+}
+
+// The most items a feedback round's card lists; the task file has the rest.
+const ROUND_CARD_ITEMS = 5;
+
+function roundItemLine(item: FeedbackRoundItem): string {
+  const where = item.kind === 'note' ? 'note' : (item.location ?? item.kind);
+  return `${item.id} ${item.author} · ${where}: ${item.summary}`;
+}
+
+// The card a feedback round posts when it starts: each item on its own line,
+// what was skipped, and where the full text is. Empty when the ticket has no
+// round.
+export function feedbackRoundCard(snapshot: FactorySnapshot): string {
+  const task = snapshot.tasks.findLast((item) => item.feedback !== null);
+  const round = task?.feedback ?? null;
+  if (task === undefined || round === null) {
+    return '';
+  }
+  const shown = round.items.slice(0, ROUND_CARD_ITEMS).map((item) => roundItemLine(item));
+  const more = round.items.length - shown.length;
+  const skippedBy = [...new Set(round.skipped.map((item) => item.author))];
+  return encodeCard(
+    card({
+      // The first line is what a collapsed card shows: where to read it all.
+      body: [
+        `Full text: ${path.join(snapshot.execution.factoryDir, task.taskFile)}`,
+        `From ${round.pullRequestUrl}.`,
+        ...(round.skipped.length === 0
+          ? []
+          : [
+              `Skipped ${round.skipped.length}, from ${skippedBy.join(', ')}: not collaborators or codeHost.feedback.authors.`,
+            ]),
+      ].join('\n'),
+      displayRef: snapshot.ticket.displayRef,
+      items: more > 0 ? [...shown, `+${more} more in the task file`] : shown,
+      outcome: `feedback round ${round.round} · ${round.items.length} item${round.items.length === 1 ? '' : 's'}`,
+      progress: progressText(snapshot),
+      stage: 'work',
+      task: taskLabel(snapshot, task),
+      tone: 'progress',
     }),
   );
 }

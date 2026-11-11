@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listProcesses } from '../actions/strays.ts';
 import {
   zeroUsage,
   type ReconcileObservation,
@@ -348,27 +349,29 @@ exit "$code"
 
 // The script behind a handoff pane. It execs the TUI so the pane closes with
 // it, and FACTORY_CHILD keeps the factory extension out of the reopened Pi. The
-// pane outlives its ticket in the worktree, so FACTORY_WORKTREE names no
-// worktree: the stray sweep leaves it, and what the human starts there, alone.
+// pane outlives its ticket in the worktree, so FACTORY_WORKTREE is its marker,
+// not a worktree: the stray sweep leaves it, and what the human starts there,
+// alone, and a later handoff finds the pane by it.
 // The diff opens in Hunk when it is installed, else in Fresh.
 export function renderPaneScript(input: {
   cwd: string;
   env: ForwardedEnv;
   freshBin: string;
   hunkBin: string;
+  marker: string;
   piBin: string;
   target: PaneSpec['target'];
 }): string {
   const hunk = shellQuote(input.hunkBin);
   const command =
     input.target.kind === 'session'
-      ? `${shellQuote(input.piBin)} --session ${shellQuote(input.target.sessionFile)}`
+      ? `${shellQuote(input.piBin)} --session ${shellQuote(input.target.sessionFile)} --model ${shellQuote(input.target.model)} --thinking ${shellQuote(input.target.thinking)}`
       : `command -v ${hunk} >/dev/null 2>&1 && exec ${hunk} patch ${shellQuote(input.target.file)} --agent-notes${input.target.notes === null ? '' : ` --agent-context ${shellQuote(input.target.notes)}`}
 exec ${shellQuote(input.freshBin)} --no-restore ${shellQuote(input.target.file)}`;
   return `#!/usr/bin/env bash
 trap '' TSTP
 ${exportLines(input.env)}export FACTORY_CHILD=1
-export FACTORY_WORKTREE=handoff
+export FACTORY_WORKTREE=${shellQuote(input.marker)}
 cd ${shellQuote(input.cwd)} || exit 1
 ${input.target.kind === 'session' ? `exec ${command}` : command}
 `;
@@ -407,6 +410,24 @@ export function herdrMetadataArgs(input: {
     args.push('--token', `task=${input.taskLabel}`);
   }
   return args;
+}
+
+// The pids `pane process-info` reports: the foreground processes, then the
+// shell.
+export function paneProcessIdsOf(stdout: string): Array<number> {
+  const parsed = jsonRecord(stdout);
+  const result = parsed === null ? null : isRecord(parsed['result']) ? parsed['result'] : parsed;
+  const info = result !== null && isRecord(result['process_info']) ? result['process_info'] : null;
+  if (info === null) {
+    return [];
+  }
+  const foreground = Array.isArray(info['foreground_processes'])
+    ? info['foreground_processes'].flatMap((item: unknown) =>
+        isRecord(item) && typeof item['pid'] === 'number' ? [item['pid']] : [],
+      )
+    : [];
+  const shell = info['shell_pid'];
+  return typeof shell === 'number' ? [...foreground, shell] : foreground;
 }
 
 export function paneProcessIsLive(code: number, stdout: string): boolean {
@@ -981,7 +1002,15 @@ export function createPiHerdrRuntime(options?: {
     }
     writeFileSync(
       spec.scriptFile,
-      renderPaneScript({ cwd: spec.cwd, env, freshBin, hunkBin, piBin, target: spec.target }),
+      renderPaneScript({
+        cwd: spec.cwd,
+        env,
+        freshBin,
+        hunkBin,
+        marker: spec.marker,
+        piBin,
+        target: spec.target,
+      }),
       { mode: 0o755 },
     );
     const paneId = await openIn(spec.tab, spec.cwd, spec.scriptFile);
@@ -993,6 +1022,9 @@ export function createPiHerdrRuntime(options?: {
   }
 
   return {
+    closePane: async (paneId) => {
+      await run(['pane', 'close', paneId]);
+    },
     closeTab,
     // Closes the agent's pane; its pi process ends with it.
     interrupt: async ({ paneId }) => {
@@ -1063,6 +1095,14 @@ export function createPiHerdrRuntime(options?: {
       return stop;
     },
     openPane: openHandoffPane,
+    paneCarries: async (paneId, marker) => {
+      const info = await run(herdrProcessInfoArgs(paneId));
+      if (info.code !== 0) {
+        return false;
+      }
+      const pids = new Set(paneProcessIdsOf(info.stdout));
+      return listProcesses().some((item) => pids.has(item.pid) && item.factoryWorktree === marker);
+    },
     async reconcile(runs) {
       const observations: Array<{ observation: ReconcileObservation; runId: RunId }> = [];
       for (const active of runs) {

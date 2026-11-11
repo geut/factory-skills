@@ -50,12 +50,16 @@ function pad(value: number, total: number): string {
 }
 
 // `03`, padded to the width of the task count.
+// `03`, or `F1` for a feedback round, which is not one of the plan's tasks.
 export function taskNumber(snapshot: FactorySnapshot, task: TaskRecord): string {
-  return pad(task.ordinal, snapshot.tasks.length);
+  return task.feedback === null ? pad(task.ordinal, snapshot.tasks.length) : task.taskId;
 }
 
-// `03/06 Overview page`
+// `03/06 Overview page`, or `F1 Feedback round 1`.
 export function taskLabel(snapshot: FactorySnapshot, task: TaskRecord): string {
+  if (task.feedback !== null) {
+    return `${task.taskId} ${task.title.trim()}`;
+  }
   const total = snapshot.tasks.length;
   const title = task.title.trim().length > 0 ? ` ${task.title.trim()}` : '';
   return `${pad(task.ordinal, total)}/${pad(total, total)}${title}`;
@@ -187,7 +191,9 @@ export function stepLabel(snapshot: FactorySnapshot, task: TaskRecord): string {
 }
 
 export type TicketProgress = {
-  current: { label: string; step: string } | null;
+  // The task in work or review; `detail` adds what a feedback round is about:
+  // `2 items · dpaez: When a feedback round starts…`.
+  current: { detail: string | null; label: string; step: string } | null;
   displayRef: string;
   done: number;
   needsUser: boolean;
@@ -197,6 +203,18 @@ export type TicketProgress = {
   total: number;
 };
 
+// What a feedback round is about, in one line: its item count and the first
+// item's author and summary. The widget cuts it to the terminal's width.
+export function feedbackDetail(task: TaskRecord): string | null {
+  if (task.feedback === null) {
+    return null;
+  }
+  const { items } = task.feedback;
+  const first = items[0];
+  const count = `${items.length} item${items.length === 1 ? '' : 's'}`;
+  return first === undefined ? count : `${count} · ${first.author}: ${first.summary}`;
+}
+
 export function ticketProgress(snapshot: FactorySnapshot): TicketProgress {
   const task = currentTask(snapshot);
   const stage = snapshot.execution.stage;
@@ -204,7 +222,11 @@ export function ticketProgress(snapshot: FactorySnapshot): TicketProgress {
     current:
       task === null || (stage !== 'work' && stage !== 'review')
         ? null
-        : { label: taskLabel(snapshot, task), step: stepLabel(snapshot, task) },
+        : {
+            detail: feedbackDetail(task),
+            label: taskLabel(snapshot, task),
+            step: stepLabel(snapshot, task),
+          },
     displayRef: snapshot.ticket.displayRef,
     done: tasksDone(snapshot),
     needsUser: needsUser(snapshot),

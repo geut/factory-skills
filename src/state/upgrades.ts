@@ -112,4 +112,8 @@ CREATE TABLE pull_request_commits (
   PRIMARY KEY (execution_id, sha)
 ) STRICT;
 `,
+  // Schema 7: a feedback round's items, kept on its task.
+  6: `
+ALTER TABLE tasks ADD COLUMN feedback_json TEXT CHECK (feedback_json IS NULL OR json_valid(feedback_json));
+`,
 };

@@ -96,9 +96,23 @@ test('a round renders its task file from the worktree head, and the file is writ
   assert.deepEqual(
     { ...prepared, taskText: '' },
     {
-      items: 1,
+      // What the controller keeps: each item's place and first line.
+      feedback: {
+        items: [
+          {
+            author: 'alice',
+            id: 'F1',
+            kind: 'thread',
+            location: 'README.md:1',
+            summary: 'Rename it.',
+            url: null,
+          },
+        ],
+        pullRequestUrl: url,
+        round: 1,
+        skipped: [],
+      },
       round: 1,
-      skipped: 0,
       startHead: head,
       taskFile: 'feedback/1/task.md',
       taskText: '',

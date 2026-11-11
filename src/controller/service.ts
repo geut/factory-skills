@@ -54,10 +54,11 @@ import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
 import {
+  correctsRun,
+  feedbackRoundCard,
   finishedRunCard,
   firstSummaryLine,
   runOutcome,
-  correctsRun,
   runStage,
 } from './run-card.ts';
 import {
@@ -715,11 +716,10 @@ export function createFactoryService(input: {
     const key = `feedback:${snapshot.execution.id}:${prepared.round}`;
     const applied = apply(
       {
+        feedback: prepared.feedback,
         idempotencyKey: key,
-        items: prepared.items,
         kind: 'feedback',
         round: prepared.round,
-        skipped: prepared.skipped,
         startHead: prepared.startHead,
         taskFile: prepared.taskFile,
         ticketId: snapshot.ticket.id,
@@ -733,6 +733,12 @@ export function createFactoryService(input: {
     // runs synchronously after the commit, and agents launch on drain.
     if (applied.response.kind !== 'rejected') {
       writeFeedbackTask(snapshot.execution.factoryDir, prepared);
+      // Every Pi session, and /v1/events, sees what the round is about.
+      const started = loadCurrentByFactoryKey(db, ticketKeyOf(snapshot));
+      const posted = started === null ? '' : feedbackRoundCard(started);
+      if (posted.length > 0) {
+        notify(posted);
+      }
     }
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }

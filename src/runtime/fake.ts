@@ -49,7 +49,23 @@ export class FakeRuntime implements FactorySubagentRuntime {
       throw new Error('herdr pane open failed');
     }
     this.panes.push(spec);
-    return { paneId: `pane-${spec.name}` };
+    const paneId = `pane-${this.panes.length}`;
+    // A handoff pane runs one process, carrying the pane's marker.
+    this.paneProcesses.set(paneId, [{ marker: spec.marker, pid: 9000 + this.panes.length }]);
+    return { paneId };
+  }
+
+  // The processes in each open pane, with their FACTORY_WORKTREE marker.
+  paneProcesses = new Map<string, Array<{ marker: string; pid: number }>>();
+  closedPanes: Array<string> = [];
+
+  async paneCarries(paneId: string, marker: string): Promise<boolean> {
+    return (this.paneProcesses.get(paneId) ?? []).some((item) => item.marker === marker);
+  }
+
+  async closePane(paneId: string): Promise<void> {
+    this.paneProcesses.delete(paneId);
+    this.closedPanes.push(paneId);
   }
 
   async interrupt(input: { paneId: string; runId: RunId }): Promise<void> {

@@ -1,6 +1,6 @@
 import { decodeCard, encodeCard, type FactoryCard } from '../controller/card.ts';
 import { detail } from '../controller/reduce.ts';
-import { attentionCard, finishedRunCard } from '../controller/run-card.ts';
+import { attentionCard, feedbackRoundCard, finishedRunCard } from '../controller/run-card.ts';
 import { terminalSummary } from '../controller/service.ts';
 import { formatStatus } from '../controller/store.ts';
 import { terminalOf } from '../stories/fixtures.ts';
@@ -13,6 +13,7 @@ import {
   correctionLimit,
   crashedRetry,
   diffKeepsChanging,
+  feedbackRoundWorking,
   handoffReady,
   malformed,
   planReady,
@@ -167,6 +168,30 @@ export const component: Component = {
       'ready for handoff notice',
       'The handoff notice: both panes are open, the all-stage usage table, and the command that completes the ticket.',
       () => attention(handoffReady()),
+    ),
+    card(
+      'feedback round started',
+      'The card a feedback round posts when it starts: each item on its own line, what was skipped, and where the full text is.',
+      () => feedbackRoundCard(feedbackRoundWorking().snapshot),
+    ),
+    card(
+      'feedback round started: many items',
+      'A round with more items than the card lists: it shows five and points at the task file for the rest.',
+      () => {
+        const { snapshot } = feedbackRoundWorking();
+        const round = snapshot.tasks.at(-1)?.feedback;
+        if (round !== undefined && round !== null) {
+          const [first] = round.items;
+          for (let index = 3; index <= 8 && first !== undefined; index += 1) {
+            round.items.push({
+              ...first,
+              id: `F${index}`,
+              summary: `Bot finding ${index}: rename the helper.`,
+            });
+          }
+        }
+        return feedbackRoundCard(snapshot);
+      },
     ),
     card('/factory complete', 'The reply after the human completes the handoff.', () =>
       formatStatus(detail(completed().snapshot, 'dpaez/factory-dashboard#11 is complete.')),

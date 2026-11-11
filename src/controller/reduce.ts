@@ -916,6 +916,10 @@ function sessionOf(
   return snapshot.sessions.find((item) => item.stage === stage && item.taskId === taskId) ?? null;
 }
 
+function itemCount(count: number): string {
+  return `${count} item${count === 1 ? '' : 's'}`;
+}
+
 // Whether a closing stage, whose session already ran, starts again: once for
 // each feedback round, whose task went through the per-task stages since.
 function startsAgain(snapshot: FactorySnapshot, session: SessionRecord): boolean {
@@ -1311,6 +1315,7 @@ function applyOutcome(
       if (outcome.plan !== undefined) {
         snapshot.tasks = outcome.plan.tasks.map((planned) => ({
           blockedBy: planned.blockedBy,
+          feedback: null,
           ordinal: planned.ordinal,
           specHash: planned.specHash,
           stage: null,
@@ -1630,6 +1635,7 @@ export function reduce(input: {
       resolveOpen(snapshot);
       snapshot.tasks.push({
         blockedBy: [],
+        feedback: event.feedback,
         ordinal: Math.max(0, ...snapshot.tasks.map((task) => task.ordinal)) + 1,
         specHash: null,
         stage: null,
@@ -1648,7 +1654,7 @@ export function reduce(input: {
       });
       return finish(
         snapshot,
-        `Feedback round ${event.round} for ${snapshot.ticket.displayRef}: ${event.items} item${event.items === 1 ? '' : 's'}, ${event.skipped} skipped. ${begin(snapshot, nextStep(snapshot, 'plan', null), ids, null)}`,
+        `Feedback round ${event.round} for ${snapshot.ticket.displayRef}: ${itemCount(event.feedback.items.length)}, ${event.feedback.skipped.length} skipped. ${begin(snapshot, nextStep(snapshot, 'plan', null), ids, null)}`,
       );
     }
     case 'complete': {
