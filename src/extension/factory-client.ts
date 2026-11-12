@@ -31,12 +31,16 @@ export type FactoryClient = {
   cardsSince: (revision: number) => Array<{ card: string; revision: number }>;
   close: () => void;
   command: (command: ParsedCommand) => Promise<string>;
+  // The ticket's pending feedback, for the picker, or why it cannot be read.
+  pendingFeedback: (ref: string) => Promise<PendingFeedbackView | string>;
   progress: () => Array<TicketProgress>;
   revision: () => number;
   runningChildren: () => Array<RunningChildRow>;
   status: (ref: string) => string;
   ticketDetail: (ref: string | null) => TicketDetail | string;
 };
+
+export type PendingFeedbackView = z.infer<typeof PendingFeedback> & { displayRef: string };
 
 type Problem = { detail?: string; title?: string };
 
@@ -199,14 +203,12 @@ export function createFactoryClient(input: {
         return `No factory execution matches ${parsed.ref}.`;
       }
       if (parsed.list) {
-        const listed = await pendingFeedback(url, key);
         const snapshot = findTicket(open, parsed.ref);
-        if ('problem' in listed || snapshot === null) {
-          return 'problem' in listed
-            ? listed.problem
-            : `No factory execution matches ${parsed.ref}.`;
+        if (snapshot === null) {
+          return `No factory execution matches ${parsed.ref}.`;
         }
-        return pendingFeedbackCard(snapshot, listed);
+        const listed = await pendingFeedback(url, key);
+        return 'problem' in listed ? listed.problem : pendingFeedbackCard(snapshot, listed);
       }
       sent = await post(url, `/v1/tickets/${key}/feedback-rounds`, {
         ...(parsed.note === null ? {} : { note: parsed.note }),
@@ -260,6 +262,24 @@ export function createFactoryClient(input: {
       db = null;
     },
     command,
+    pendingFeedback: async (ref) => {
+      const open = database();
+      if (open === null) {
+        return unavailable();
+      }
+      const url = serverUrl(open);
+      if (url === null) {
+        return noServerMessage(input.factoryRoot);
+      }
+      const snapshot = findTicket(open, ref);
+      if (snapshot === null) {
+        return `No factory execution matches ${ref}.`;
+      }
+      const listed = await pendingFeedback(url, ticketKeyOf(snapshot));
+      return 'problem' in listed
+        ? listed.problem
+        : { ...listed, displayRef: snapshot.ticket.displayRef };
+    },
     progress: () => {
       const open = database();
       return open === null ? [] : progressOf(open);

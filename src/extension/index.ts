@@ -6,7 +6,12 @@ import { factoryPaths } from '../controller/service.ts';
 import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { FactoryAgentsView } from './agents-view.ts';
-import { createFactoryClient, type FactoryClient } from './factory-client.ts';
+import {
+  createFactoryClient,
+  type FactoryClient,
+  type PendingFeedbackView,
+} from './factory-client.ts';
+import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
 import { readChildActivity, renderFactoryWidget, type WidgetChild } from './widget.ts';
@@ -198,6 +203,52 @@ async function openTicket(ctx: ExtensionContext, load: () => TicketDetail | null
   closeOverlay = null;
 }
 
+// Opens the picker; resolves with the refs to start a round on, or `false`
+// when the operator closed it.
+async function pickFeedback(
+  ctx: ExtensionContext,
+  listed: PendingFeedbackView,
+  note: string | null,
+): Promise<{ only: Array<string> | null } | false> {
+  if (closeOverlay !== null) {
+    closeOverlay();
+  }
+  let closed = false;
+  const picked = await ctx.ui.custom<{ only: Array<string> | null } | false>(
+    (tui, theme, _keybindings, done) => {
+      const finish = (choice: { only: Array<string> | null } | false): void => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        closeOverlay = null;
+        done(choice);
+      };
+      closeOverlay = () => finish(false);
+      return new FactoryFeedbackPicker({
+        closeView: () => finish(false),
+        start: (choice) => finish(choice),
+        state: {
+          candidates: listed.candidates,
+          displayRef: listed.displayRef,
+          note,
+          pullRequestUrl: listed.pullRequestUrl,
+          skipped: listed.skipped.length,
+          truncated: listed.truncated,
+        },
+        theme,
+        tui,
+      });
+    },
+    {
+      overlay: true,
+      overlayOptions: { anchor: 'center', margin: 0, maxHeight: '100%', width: '100%' },
+    },
+  );
+  closeOverlay = null;
+  return picked ?? false;
+}
+
 export default function factoryExtension(pi: ExtensionAPI): void {
   if (process.env['FACTORY_CHILD'] === '1') {
     return;
@@ -235,6 +286,22 @@ export default function factoryExtension(pi: ExtensionAPI): void {
           const next = service.ticketDetail(parsed.ref);
           return typeof next === 'string' ? null : next;
         });
+        return;
+      }
+      // In the terminal, --list opens the picker; elsewhere it posts the card.
+      if (parsed.kind === 'feedback' && parsed.list && ctx.mode === 'tui' && ctx.hasUI) {
+        const service = serviceFor(ctx.cwd);
+        const listed = await service.pendingFeedback(parsed.ref);
+        if (typeof listed === 'string') {
+          publishStatus(listed);
+          return;
+        }
+        const picked = await pickFeedback(ctx, listed, parsed.note);
+        if (picked === false) {
+          return;
+        }
+        publishStatus(await service.command({ ...parsed, list: false, only: picked.only }));
+        refreshWidget(service);
         return;
       }
       const service = serviceFor(ctx.cwd);

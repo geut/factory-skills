@@ -1,0 +1,519 @@
+== three pending, all ticked · 40 cols ==
+────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedbac...
+ https://github.com/dpaez/factory-das...
+ 1 skipped (not collaborators)
+
+ ▶ [x] r2841017733 coderabbitai · src...
+   [x] r2841017790 copilot-pull-reque...
+   [x] c6799058255 dpaez · Make the `...
+   3 ticked
+
+  thread by coderabbitai on
+  src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when
+  the pull request is closed.
+  https://github.com/dpaez/factory-das
+  hboard/pull/71#discussion_r284101773
+  3
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  ent...
+────────────────────────────────────────
+
+== three pending, all ticked · 60 cols ==
+────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+ ▶ [x] r2841017733 coderabbitai · src/lib/factory/ticket-...
+   [x] r2841017790 copilot-pull-request-reviewer · src/li...
+   [x] c6799058255 dpaez · Make the `feedback round` butt...
+   3 ticked
+
+  thread by coderabbitai on
+  src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is
+  closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discu
+  ssion_r2841017733
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────
+
+== three pending, all ticked · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+ ▶ [x] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Cons...
+   [x] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-act...
+   [x] c6799058255 dpaez · Make the `feedback round` button disabled if we ar...
+   3 ticked
+
+  thread by coderabbitai on src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== three pending, all ticked · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+ ▶ [x] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Consider guarding the action when the pull r...
+   [x] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-actions.ts:40 · Guard the feedback action o...
+   [x] c6799058255 dpaez · Make the `feedback round` button disabled if we are not in the wrapup stage.
+   3 ticked
+
+  thread by coderabbitai on src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== one unticked, the long one selected · 40 cols ==
+────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedbac...
+ https://github.com/dpaez/factory-das...
+ 1 skipped (not collaborators)
+
+   [ ] r2841017733 coderabbitai · src...
+ ▶ [x] r2841017790 copilot-pull-reque...
+   [x] c6799058255 dpaez · Make the `...
+   2 ticked
+
+  thread by
+  copilot-pull-request-reviewer on
+  src/lib/factory/ticket-actions.ts:40
+  Guard the feedback action on the
+  pull request state and rename
+  `canFeedback` to
+  `feedbackAvailability`, since it
+  returns a reason too; this also
+  covers the closed case above.
+  https://github.com/dpaez/factory-das
+  hboard/pull/71#discussion_r284101779
+
+ ↑↓ move  space tick  a all/none  ent...
+────────────────────────────────────────
+
+== one unticked, the long one selected · 60 cols ==
+────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841017733 coderabbitai · src/lib/factory/ticket-...
+ ▶ [x] r2841017790 copilot-pull-request-reviewer · src/li...
+   [x] c6799058255 dpaez · Make the `feedback round` butt...
+   2 ticked
+
+  thread by copilot-pull-request-reviewer on
+  src/lib/factory/ticket-actions.ts:40
+  Guard the feedback action on the pull request state and
+  rename `canFeedback` to `feedbackAvailability`, since it
+  returns a reason too; this also covers the closed case
+  above.
+  https://github.com/dpaez/factory-dashboard/pull/71#discu
+  ssion_r2841017790
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────
+
+== one unticked, the long one selected · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Cons...
+ ▶ [x] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-act...
+   [x] c6799058255 dpaez · Make the `feedback round` button disabled if we ar...
+   2 ticked
+
+  thread by copilot-pull-request-reviewer on
+  src/lib/factory/ticket-actions.ts:40
+  Guard the feedback action on the pull request state and rename `canFeedback`
+  to `feedbackAvailability`, since it returns a reason too; this also covers
+  the closed case above.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== one unticked, the long one selected · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Consider guarding the action when the pull r...
+ ▶ [x] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-actions.ts:40 · Guard the feedback action o...
+   [x] c6799058255 dpaez · Make the `feedback round` button disabled if we are not in the wrapup stage.
+   2 ticked
+
+  thread by copilot-pull-request-reviewer on src/lib/factory/ticket-actions.ts:40
+  Guard the feedback action on the pull request state and rename `canFeedback` to `feedbackAvailability`, since it
+  returns a reason too; this also covers the closed case above.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== twelve pending, scrolled · 40 cols ==
+────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedbac...
+ https://github.com/dpaez/factory-das...
+ 1 skipped (not collaborators)
+
+   [ ] r2841018001 coderabbitai · src...
+   [ ] r2841018002 coderabbitai · src...
+   [ ] r2841018003 coderabbitai · src...
+   [ ] r2841018004 coderabbitai · src...
+   [ ] r2841018005 coderabbitai · src...
+ ▶ [ ] r2841018006 coderabbitai · src...
+   [ ] r2841018007 coderabbitai · src...
+   [ ] r2841018008 coderabbitai · src...
+   5–12 of 12 · 4 ticked
+
+  thread by coderabbitai on
+  src/lib/factory/board.ts:62
+  Nitpick 7: prefer a named helper
+  over the inline expression here.
+  https://github.com/dpaez/factory-das
+  hboard/pull/71#discussion_r284101800
+
+ ↑↓ move  space tick  a all/none  ent...
+────────────────────────────────────────
+
+== twelve pending, scrolled · 60 cols ==
+────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 12 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841018001 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018002 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018003 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018004 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018005 coderabbitai · src/lib/factory/board.t...
+ ▶ [ ] r2841018006 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018007 coderabbitai · src/lib/factory/board.t...
+   [ ] r2841018008 coderabbitai · src/lib/factory/board.t...
+   5–12 of 12 · 4 ticked
+
+  thread by coderabbitai on src/lib/factory/board.ts:62
+  Nitpick 7: prefer a named helper over the inline
+  expression here.
+  https://github.com/dpaez/factory-dashboard/pull/71#discu
+  ssion_r2841018006
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────
+
+== twelve pending, scrolled · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 12 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841018001 coderabbitai · src/lib/factory/board.ts:27 · Nitpick 2: pr...
+   [ ] r2841018002 coderabbitai · src/lib/factory/board.ts:34 · Nitpick 3: pr...
+   [ ] r2841018003 coderabbitai · src/lib/factory/board.ts:41 · Nitpick 4: pr...
+   [ ] r2841018004 coderabbitai · src/lib/factory/board.ts:48 · Nitpick 5: pr...
+   [ ] r2841018005 coderabbitai · src/lib/factory/board.ts:55 · Nitpick 6: pr...
+ ▶ [ ] r2841018006 coderabbitai · src/lib/factory/board.ts:62 · Nitpick 7: pr...
+   [ ] r2841018007 coderabbitai · src/lib/factory/board.ts:69 · Nitpick 8: pr...
+   [ ] r2841018008 coderabbitai · src/lib/factory/board.ts:76 · Nitpick 9: pr...
+   5–12 of 12 · 4 ticked
+
+  thread by coderabbitai on src/lib/factory/board.ts:62
+  Nitpick 7: prefer a named helper over the inline expression here.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841018006
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== twelve pending, scrolled · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 12 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+
+   [ ] r2841018001 coderabbitai · src/lib/factory/board.ts:27 · Nitpick 2: prefer a named helper over the inline expr...
+   [ ] r2841018002 coderabbitai · src/lib/factory/board.ts:34 · Nitpick 3: prefer a named helper over the inline expr...
+   [ ] r2841018003 coderabbitai · src/lib/factory/board.ts:41 · Nitpick 4: prefer a named helper over the inline expr...
+   [ ] r2841018004 coderabbitai · src/lib/factory/board.ts:48 · Nitpick 5: prefer a named helper over the inline expr...
+   [ ] r2841018005 coderabbitai · src/lib/factory/board.ts:55 · Nitpick 6: prefer a named helper over the inline expr...
+ ▶ [ ] r2841018006 coderabbitai · src/lib/factory/board.ts:62 · Nitpick 7: prefer a named helper over the inline expr...
+   [ ] r2841018007 coderabbitai · src/lib/factory/board.ts:69 · Nitpick 8: prefer a named helper over the inline expr...
+   [ ] r2841018008 coderabbitai · src/lib/factory/board.ts:76 · Nitpick 9: prefer a named helper over the inline expr...
+   5–12 of 12 · 4 ticked
+
+  thread by coderabbitai on src/lib/factory/board.ts:62
+  Nitpick 7: prefer a named helper over the inline expression here.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841018006
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== with a note, nothing ticked · 40 cols ==
+────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedbac...
+ https://github.com/dpaez/factory-das...
+ 1 skipped (not collaborators)
+ Note: Also mention the button in the...
+
+ ▶ [ ] r2841017733 coderabbitai · src...
+   [ ] r2841017790 copilot-pull-reque...
+   [ ] c6799058255 dpaez · Make the `...
+   none ticked
+
+  thread by coderabbitai on
+  src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when
+  the pull request is closed.
+  https://github.com/dpaez/factory-das
+  hboard/pull/71#discussion_r284101773
+  3
+
+  Tick at least one comment to start a
+  round.
+
+ ↑↓ move  space tick  a all/none  ent...
+────────────────────────────────────────
+
+== with a note, nothing ticked · 60 cols ==
+────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+ Note: Also mention the button in the README.
+
+ ▶ [ ] r2841017733 coderabbitai · src/lib/factory/ticket-...
+   [ ] r2841017790 copilot-pull-request-reviewer · src/li...
+   [ ] c6799058255 dpaez · Make the `feedback round` butt...
+   none ticked
+
+  thread by coderabbitai on
+  src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is
+  closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discu
+  ssion_r2841017733
+
+  Tick at least one comment to start a round.
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────
+
+== with a note, nothing ticked · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+ Note: Also mention the button in the README.
+
+ ▶ [ ] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Cons...
+   [ ] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-act...
+   [ ] c6799058255 dpaez · Make the `feedback round` button disabled if we ar...
+   none ticked
+
+  thread by coderabbitai on src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+
+  Tick at least one comment to start a round.
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== with a note, nothing ticked · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 3 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+ 1 skipped (not collaborators)
+ Note: Also mention the button in the README.
+
+ ▶ [ ] r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42 · Consider guarding the action when the pull r...
+   [ ] r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-actions.ts:40 · Guard the feedback action o...
+   [ ] c6799058255 dpaez · Make the `feedback round` button disabled if we are not in the wrapup stage.
+   none ticked
+
+  thread by coderabbitai on src/lib/factory/ticket-actions.ts:42
+  Consider guarding the action when the pull request is closed.
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+
+  Tick at least one comment to start a round.
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+== nothing pending · 40 cols ==
+────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedbac...
+ https://github.com/dpaez/factory-das...
+
+  No pending feedback: earlier rounds...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  ent...
+────────────────────────────────────────
+
+== nothing pending · 60 cols ==
+────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 0 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+
+  No pending feedback: earlier rounds took or dismissed e...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────
+
+== nothing pending · 80 cols ==
+────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 0 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+
+  No pending feedback: earlier rounds took or dismissed every comment.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────
+
+== nothing pending · 120 cols ==
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ dpaez/factory-dashboard#70 · feedback · 0 pending comments
+ https://github.com/dpaez/factory-dashboard/pull/71
+
+  No pending feedback: earlier rounds took or dismissed every comment.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ↑↓ move  space tick  a all/none  enter start round  q close
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
