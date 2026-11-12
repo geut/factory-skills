@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { taskId } from '../domain.ts';
 import {
-  feedbackItemIds,
   feedbackResponses,
   feedbackRoundOf,
   feedbackRounds,
@@ -65,7 +64,6 @@ test('a round is task F<n>, and its task file lists the items as criteria and in
   assert.match(text, /^> It reads oddly\.$/m);
   assert.match(text, /- 2 from coderabbitai: not a collaborator/);
   assert.match(text, /only the first page was read/);
-  assert.deepEqual(feedbackItemIds(text), ['F1', 'F2', 'F3']);
   assert.deepEqual(roundItems({ items: [], since: null, skipped: [], truncated: false }, '  '), []);
 });
 

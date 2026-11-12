@@ -53,6 +53,7 @@ import {
 import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
 import { parseFactoryCommand } from './parse.ts';
 import type { TicketProgress } from './progress.ts';
+import { describeExisting } from './reduce.ts';
 import {
   correctsRun,
   feedbackRoundCard,
@@ -66,6 +67,7 @@ import {
   formatStatus,
   listActiveRuns,
   latestRevision,
+  recordedRevision,
   listRunningChildren,
   loadCurrentByFactoryKey,
   loadCurrentByTicketKey,
@@ -703,6 +705,18 @@ export function createFactoryService(input: {
     note: string | null,
     options: CommandOptions,
   ): Committed {
+    // A client retrying with the same Idempotency-Key gets the round it started,
+    // before the ticket's new state or GitHub could refuse it.
+    if (options.idempotencyKey !== null) {
+      const revision = recordedRevision(db, dedupe(options, ''));
+      if (revision !== null) {
+        return {
+          applied: { armRunId: null, response: describeExisting(snapshot), revision },
+          displayRef: snapshot.ticket.displayRef,
+          kind: 'committed',
+        };
+      }
+    }
     const prepared = prepareFeedbackRound({
       codeHost: codeHost(),
       note,

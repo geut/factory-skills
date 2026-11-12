@@ -546,6 +546,12 @@ export function loadGeneration(
 }
 
 // The change cursor: the newest events.revision, or 0 before any event.
+// The revision that recorded a command under `dedupeKey`, or null when none did.
+export function recordedRevision(db: DatabaseSync, dedupeKey: string): number | null {
+  const found = db.prepare('SELECT revision FROM events WHERE dedupe_key = ?').get(dedupeKey);
+  return found === undefined ? null : integer(row(found), 'revision');
+}
+
 export function latestRevision(db: DatabaseSync): number {
   return integer(
     row(db.prepare('SELECT coalesce(max(revision), 0) AS revision FROM events').get()),

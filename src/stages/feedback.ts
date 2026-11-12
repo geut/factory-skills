@@ -193,12 +193,6 @@ export function renderFeedbackTask(input: {
   ].join('\n');
 }
 
-// The item ids a round's task file lists, in order.
-export function feedbackItemIds(taskText: string): Array<string> {
-  const ids = [...taskText.matchAll(/^- \[[ x]\] (F\d+):/gm)].map((match) => match[1] ?? '');
-  return [...new Set(ids)];
-}
-
 export type FeedbackResponse = {
   id: string;
   note: string;

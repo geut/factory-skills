@@ -146,11 +146,6 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         input.feedbackRound === null
           ? '- nothing is committed: HEAD stays at the base commit'
           : "- nothing is committed: HEAD stays at the round's start commit, the pull request's head",
-        ...(input.feedbackRound === null
-          ? []
-          : [
-              '- ## Feedback responses answers every item once, and a declined item gives a reason',
-            ]),
         ...commands,
       ].join('\n');
     },

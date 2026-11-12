@@ -2725,3 +2725,40 @@ test('a feedback round takes the pull request feedback back through work, review
   );
   await closeWhenIdle(db);
 });
+
+test('a retried feedback round with the same Idempotency-Key gets the round it started', async () => {
+  const harness = await reachWrapup({}, () => codeHostWithFeedback([]));
+  const { branch, db, runtime, service, wrapup } = harness;
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await service.syncPullRequests();
+  const key = String(
+    db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
+      'factory_dir'
+    ],
+  )
+    .split('/')
+    .at(-1);
+  const options = { actor: null, idempotencyKey: 'retry-me' };
+  const first = service.commands.feedback(key ?? '', null, options);
+  assert.equal(first.kind, 'accepted');
+  // The response was lost; the client sends the same request again.
+  const again = service.commands.feedback(key ?? '', null, options);
+  assert.equal(again.kind, 'accepted', again.kind === 'refused' ? again.message : '');
+  assert.equal(
+    again.kind === 'accepted' && first.kind === 'accepted' ? again.revision : null,
+    first.kind === 'accepted' ? first.revision : null,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM tasks WHERE task_id LIKE 'F%'").get()?.['n'],
+    1,
+  );
+  // Another key is a new request, refused while the round runs.
+  const other = service.commands.feedback(key ?? '', null, { ...options, idempotencyKey: 'other' });
+  assert.match(other.kind === 'refused' ? other.message : '', /not ready for handoff/);
+  await closeWhenIdle(db);
+});
