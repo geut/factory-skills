@@ -516,6 +516,9 @@ export type FeedbackRoundItem = {
   kind: 'comment' | 'note' | 'review' | 'thread';
   // `path:line` for a review thread; null otherwise.
   location: string | null;
+  // How the operator names the comment: `r<id>` for a review thread, `p<id>`
+  // for a review, `c<id>` for a conversation comment; null for the note.
+  ref: string | null;
   // The first line of the comment, at most 160 characters.
   summary: string;
   url: string | null;
@@ -523,10 +526,16 @@ export type FeedbackRoundItem = {
 
 // What a feedback round took from the pull request, and what it left out.
 export type FeedbackRound = {
+  // GitHub ids of the comments the operator dismissed with this round: no
+  // later round offers them again.
+  dismissed: Array<string>;
   items: Array<FeedbackRoundItem>;
   pullRequestUrl: string;
   round: number;
   skipped: Array<{ author: string; kind: 'comment' | 'review' | 'thread'; url: string | null }>;
+  // GitHub ids of the comments this round took, its items' and the skipped
+  // ones: a later round offers only comments it has not seen.
+  taken: Array<string>;
 };
 
 export type TaskRecord = {

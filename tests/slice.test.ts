@@ -35,6 +35,7 @@ import {
 import { sha256 } from '../src/hash.ts';
 import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
 import type { GithubClient } from '../src/ports/github.ts';
+import type { PullRequestFeedback, SkippedFeedback } from '../src/ports/pull-request-feedback.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
@@ -1936,7 +1937,7 @@ function codeHostWith(
     },
     kind: 'github',
     pullRequest: () => null,
-    pullRequestFeedback: () => ({ items: [], since: null, skipped: [], truncated: false }),
+    pullRequestFeedback: () => ({ items: [], skipped: [], truncated: false }),
     pullRequestOutcome: (current) => ({
       commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
       pullRequest: current,
@@ -2542,32 +2543,39 @@ function codeHostWithFeedback(sinces: Array<string>): CodeHost {
       ...(host.findPullRequest('factory/proj-123') ?? noPullRequest()),
       url,
     }),
-    pullRequestFeedback: (pullRequest) => {
+    pullRequestFeedback: (pullRequest, seen) => {
       sinces.push(pullRequest.url);
+      const items: PullRequestFeedback['items'] = [
+        {
+          commentIds: ['501'],
+          comments: [
+            {
+              author: 'reviewer',
+              body: 'Name the flag after what it keeps.',
+              createdAt: '2026-10-16T11:00:00Z',
+              id: '501',
+              url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
+            },
+          ],
+          kind: 'thread',
+          line: 1,
+          path: 'change.txt',
+          ref: 'r501',
+          threadId: 'PRRT_1',
+        },
+      ];
       return {
-        items: [
-          {
-            comments: [
-              {
-                author: 'reviewer',
-                body: 'Name the flag after what it keeps.',
-                createdAt: '2026-10-16T11:00:00Z',
-                url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
-              },
-            ],
-            kind: 'thread',
-            line: 1,
-            path: 'change.txt',
-            threadId: 'PRRT_1',
-          },
-        ],
-        since: '2026-10-16T10:00:00Z',
-        skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+        items: items.filter((item) => item.commentIds.some((id) => !seen.has(id))),
+        skipped: skippedByFake.filter((item) => !seen.has(item.id)),
         truncated: false,
       };
     },
   };
 }
+
+const skippedByFake: Array<SkippedFeedback> = [
+  { author: 'coderabbitai', id: '502', kind: 'review', url: null },
+];
 
 function noPullRequest(): never {
   throw new Error('the fake code host has no pull request');
@@ -2650,12 +2658,14 @@ test('a feedback round takes the pull request feedback back through work, review
     ),
   );
   assert.deepEqual(stored, {
+    dismissed: [],
     items: [
       {
         author: 'reviewer',
         id: 'F1',
         kind: 'thread',
         location: 'change.txt:1',
+        ref: 'r501',
         summary: 'Name the flag after what it keeps.',
         url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
       },
@@ -2664,6 +2674,7 @@ test('a feedback round takes the pull request feedback back through work, review
         id: 'F2',
         kind: 'note',
         location: null,
+        ref: null,
         summary: 'Also mention the flag in the README.',
         url: null,
       },
@@ -2671,6 +2682,7 @@ test('a feedback round takes the pull request feedback back through work, review
     pullRequestUrl: 'https://github.com/geut/factory-skills/pull/7',
     round: 1,
     skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+    taken: ['501', '502'],
   });
 
   // The worker's answers are asked for, not checked: a reply that answers one
@@ -2723,6 +2735,8 @@ test('a feedback round takes the pull request feedback back through work, review
     await service.command('feedback proj-123 "more"'),
     /proj-123 has had 1 feedback round, the limit \(limits\.feedbackRounds\)/,
   );
+  // Round 1 took the thread and saw the skipped comment: nothing is pending.
+  assert.match(await service.command('feedback proj-123 --list'), /Nothing pending on .*pull\/7/);
   await closeWhenIdle(db);
 });
 
@@ -2744,10 +2758,11 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
     .split('/')
     .at(-1);
   const options = { actor: null, idempotencyKey: 'retry-me' };
-  const first = service.commands.feedback(key ?? '', null, options);
+  const request = { note: null, only: null, skip: [] };
+  const first = service.commands.feedback(key ?? '', request, options);
   assert.equal(first.kind, 'accepted');
   // The response was lost; the client sends the same request again.
-  const again = service.commands.feedback(key ?? '', null, options);
+  const again = service.commands.feedback(key ?? '', request, options);
   assert.equal(again.kind, 'accepted', again.kind === 'refused' ? again.message : '');
   assert.equal(
     again.kind === 'accepted' && first.kind === 'accepted' ? again.revision : null,
@@ -2758,7 +2773,10 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
     1,
   );
   // Another key is a new request, refused while the round runs.
-  const other = service.commands.feedback(key ?? '', null, { ...options, idempotencyKey: 'other' });
+  const other = service.commands.feedback(key ?? '', request, {
+    ...options,
+    idempotencyKey: 'other',
+  });
   assert.match(other.kind === 'refused' ? other.message : '', /not ready for handoff/);
   await closeWhenIdle(db);
 });

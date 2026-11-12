@@ -2,7 +2,13 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
-import { prepareFeedbackRound, writeFeedbackTask } from '../actions/feedback-round.ts';
+import {
+  type FeedbackChoice,
+  type FeedbackRefusal,
+  listFeedback,
+  prepareFeedbackRound,
+  writeFeedbackTask,
+} from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
@@ -51,12 +57,15 @@ import {
   recordReview,
 } from './facts.ts';
 import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
-import { parseFactoryCommand } from './parse.ts';
+import { parseFactoryCommand, type ParsedCommand } from './parse.ts';
+
+type FeedbackCommand = Extract<ParsedCommand, { kind: 'feedback' }>;
 import type { TicketProgress } from './progress.ts';
 import { describeExisting } from './reduce.ts';
 import {
   correctsRun,
   feedbackRoundCard,
+  pendingFeedbackCard,
   finishedRunCard,
   firstSummaryLine,
   runOutcome,
@@ -113,9 +122,13 @@ export type FactoryCommands = {
   // Ends a ticket for good; its worktree, branch, and pull request stay.
   cancel: (key: string, reason: string | null, options: CommandOptions) => CommandOutcome;
   complete: (key: string, options: CommandOptions) => CommandOutcome;
-  // Takes the open pull request's new feedback back through work, review, and
-  // wrap-up on the same branch, as task F<n>.
-  feedback: (key: string, note: string | null, options: CommandOptions) => CommandOutcome;
+  // Takes the open pull request's pending feedback, or the part `request`
+  // picks, back through work, review, and wrap-up on the same branch, as task
+  // F<n>.
+  feedback: (key: string, request: FeedbackRequest, options: CommandOptions) => CommandOutcome;
+  // The pull request's pending feedback, for picking a round's comments.
+  // Reads GitHub; changes nothing.
+  pendingFeedback: (key: string) => PendingFeedbackOutcome;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
@@ -124,6 +137,13 @@ export type FactoryCommands = {
   // Stops one running agent by its run id; the ticket pauses.
   stopRun: (runId: string, options: CommandOptions) => CommandOutcome;
 };
+
+// A feedback round's note and which pending comments it takes.
+export type FeedbackRequest = FeedbackChoice & { note: string | null };
+
+export type PendingFeedbackOutcome =
+  | ({ kind: 'listed'; ticket: string } & Exclude<ReturnType<typeof listFeedback>, FeedbackRefusal>)
+  | { kind: 'refused'; message: string; reason: CommandRefusal };
 
 const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
 
@@ -702,7 +722,7 @@ export function createFactoryService(input: {
 
   function feedbackCommitted(
     snapshot: FactorySnapshot,
-    note: string | null,
+    request: FeedbackRequest,
     options: CommandOptions,
   ): Committed {
     // A client retrying with the same Idempotency-Key gets the round it started,
@@ -718,8 +738,9 @@ export function createFactoryService(input: {
       }
     }
     const prepared = prepareFeedbackRound({
+      choice: { only: request.only, skip: request.skip },
       codeHost: codeHost(),
-      note,
+      note: request.note,
       pullRequestUrl: pullRequestUrlOf(db, snapshot.execution.id),
       snapshot,
     });
@@ -757,12 +778,27 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
-  async function feedback(ref: string, note: string | null): Promise<string> {
+  function pendingFeedbackOf(snapshot: FactorySnapshot): PendingFeedbackOutcome {
+    const listed = listFeedback({
+      codeHost: codeHost(),
+      pullRequestUrl: pullRequestUrlOf(db, snapshot.execution.id),
+      snapshot,
+    });
+    return 'reason' in listed
+      ? { kind: 'refused', message: listed.message, reason: listed.reason }
+      : { ...listed, kind: 'listed', ticket: ticketKeyOf(snapshot) };
+  }
+
+  async function feedback(ref: string, parsed: FeedbackCommand): Promise<string> {
     const snapshot = requireSnapshot(ref);
     if (typeof snapshot === 'string') {
       return snapshot;
     }
-    const result = feedbackCommitted(snapshot, note, piCommand);
+    if (parsed.list) {
+      const listed = pendingFeedbackOf(snapshot);
+      return listed.kind === 'refused' ? listed.message : pendingFeedbackCard(snapshot, listed);
+    }
+    const result = feedbackCommitted(snapshot, parsed, piCommand);
     if (result.kind === 'refused') {
       return result.message;
     }
@@ -1014,8 +1050,14 @@ export function createFactoryService(input: {
     cancel: (key, reason, options) =>
       byKey(key, (snapshot) => cancelCommitted(snapshot, reason, options)),
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
-    feedback: (key, note, options) =>
-      byKey(key, (snapshot) => feedbackCommitted(snapshot, note, options)),
+    feedback: (key, request, options) =>
+      byKey(key, (snapshot) => feedbackCommitted(snapshot, request, options)),
+    pendingFeedback: (key) => {
+      const snapshot = loadCurrentByFactoryKey(db, key);
+      return snapshot === null
+        ? { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' }
+        : pendingFeedbackOf(snapshot);
+    },
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
     rerun: async (key, options) => {
@@ -1081,7 +1123,7 @@ export function createFactoryService(input: {
         case 'complete':
           return complete(parsed.ref);
         case 'feedback':
-          return feedback(parsed.ref, parsed.note);
+          return feedback(parsed.ref, parsed);
         case 'stop':
           return stopAgent(parsed.ref);
         case 'cancel':

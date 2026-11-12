@@ -4,10 +4,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { git, initRepo } from '../../tests/git-repo.ts';
+import { taskId } from '../domain.ts';
 import type { CodeHost, PullRequestInfo } from '../ports/code-host.ts';
 import type { PullRequestFeedback } from '../ports/pull-request-feedback.ts';
 import { blank } from '../stories/fixtures.ts';
-import { prepareFeedbackRound, writeFeedbackTask } from './feedback-round.ts';
+import {
+  type FeedbackChoice,
+  listFeedback,
+  prepareFeedbackRound,
+  writeFeedbackTask,
+} from './feedback-round.ts';
 
 const roots: Array<string> = [];
 
@@ -20,11 +26,24 @@ afterEach(() => {
 const url = 'https://github.com/geut/factory-skills/pull/7';
 
 const thread: PullRequestFeedback['items'][number] = {
-  comments: [{ author: 'alice', body: 'Rename it.', createdAt: 't', url: null }],
+  commentIds: ['11'],
+  comments: [{ author: 'alice', body: 'Rename it.', createdAt: 't', id: '11', url: null }],
   kind: 'thread',
   line: 1,
   path: 'README.md',
+  ref: 'r11',
   threadId: 'PRRT_1',
+};
+
+const comment: PullRequestFeedback['items'][number] = {
+  author: 'bob',
+  body: 'Also update the README.',
+  commentIds: ['22'],
+  createdAt: 't',
+  id: '22',
+  kind: 'comment',
+  ref: 'c22',
+  url: null,
 };
 
 function unused(): never {
@@ -74,11 +93,11 @@ function handedOff() {
   return { head: git(worktree, ['rev-parse', 'HEAD']), snapshot };
 }
 
-const some: PullRequestFeedback = { items: [thread], since: null, skipped: [], truncated: false };
+const some: PullRequestFeedback = { items: [thread], skipped: [], truncated: false };
+const two: PullRequestFeedback = { items: [thread, comment], skipped: [], truncated: false };
 const none: PullRequestFeedback = {
   items: [],
-  since: null,
-  skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+  skipped: [{ author: 'coderabbitai', id: '33', kind: 'review', url: null }],
   truncated: false,
 };
 
@@ -98,12 +117,14 @@ test('a round renders its task file from the worktree head, and the file is writ
     {
       // What the controller keeps: each item's place and first line.
       feedback: {
+        dismissed: [],
         items: [
           {
             author: 'alice',
             id: 'F1',
             kind: 'thread',
             location: 'README.md:1',
+            ref: 'r11',
             summary: 'Rename it.',
             url: null,
           },
@@ -111,6 +132,7 @@ test('a round renders its task file from the worktree head, and the file is writ
         pullRequestUrl: url,
         round: 1,
         skipped: [],
+        taken: ['11'],
       },
       round: 1,
       startHead: head,
@@ -152,7 +174,7 @@ test('a round is refused without an open pull request, new feedback, or a matchi
   assert.match(refused(host(null, some)), /pull\/7 is gone, not open/);
   assert.match(
     refused(host({}, none)),
-    /No new feedback on .*pull\/7 since the last push \(1 skipped: not from collaborators or codeHost\.feedback\.authors\)/,
+    /No pending feedback on .*pull\/7 \(1 skipped: not from collaborators or codeHost\.feedback\.authors\)/,
   );
   assert.match(
     refused(host({}, { ...none, truncated: true })),
@@ -173,4 +195,77 @@ test('a round is refused without an open pull request, new feedback, or a matchi
   assert.match(refused(host({}, some)), /codeHost\.pullRequests is off/);
   snapshot.execution.status = 'active';
   assert.match(refused(host({}, some)), /proj-1 is wrapup\/active, not ready for handoff/);
+});
+
+test('--only takes some pending comments, --skip dismisses some, and an unknown ref is refused', () => {
+  const { head, snapshot } = handedOff();
+  const prepare = (choice: FeedbackChoice) =>
+    prepareFeedbackRound({
+      choice,
+      codeHost: host({ headSha: head }, two),
+      note: null,
+      pullRequestUrl: url,
+      snapshot,
+    });
+  const only = prepare({ only: ['c22'], skip: [] });
+  assert.deepEqual('feedback' in only ? only.feedback.items.map((item) => item.ref) : only, [
+    'c22',
+  ]);
+  // r11 stays pending: neither taken nor dismissed.
+  assert.deepEqual('feedback' in only ? [only.feedback.taken, only.feedback.dismissed] : only, [
+    ['22'],
+    [],
+  ]);
+  const skip = prepare({ only: null, skip: ['r11'] });
+  assert.deepEqual('feedback' in skip ? [skip.feedback.taken, skip.feedback.dismissed] : skip, [
+    ['22'],
+    ['11'],
+  ]);
+  const unknown = prepare({ only: ['c99'], skip: [] });
+  assert.match(
+    'message' in unknown ? unknown.message : '',
+    /c99 is not pending feedback on .*pull\/7\. Pending: r11, c22\./,
+  );
+});
+
+test('the pending list shows each comment by its ref, and reads past what earlier rounds saw', () => {
+  const { snapshot } = handedOff();
+  let seenByHost: ReadonlySet<string> = new Set();
+  const codeHost = host({}, two);
+  codeHost.pullRequestFeedback = (_pullRequest, seen) => {
+    seenByHost = seen;
+    return two;
+  };
+  snapshot.tasks.push({
+    blockedBy: [],
+    feedback: {
+      dismissed: ['44'],
+      items: [],
+      pullRequestUrl: url,
+      round: 1,
+      skipped: [],
+      taken: ['33'],
+    },
+    ordinal: 1,
+    specHash: null,
+    stage: null,
+    status: 'done',
+    summaries: {},
+    taskFile: 'feedback/1/task.md',
+    taskId: taskId('F1'),
+    title: 'Feedback round 1',
+  });
+  const listed = listFeedback({ codeHost, pullRequestUrl: url, snapshot });
+  assert.deepEqual([...seenByHost], ['33', '44']);
+  assert.deepEqual(
+    'candidates' in listed ? listed.candidates.map((item) => `${item.ref} ${item.author}`) : listed,
+    ['r11 alice', 'c22 bob'],
+  );
+  assert.match(
+    (() => {
+      const refused = listFeedback({ codeHost, pullRequestUrl: null, snapshot });
+      return 'message' in refused ? refused.message : '';
+    })(),
+    /has no pull request/,
+  );
 });

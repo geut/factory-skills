@@ -44,9 +44,12 @@ export type CodeHost = {
   kind: string;
   // Null when no pull request exists at `url`. Throws on infrastructure errors.
   pullRequest: (url: string) => PullRequestInfo | null;
-  // The feedback posted on `pullRequest` since its head commit, the factory's
-  // last push, sorted into what a feedback round addresses and what it skips.
-  pullRequestFeedback: (pullRequest: PullRequestInfo) => PullRequestFeedback;
+  // The feedback on `pullRequest` that is still pending: not in `seen`, the
+  // comment ids earlier rounds took or the operator dismissed.
+  pullRequestFeedback: (
+    pullRequest: PullRequestInfo,
+    seen: ReadonlySet<string>,
+  ) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
@@ -203,7 +206,7 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
         throw error;
       }
     },
-    pullRequestFeedback: (pullRequest) => {
+    pullRequestFeedback: (pullRequest, seen) => {
       const [owner, name] = repoOf(pullRequest.url).split('/');
       const payload = gh([
         'api',
@@ -218,7 +221,7 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
         '-F',
         `number=${pullRequest.number}`,
       ]);
-      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [] });
+      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], seen });
     },
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;

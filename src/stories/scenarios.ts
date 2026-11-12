@@ -469,12 +469,14 @@ export function feedbackRoundWorking(): Scenario {
   snapshot.tasks.push({
     blockedBy: [],
     feedback: {
+      dismissed: [],
       items: [
         {
           author: 'dpaez',
           id: 'F1',
           kind: 'comment',
           location: null,
+          ref: 'c6799058255',
           summary:
             'When a feedback round starts the ticket is moved to `work` stage, screenshots like `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on `plan` stage.',
           url: 'https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-1',
@@ -484,6 +486,7 @@ export function feedbackRoundWorking(): Scenario {
           id: 'F2',
           kind: 'thread',
           location: 'src/lib/factory/ticket-actions.ts:42',
+          ref: 'r2841017733',
           summary: 'Make it visually clear that this is a feedback round.',
           url: 'https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2',
         },
@@ -491,6 +494,7 @@ export function feedbackRoundWorking(): Scenario {
       pullRequestUrl: 'https://github.com/dpaez/factory-dashboard/pull/71',
       round: 1,
       skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+      taken: ['6799058255', '2841017733', '2841017790'],
     },
     ordinal,
     specHash: null,

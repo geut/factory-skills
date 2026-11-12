@@ -934,6 +934,217 @@
   • +3 more in the task file
   +2 lines · expand to read
 
+== pending feedback to pick from · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · 3 pending comments
+  6/6 done
+  Pending on
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71. Pick with --only <refs>,
+  or take all but --skip <refs>, which
+  are dismissed for good.
+  Skipped 1, from passerby: not
+  collaborators or
+  codeHost.feedback.authors.
+  • r2841017733 coderabbitai ·
+    src/lib/factory/ticket-actions.ts:42
+    : Consider guarding the action when
+    the pull request is closed.
+  • r2841017790
+    copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40
+    : Guard the feedback action on the
+    pull request state and rename
+    `canFeedback` to
+    `feedbackAvailability`, since it
+    returns a reason too; this also
+    covers the closed case above.
+  • c6799058255 dpaez · comment: Make
+    the `feedback round` button disabled
+    if we are not in the wrapup stage.
+  → /factory feedback
+    dpaez/factory-dashboard#11 --only
+    r2841017733,r2841017790
+
+== pending feedback to pick from · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on
+  https://github.com/dpaez/factory-dashboard/pull/71. Pick
+  with --only <refs>, or take all but --skip <refs>, which
+  are dismissed for good.
+  Skipped 1, from passerby: not collaborators or
+  codeHost.feedback.authors.
+  • r2841017733 coderabbitai ·
+    src/lib/factory/ticket-actions.ts:42: Consider guarding
+    the action when the pull request is closed.
+  • r2841017790 copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40: Guard the feedback
+    action on the pull request state and rename
+    `canFeedback` to `feedbackAvailability`, since it
+    returns a reason too; this also covers the closed case
+    above.
+  • c6799058255 dpaez · comment: Make the `feedback round`
+    button disabled if we are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only
+    r2841017733,r2841017790
+
+== pending feedback to pick from · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with
+  --only <refs>, or take all but --skip <refs>, which are dismissed for good.
+  Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
+  • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider
+    guarding the action when the pull request is closed.
+  • r2841017790 copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40: Guard the feedback action on the pull
+    request state and rename `canFeedback` to `feedbackAvailability`, since it
+    returns a reason too; this also covers the closed case above.
+  • c6799058255 dpaez · comment: Make the `feedback round` button disabled if we
+    are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only r2841017733,r2841017790
+
+== pending feedback to pick from · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with --only <refs>, or take all but --skip <refs>,
+  which are dismissed for good.
+  Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
+  • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider guarding the action when the pull request
+    is closed.
+  • r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-actions.ts:40: Guard the feedback action on the
+    pull request state and rename `canFeedback` to `feedbackAvailability`, since it returns a reason too; this also
+    covers the closed case above.
+  • c6799058255 dpaez · comment: Make the `feedback round` button disabled if we are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only r2841017733,r2841017790
+
+== pending feedback: more than one page · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · 3 pending comments
+  6/6 done
+  Pending on
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71. Pick with --only <refs>,
+  or take all but --skip <refs>, which
+  are dismissed for good.
+  Skipped 1, from passerby: not
+  collaborators or
+  codeHost.feedback.authors.
+  GitHub had more than one page; only
+  the newest 100 of each list were read.
+  • r2841017733 coderabbitai ·
+    src/lib/factory/ticket-actions.ts:42
+    : Consider guarding the action when
+    the pull request is closed.
+  • r2841017790
+    copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40
+    : Guard the feedback action on the
+    pull request state and rename
+    `canFeedback` to
+    `feedbackAvailability`, since it
+    returns a reason too; this also
+    covers the closed case above.
+  • c6799058255 dpaez · comment: Make
+    the `feedback round` button disabled
+    if we are not in the wrapup stage.
+  → /factory feedback
+    dpaez/factory-dashboard#11 --only
+    r2841017733,r2841017790
+
+== pending feedback: more than one page · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on
+  https://github.com/dpaez/factory-dashboard/pull/71. Pick
+  with --only <refs>, or take all but --skip <refs>, which
+  are dismissed for good.
+  Skipped 1, from passerby: not collaborators or
+  codeHost.feedback.authors.
+  GitHub had more than one page; only the newest 100 of each
+  list were read.
+  • r2841017733 coderabbitai ·
+    src/lib/factory/ticket-actions.ts:42: Consider guarding
+    the action when the pull request is closed.
+  • r2841017790 copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40: Guard the feedback
+    action on the pull request state and rename
+    `canFeedback` to `feedbackAvailability`, since it
+    returns a reason too; this also covers the closed case
+    above.
+  • c6799058255 dpaez · comment: Make the `feedback round`
+    button disabled if we are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only
+    r2841017733,r2841017790
+
+== pending feedback: more than one page · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with
+  --only <refs>, or take all but --skip <refs>, which are dismissed for good.
+  Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
+  GitHub had more than one page; only the newest 100 of each list were read.
+  • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider
+    guarding the action when the pull request is closed.
+  • r2841017790 copilot-pull-request-reviewer ·
+    src/lib/factory/ticket-actions.ts:40: Guard the feedback action on the pull
+    request state and rename `canFeedback` to `feedbackAvailability`, since it
+    returns a reason too; this also covers the closed case above.
+  • c6799058255 dpaez · comment: Make the `feedback round` button disabled if we
+    are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only r2841017733,r2841017790
+
+== pending feedback: more than one page · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 3 pending comments
+  6/6 done
+  Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with --only <refs>, or take all but --skip <refs>,
+  which are dismissed for good.
+  Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
+  GitHub had more than one page; only the newest 100 of each list were read.
+  • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider guarding the action when the pull request
+    is closed.
+  • r2841017790 copilot-pull-request-reviewer · src/lib/factory/ticket-actions.ts:40: Guard the feedback action on the
+    pull request state and rename `canFeedback` to `feedbackAvailability`, since it returns a reason too; this also
+    covers the closed case above.
+  • c6799058255 dpaez · comment: Make the `feedback round` button disabled if we are not in the wrapup stage.
+  → /factory feedback dpaez/factory-dashboard#11 --only r2841017733,r2841017790
+
+== no pending feedback · 40 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup
+  · 0 pending comments
+  6/6 done
+  Nothing pending on
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71: every comment was taken
+  by a round or dismissed. A note alone
+  still starts one.
+  → /factory feedback
+    dpaez/factory-dashboard#11 "note"
+
+== no pending feedback · 60 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 0 pending comments
+  6/6 done
+  Nothing pending on
+  https://github.com/dpaez/factory-dashboard/pull/71: every
+  comment was taken by a round or dismissed. A note alone
+  still starts one.
+  → /factory feedback dpaez/factory-dashboard#11 "note"
+
+== no pending feedback · 80 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 0 pending comments
+  6/6 done
+  Nothing pending on https://github.com/dpaez/factory-dashboard/pull/71: every
+  comment was taken by a round or dismissed. A note alone still starts one.
+  → /factory feedback dpaez/factory-dashboard#11 "note"
+
+== no pending feedback · 120 cols ==
+▲ dpaez/factory-dashboard#11 · wrapup · 0 pending comments
+  6/6 done
+  Nothing pending on https://github.com/dpaez/factory-dashboard/pull/71: every comment was taken by a round or
+  dismissed. A note alone still starts one.
+  → /factory feedback dpaez/factory-dashboard#11 "note"
+
 == /factory complete · 40 cols ==
 ● dpaez/factory-dashboard#11 · done ·
   complete

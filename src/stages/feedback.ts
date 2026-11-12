@@ -43,8 +43,11 @@ export function feedbackTaskFile(round: number): string {
 // An item's ids are F1..Fn in order; the operator's note comes last.
 export type RoundItem = { feedback: FeedbackItem; id: string } | { id: string; note: string };
 
-export function roundItems(feedback: PullRequestFeedback, note: string | null): Array<RoundItem> {
-  const items: Array<RoundItem> = feedback.items.map((item, index) => ({
+export function roundItems(
+  selected: ReadonlyArray<FeedbackItem>,
+  note: string | null,
+): Array<RoundItem> {
+  const items: Array<RoundItem> = selected.map((item, index) => ({
     feedback: item,
     id: `F${index + 1}`,
   }));
@@ -244,12 +247,15 @@ export function feedbackRoundRefusal(
 // The round as the controller keeps it: each item's author, place, and first
 // line, with the full text left in the task file.
 export function roundRecord(input: {
+  // Comment ids the operator dismissed with this round.
+  dismissed: ReadonlyArray<string>;
   feedback: PullRequestFeedback;
   items: ReadonlyArray<RoundItem>;
   pullRequestUrl: string;
   round: number;
 }): FeedbackRound {
   return {
+    dismissed: [...input.dismissed],
     items: input.items.map((item): FeedbackRoundItem => {
       if ('note' in item) {
         return {
@@ -257,30 +263,12 @@ export function roundRecord(input: {
           id: item.id,
           kind: 'note',
           location: null,
+          ref: null,
           summary: firstLine(item.note),
           url: null,
         };
       }
-      const { feedback } = item;
-      if (feedback.kind === 'thread') {
-        const last = feedback.comments.at(-1);
-        return {
-          author: last?.author ?? 'unknown',
-          id: item.id,
-          kind: 'thread',
-          location: feedback.line === null ? feedback.path : `${feedback.path}:${feedback.line}`,
-          summary: firstLine(last?.body ?? ''),
-          url: last?.url ?? null,
-        };
-      }
-      return {
-        author: feedback.author,
-        id: item.id,
-        kind: feedback.kind,
-        location: null,
-        summary: firstLine(feedback.body),
-        url: feedback.url,
-      };
+      return { ...candidateOf(item.feedback), id: item.id };
     }),
     pullRequestUrl: input.pullRequestUrl,
     round: input.round,
@@ -289,16 +277,83 @@ export function roundRecord(input: {
       kind: item.kind,
       url: item.url,
     })),
+    taken: [
+      ...input.items.flatMap((item) => ('note' in item ? [] : item.feedback.commentIds)),
+      ...input.feedback.skipped.map((item) => item.id),
+    ],
   };
 }
 
+// A pending comment as the operator picks it: its ref, author, place, and
+// first line, with a link to the full text.
+export type FeedbackCandidate = Omit<FeedbackRoundItem, 'id' | 'ref'> & { ref: string };
+
+export function candidateOf(item: FeedbackItem): FeedbackCandidate {
+  if (item.kind === 'thread') {
+    const last = item.comments.at(-1);
+    return {
+      author: last?.author ?? 'unknown',
+      kind: 'thread',
+      location: item.line === null ? item.path : `${item.path}:${item.line}`,
+      ref: item.ref,
+      summary: firstLine(last?.body ?? ''),
+      url: last?.url ?? null,
+    };
+  }
+  return {
+    author: item.author,
+    kind: item.kind,
+    location: null,
+    ref: item.ref,
+    summary: firstLine(item.body),
+    url: item.url,
+  };
+}
+
+// The comment ids every earlier round took or dismissed: none is pending again.
+export function seenComments(tasks: ReadonlyArray<Pick<TaskRecord, 'feedback'>>): Set<string> {
+  return new Set(
+    tasks.flatMap((task) =>
+      task.feedback === null ? [] : [...task.feedback.taken, ...task.feedback.dismissed],
+    ),
+  );
+}
+
+// What `--only` and `--skip` leave for a round: the pending items it takes,
+// and the comment ids it dismisses. `only` takes just those refs and leaves the
+// rest pending; `skip` dismisses those refs and takes the rest. A ref that is
+// not pending is reported, not ignored.
+export function selectFeedback(
+  feedback: PullRequestFeedback,
+  choice: { only: ReadonlyArray<string> | null; skip: ReadonlyArray<string> },
+): { dismissed: Array<string>; items: Array<FeedbackItem> } | { unknown: Array<string> } {
+  const refs = new Set(feedback.items.map((item) => item.ref));
+  const unknown = [...(choice.only ?? []), ...choice.skip].filter((ref) => !refs.has(ref));
+  if (unknown.length > 0) {
+    return { unknown: [...new Set(unknown)] };
+  }
+  const skip = new Set(choice.skip);
+  const only = choice.only === null ? null : new Set(choice.only);
+  return {
+    dismissed: feedback.items
+      .filter((item) => skip.has(item.ref))
+      .flatMap((item) => item.commentIds),
+    items: feedback.items.filter(
+      (item) => !skip.has(item.ref) && (only === null || only.has(item.ref)),
+    ),
+  };
+}
+
+// Rounds stored before refs and seen ids read back with none.
 const feedbackRoundSchema = z.object({
+  dismissed: z.array(z.string()).default([]),
   items: z.array(
     z.object({
       author: z.string(),
       id: z.string(),
       kind: z.enum(['comment', 'note', 'review', 'thread']),
       location: z.string().nullable(),
+      ref: z.string().nullable().default(null),
       summary: z.string(),
       url: z.string().nullable(),
     }),
@@ -312,7 +367,8 @@ const feedbackRoundSchema = z.object({
       url: z.string().nullable(),
     }),
   ),
-}) satisfies z.ZodType<FeedbackRound>;
+  taken: z.array(z.string()).default([]),
+}) satisfies z.ZodType<FeedbackRound, unknown>;
 
 // A stored round, as the store reads it back; throws on one it cannot read.
 export function parseFeedbackRound(json: string): FeedbackRound {

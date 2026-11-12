@@ -1,6 +1,11 @@
 import { decodeCard, encodeCard, type FactoryCard } from '../controller/card.ts';
 import { detail } from '../controller/reduce.ts';
-import { attentionCard, feedbackRoundCard, finishedRunCard } from '../controller/run-card.ts';
+import {
+  attentionCard,
+  feedbackRoundCard,
+  finishedRunCard,
+  pendingFeedbackCard,
+} from '../controller/run-card.ts';
 import { terminalSummary } from '../controller/service.ts';
 import { formatStatus } from '../controller/store.ts';
 import { terminalOf } from '../stories/fixtures.ts';
@@ -31,6 +36,43 @@ import { story, type Component } from '../stories/story.ts';
 import { renderFactoryStatus } from './status-message.ts';
 
 type Args = { card: FactoryCard; expanded: boolean };
+
+// Three pending comments on the ticket's pull request, one of them long, and
+// one skipped.
+function pendingSample(): Parameters<typeof pendingFeedbackCard>[1] {
+  return {
+    candidates: [
+      {
+        author: 'coderabbitai',
+        kind: 'thread',
+        location: 'src/lib/factory/ticket-actions.ts:42',
+        ref: 'r2841017733',
+        summary: 'Consider guarding the action when the pull request is closed.',
+        url: 'https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733',
+      },
+      {
+        author: 'copilot-pull-request-reviewer',
+        kind: 'thread',
+        location: 'src/lib/factory/ticket-actions.ts:40',
+        ref: 'r2841017790',
+        summary:
+          'Guard the feedback action on the pull request state and rename `canFeedback` to `feedbackAvailability`, since it returns a reason too; this also covers the closed case above.',
+        url: 'https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790',
+      },
+      {
+        author: 'dpaez',
+        kind: 'comment',
+        location: null,
+        ref: 'c6799058255',
+        summary: 'Make the `feedback round` button disabled if we are not in the wrapup stage.',
+        url: 'https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-6799058255',
+      },
+    ],
+    pullRequestUrl: 'https://github.com/dpaez/factory-dashboard/pull/71',
+    skipped: [{ author: 'passerby', id: '6799060000', kind: 'comment', url: null }],
+    truncated: false,
+  };
+}
 
 // The card Pi shows when a run finishes, built the way the service builds it.
 function finished(scenario: Scenario): string {
@@ -192,6 +234,27 @@ export const component: Component = {
         }
         return feedbackRoundCard(snapshot);
       },
+    ),
+    card(
+      'pending feedback to pick from',
+      '`/factory feedback <ticket> --list`: the pull request’s pending comments, each with the ref that --only and --skip take, what was skipped, and the command to start a round on some of them.',
+      () => pendingFeedbackCard(handoffReady().snapshot, pendingSample()),
+    ),
+    card(
+      'pending feedback: more than one page',
+      'GitHub had more feedback than one page, so the card says only the newest were read.',
+      () => pendingFeedbackCard(handoffReady().snapshot, { ...pendingSample(), truncated: true }),
+    ),
+    card(
+      'no pending feedback',
+      'Every comment was taken by a round or dismissed; a note still starts one.',
+      () =>
+        pendingFeedbackCard(handoffReady().snapshot, {
+          candidates: [],
+          pullRequestUrl: 'https://github.com/dpaez/factory-dashboard/pull/71',
+          skipped: [],
+          truncated: false,
+        }),
     ),
     card('/factory complete', 'The reply after the human completes the handoff.', () =>
       formatStatus(detail(completed().snapshot, 'dpaez/factory-dashboard#11 is complete.')),

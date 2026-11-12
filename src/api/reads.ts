@@ -123,6 +123,9 @@ const FeedbackRoundItem = z
       .string()
       .nullable()
       .meta({ description: '`path:line` of a review thread; null otherwise.' }),
+    ref: z.string().nullable().meta({
+      description: 'The comment’s ref, as `only` names it; null for the operator’s note.',
+    }),
     summary: z.string().meta({
       description:
         "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file.",
@@ -133,6 +136,9 @@ const FeedbackRoundItem = z
 
 const FeedbackRoundRead = z
   .object({
+    dismissed: z
+      .array(z.string())
+      .meta({ description: 'GitHub ids of the comments the operator dismissed with this round.' }),
     items: z.array(FeedbackRoundItem),
     pullRequestUrl: z.string(),
     round: z.int(),
@@ -147,6 +153,9 @@ const FeedbackRoundRead = z
       .meta({
         description: 'Feedback left out: not from collaborators or codeHost.feedback.authors.',
       }),
+    taken: z.array(z.string()).meta({
+      description: 'GitHub ids of the comments this round took; no later round offers them.',
+    }),
   })
   .meta({ id: 'FeedbackRound' });
 

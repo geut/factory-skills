@@ -287,7 +287,8 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const commands: FactoryCommands = {
     cancel: (key, reason, options) => ready().cancel(key, reason, options),
     complete: (key, options) => ready().complete(key, options),
-    feedback: (key, note, options) => ready().feedback(key, note, options),
+    feedback: (key, request, options) => ready().feedback(key, request, options),
+    pendingFeedback: (key) => ready().pendingFeedback(key),
     reply: (key, answer, options) => ready().reply(key, answer, options),
     rerun: (key, options) => ready().rerun(key, options),
     retry: (key, options) => ready().retry(key, options),

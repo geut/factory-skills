@@ -3,13 +3,18 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FactorySnapshot, FeedbackRound } from '../domain.ts';
 import type { CodeHost } from '../ports/code-host.ts';
+import type { PullRequestFeedback } from '../ports/pull-request-feedback.ts';
 import {
+  candidateOf,
+  type FeedbackCandidate,
   feedbackRoundRefusal,
   feedbackRounds,
   feedbackTaskFile,
   renderFeedbackTask,
   roundItems,
   roundRecord,
+  seenComments,
+  selectFeedback,
 } from '../stages/feedback.ts';
 import { stageEnabled } from '../stages/flow.ts';
 
@@ -43,13 +48,13 @@ function headOf(worktree: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-function readFeedback(codeHost: CodeHost, url: string) {
+function readFeedback(codeHost: CodeHost, url: string, seen: ReadonlySet<string>) {
   try {
     const pullRequest = codeHost.pullRequest(url);
     if (pullRequest === null || pullRequest.state !== 'open') {
       return refuse(`${url} is ${pullRequest?.state ?? 'gone'}, not open.`);
     }
-    return { feedback: codeHost.pullRequestFeedback(pullRequest), pullRequest };
+    return { feedback: codeHost.pullRequestFeedback(pullRequest, seen), pullRequest };
   } catch (error: unknown) {
     const failed: FeedbackRefusal = {
       message: `Cannot read ${url}: ${error instanceof Error ? error.message : String(error)}`,
@@ -59,7 +64,58 @@ function readFeedback(codeHost: CodeHost, url: string) {
   }
 }
 
+// Which pending comments a round takes: all of them by default, only the
+// refs in `only`, or all but the refs in `skip`, which are dismissed for good.
+export type FeedbackChoice = { only: Array<string> | null; skip: Array<string> };
+
+const ALL: FeedbackChoice = { only: null, skip: [] };
+
+function noneLeft(url: string, feedback: PullRequestFeedback): string {
+  const skipped =
+    feedback.skipped.length === 0
+      ? ''
+      : ` (${feedback.skipped.length} skipped: not from collaborators or codeHost.feedback.authors)`;
+  const truncated = feedback.truncated
+    ? ' GitHub had more than one page, so only the newest 100 of each list were read.'
+    : '';
+  return `No pending feedback on ${url}${skipped}.${truncated} Add a note to start a round anyway.`;
+}
+
+// The pull request's pending feedback, for the operator to pick from: what
+// `/factory feedback --list` and the API's feedback read show. Nothing changes.
+export function listFeedback(input: {
+  codeHost: CodeHost;
+  pullRequestUrl: string | null;
+  snapshot: FactorySnapshot;
+}):
+  | {
+      candidates: Array<FeedbackCandidate>;
+      pullRequestUrl: string;
+      skipped: PullRequestFeedback['skipped'];
+      truncated: boolean;
+    }
+  | FeedbackRefusal {
+  if (input.pullRequestUrl === null) {
+    return refuse(`${input.snapshot.ticket.displayRef} has no pull request to take feedback from.`);
+  }
+  const read = readFeedback(
+    input.codeHost,
+    input.pullRequestUrl,
+    seenComments(input.snapshot.tasks),
+  );
+  if ('reason' in read) {
+    return read;
+  }
+  return {
+    candidates: read.feedback.items.map((item) => candidateOf(item)),
+    pullRequestUrl: input.pullRequestUrl,
+    skipped: read.feedback.skipped,
+    truncated: read.feedback.truncated,
+  };
+}
+
 export function prepareFeedbackRound(input: {
+  choice?: FeedbackChoice;
   codeHost: CodeHost;
   note: string | null;
   // The pull request recorded for the ticket, if any.
@@ -79,7 +135,11 @@ export function prepareFeedbackRound(input: {
   if (worktree === null || head === null) {
     return refuse(`${ticket.displayRef} has no worktree to work in.`);
   }
-  const read = readFeedback(input.codeHost, input.pullRequestUrl);
+  const read = readFeedback(
+    input.codeHost,
+    input.pullRequestUrl,
+    seenComments(input.snapshot.tasks),
+  );
   if ('reason' in read) {
     return read;
   }
@@ -91,22 +151,26 @@ export function prepareFeedbackRound(input: {
       `${input.pullRequestUrl} is at ${pullRequest.headSha.slice(0, 7)}, the worktree at ${head.slice(0, 7)}. Bring the worktree to the pull request's head first.`,
     );
   }
-  const items = roundItems(feedback, input.note);
-  if (items.length === 0) {
-    const skipped =
-      feedback.skipped.length === 0
-        ? ''
-        : ` (${feedback.skipped.length} skipped: not from collaborators or codeHost.feedback.authors)`;
-    const truncated = feedback.truncated
-      ? ' GitHub had more than one page, so only the newest 100 of each list were read.'
-      : '';
+  const chosen = selectFeedback(feedback, input.choice ?? ALL);
+  if ('unknown' in chosen) {
+    const pending = feedback.items.map((item) => item.ref);
     return refuse(
-      `No new feedback on ${input.pullRequestUrl} since the last push${skipped}.${truncated} Add a note to start a round anyway.`,
+      `${chosen.unknown.join(', ')} ${chosen.unknown.length === 1 ? 'is' : 'are'} not pending feedback on ${input.pullRequestUrl}. Pending: ${pending.length === 0 ? 'none' : pending.join(', ')}.`,
     );
+  }
+  const items = roundItems(chosen.items, input.note);
+  if (items.length === 0) {
+    return refuse(noneLeft(input.pullRequestUrl, feedback));
   }
   const round = feedbackRounds(input.snapshot.tasks) + 1;
   return {
-    feedback: roundRecord({ feedback, items, pullRequestUrl: input.pullRequestUrl, round }),
+    feedback: roundRecord({
+      dismissed: chosen.dismissed,
+      feedback,
+      items,
+      pullRequestUrl: input.pullRequestUrl,
+      round,
+    }),
     round,
     startHead: head,
     taskFile: feedbackTaskFile(round),

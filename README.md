@@ -12,7 +12,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory reply <ticket> "answer"
 /factory retry <ticket>
 /factory complete <ticket>
-/factory feedback <ticket> ["note"]
+/factory feedback <ticket> [--list] [--only <refs>] [--skip <refs>] ["note"]
 /factory stop <ticket>
 /factory cancel <ticket> ["reason"]
 /factory rerun <ticket>
@@ -77,7 +77,9 @@ A failed validation resumes the same wrap-up session with the exact failures; wr
 
 `/factory feedback <ticket> ["note"]` takes the feedback the ticket's pull request got after handoff back through work, review, and wrap-up, on the same worktree and branch, and ends with a new commit pushed to the same pull request. It works only at `wrapup / ready_for_handoff`, with `codeHost.pullRequests` on and an open pull request recorded for the ticket whose head is the worktree's; anything else is refused with `invalid_state`, and nothing changes. A pull request `gh` cannot read is refused with `code_host_unavailable`.
 
-- **What counts.** The server reads the pull request with one `gh api graphql` call: unresolved review threads with a comment posted after the pull request's head commit (the factory's last push), shown whole for context, and review bodies and conversation comments posted after it. It reads the newest 100 of each list, and says so when there were more. Only collaborators' feedback counts, by GitHub's author association (`OWNER`, `MEMBER`, `COLLABORATOR`), plus the logins in `codeHost.feedback.authors`, such as a review bot (`"feedback": { "authors": ["coderabbitai"] }`; a trailing `[bot]` doesn't matter). The rest is listed as skipped. Resolved threads and the factory's own comments are left out. The note, when given, is one more item. With nothing to address and no note, the command is refused.
+- **What counts.** The server reads the pull request with one `gh api graphql` call: its unresolved review threads, shown whole for context, its review bodies, and its conversation comments, the newest 100 of each list (it says so when there were more). Only collaborators' feedback counts, by GitHub's author association (`OWNER`, `MEMBER`, `COLLABORATOR`), plus the logins in `codeHost.feedback.authors`, such as a review bot (`"feedback": { "authors": ["coderabbitai"] }`; a trailing `[bot]` doesn't matter). The rest is listed as skipped. Resolved threads and the factory's own comments are left out.
+- **Pending, by identity.** A comment is pending until a round takes it or you dismiss it, so a comment posted while a round runs waits for the next one, and a round that changed nothing does not offer its comments again. A thread with a new reply is pending again. Each round records the GitHub ids it took and dismissed.
+- **Picking comments.** Every pending comment has a ref from its GitHub id, as its link ends: `r2841017733` for a review thread, `p…` for a review, `c…` for a conversation comment. `/factory feedback <ticket> --list` (or `GET /v1/tickets/{key}/feedback`) lists them, with what was skipped, and changes nothing. A round takes every pending comment by default; `--only r2841017733,c6799058255` takes just those and leaves the rest pending; `--skip r2841017733` takes all but those, which are dismissed for good. A ref that is not pending is refused, naming the pending ones. The note, when given, is one more item, and a note alone starts a round when nothing is pending.
 - **The round is a task.** The controller adds task `F<n>` to the ticket, with its task file at `tickets/<slug>/feedback/<n>/task.md`. Its acceptance criteria are the items `F1..Fn`, and the file quotes each one in full, framed as review requests to weigh, not instructions. The task goes through work, QA when it is on, and review like any task, then wrap-up runs again in its own session.
 - **Work** starts from the pull request's head, so work validation checks that nothing is committed past that commit. The diff may be empty: a round can decline every item. The reply ends with `## Feedback responses`, one line per item, `- F1: addressed — what changed` or `- F2: declined — why`; work validation does not require it, since review judges every item anyway.
 - **Review** sees only the round's diff, with the items as its criteria: each gets a Verification line, `verified` with the lines that address it or `not_verified` with why it is left as is. It uses the worker's `## Feedback responses` when the reply has them, and treats an item left unaddressed without a sound reason as a Major finding.
@@ -163,16 +165,17 @@ Reads need a `read` token.
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.
 
-| Route                                            | Pi equivalent       |
-| ------------------------------------------------ | ------------------- |
-| `POST /v1/tickets {ref}` or `{id, text}`         | `/factory start`    |
-| `POST /v1/tickets/{key}/replies {answer}`        | `/factory reply`    |
-| `POST /v1/tickets/{key}/retries`                 | `/factory retry`    |
-| `POST /v1/tickets/{key}/complete`                | `/factory complete` |
-| `POST /v1/tickets/{key}/feedback-rounds {note?}` | `/factory feedback` |
-| `POST /v1/tickets/{key}/cancel {reason?}`        | `/factory cancel`   |
-| `POST /v1/tickets/{key}/reruns`                  | `/factory rerun`    |
-| `POST /v1/runs/{id}/stop`                        | `/factory stop`     |
+| Route                                                          | Pi equivalent              |
+| -------------------------------------------------------------- | -------------------------- |
+| `POST /v1/tickets {ref}` or `{id, text}`                       | `/factory start`           |
+| `POST /v1/tickets/{key}/replies {answer}`                      | `/factory reply`           |
+| `POST /v1/tickets/{key}/retries`                               | `/factory retry`           |
+| `POST /v1/tickets/{key}/complete`                              | `/factory complete`        |
+| `POST /v1/tickets/{key}/feedback-rounds {note?, only?, skip?}` | `/factory feedback`        |
+| `GET /v1/tickets/{key}/feedback`                               | `/factory feedback --list` |
+| `POST /v1/tickets/{key}/cancel {reason?}`                      | `/factory cancel`          |
+| `POST /v1/tickets/{key}/reruns`                                | `/factory rerun`           |
+| `POST /v1/runs/{id}/stop`                                      | `/factory stop`            |
 
 - Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `code_host_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
 - Cancel ends a ticket for good: its agents stop, its tab closes, open questions and tasks are cancelled, and the ticket is `done / cancelled`. Its worktree, branch, and pull request stay for you to keep or clean up. A ticket from the tracker gets a comment, and its factory status label is removed.
