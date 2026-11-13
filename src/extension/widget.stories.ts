@@ -7,6 +7,7 @@ import {
   askingUser,
   changesRequested,
   diffKeepsChanging,
+  feedbackRoundWorking,
   handoffReady,
   otherTicket,
   planRunning,
@@ -122,6 +123,14 @@ export const component: Component = {
       'ready for handoff',
       'Wrap-up passed. The ticket waits for the human to merge and run /factory complete.',
       () => ({ children: [], tickets: [handoffReady().snapshot] }),
+    ),
+    widget(
+      'feedback round in work',
+      'A feedback round took the ticket back to work. The task line names the round, its item count, and the first item, cut to the width.',
+      () => {
+        const scenario = feedbackRoundWorking();
+        return { children: running(scenario), tickets: [scenario.snapshot] };
+      },
     ),
     widget(
       'two tickets, three children',

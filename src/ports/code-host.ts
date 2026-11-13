@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { CodeHostConfig } from '../config.ts';
+import { FEEDBACK_QUERY, feedbackFrom, type PullRequestFeedback } from './pull-request-feedback.ts';
 
-// The code host port: how the factory reads pull requests and checks webhook
-// deliveries. It only reads; the wrap-up agent opens the pull request itself.
+// The code host port: how the factory reads pull requests, their feedback, and
+// checks webhook deliveries. It only reads; the wrap-up agent opens the pull
+// request itself.
 // GitHub is the only adapter so far, through gh.
 
 export type PullRequestInfo = {
@@ -42,6 +44,12 @@ export type CodeHost = {
   kind: string;
   // Null when no pull request exists at `url`. Throws on infrastructure errors.
   pullRequest: (url: string) => PullRequestInfo | null;
+  // The feedback on `pullRequest` that is still pending: not in `seen`, the
+  // comment ids earlier rounds took or the operator dismissed.
+  pullRequestFeedback: (
+    pullRequest: PullRequestInfo,
+    seen: ReadonlySet<string>,
+  ) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
@@ -60,7 +68,8 @@ export function codeHostRepo(config: Pick<CodeHostConfig, 'owner' | 'repo'>): st
 export type GhJson = (args: Array<string>) => unknown;
 
 export const ghJson: GhJson = (args) => {
-  const result = spawnSync('gh', args, { encoding: 'utf8' });
+  // A pull request's feedback can run past spawnSync's 1 MiB default.
+  const result = spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'gh failed').trim());
   }
@@ -196,6 +205,23 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
         }
         throw error;
       }
+    },
+    pullRequestFeedback: (pullRequest, seen) => {
+      const [owner, name] = repoOf(pullRequest.url).split('/');
+      const payload = gh([
+        'api',
+        'graphql',
+        '-f',
+        `query=${FEEDBACK_QUERY}`,
+        // -f keeps a name such as `2048` a string; -F types the number.
+        '-f',
+        `owner=${owner ?? ''}`,
+        '-f',
+        `repo=${name ?? ''}`,
+        '-F',
+        `number=${pullRequest.number}`,
+      ]);
+      return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], seen });
     },
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;

@@ -114,9 +114,59 @@ const TaskSummaryEntry = z.object({
   round: z.int(),
 });
 
+const FeedbackRoundItem = z
+  .object({
+    author: z.string(),
+    id: z.string().meta({ description: '`F1`..`Fn`.' }),
+    kind: z.enum(['comment', 'note', 'review', 'thread']),
+    location: z
+      .string()
+      .nullable()
+      .meta({ description: '`path:line` of a review thread; null otherwise.' }),
+    ref: z.string().nullable().meta({
+      description: 'The comment’s ref, as `only` names it; null for the operator’s note.',
+    }),
+    summary: z.string().meta({
+      description:
+        "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file.",
+    }),
+    url: z.string().nullable().meta({
+      description: "GitHub's link to the comment; null for the operator's note.",
+    }),
+  })
+  .meta({ id: 'FeedbackRoundItem' });
+
+const FeedbackRoundRead = z
+  .object({
+    dismissed: z
+      .array(z.string())
+      .meta({ description: 'GitHub ids of the comments the operator dismissed with this round.' }),
+    items: z.array(FeedbackRoundItem),
+    pullRequestUrl: z.string(),
+    round: z.int(),
+    skipped: z
+      .array(
+        z.object({
+          author: z.string(),
+          kind: z.enum(['comment', 'review', 'thread']),
+          url: z.string().nullable(),
+        }),
+      )
+      .meta({
+        description: 'Feedback left out: not from collaborators or codeHost.feedback.authors.',
+      }),
+    taken: z.array(z.string()).meta({
+      description: 'GitHub ids of the comments this round took; no later round offers them.',
+    }),
+  })
+  .meta({ id: 'FeedbackRound' });
+
 const Task = z
   .object({
     blockedBy: z.array(z.string()),
+    feedback: FeedbackRoundRead.nullable().meta({
+      description: "A feedback round's items, for task `F<n>`; null for a planned task.",
+    }),
     id: z.string(),
     ordinal: z.int(),
     stage: z.enum(stageNames).nullable(),
@@ -489,6 +539,7 @@ function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof T
     source: sourceOf(snapshot),
     tasks: snapshot.tasks.map((task) => ({
       blockedBy: task.blockedBy,
+      feedback: task.feedback,
       id: task.taskId,
       ordinal: task.ordinal,
       stage: task.stage,

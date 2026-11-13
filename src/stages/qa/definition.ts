@@ -49,7 +49,7 @@ export type QaInput = {
   taskFile: string;
   taskId: string;
   title: string;
-  // validation.qa.commands, which QA validation runs after the QA commands.
+  // The work and validation.qa commands QA validation runs after the QA commands.
   validationCommands: Array<WorkCommand>;
   workerSummary: string;
   worktree: string;
@@ -124,6 +124,18 @@ export function qaSettings(policy: Policy): QaSettings {
     commands: read.settings['commands'] as Array<WorkCommand>,
     enabled: read.settings.enabled,
   };
+}
+
+// What QA validation runs once QA is done: every work command, since QA's
+// files must still pass what work had to, then the validation.qa commands
+// work does not already run.
+export function qaValidationCommands(policy: Pick<Policy, 'validation'>): Array<WorkCommand> {
+  const work = policy.validation.work.commands;
+  const ran = new Set(work.map((command) => JSON.stringify(command.argv)));
+  return [
+    ...work,
+    ...policy.validation.qa.commands.filter((command) => !ran.has(JSON.stringify(command.argv))),
+  ];
 }
 
 // The FACTORY.json limits this stage reads.
@@ -212,7 +224,7 @@ export const qa = defineStage<QaInput, 'qa', QaPrepared>({
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
       taskId: task.taskId,
       title: task.title,
-      validationCommands: execution.policy.validation.qa.commands,
+      validationCommands: qaValidationCommands(execution.policy),
       workerSummary: workerSummary(snapshot, task.taskId),
       worktree: execution.worktreePath,
     };

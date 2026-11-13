@@ -56,6 +56,7 @@ const accepted = {
 };
 
 const refusals: Record<Exclude<CommandOutcome, { kind: 'accepted' }>['reason'], ProblemType> = {
+  code_host_unavailable: 'code_host_unavailable',
   factory_config: 'internal_error',
   invalid_ref: 'validation_error',
   invalid_state: 'invalid_state',
@@ -170,6 +171,110 @@ const cancelTicket = defineRoute({
   tags: ['commands'],
 });
 
+const FeedbackRefs = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .meta({ description: 'Refs of pending comments, such as r2841017733 or c6799058255.' });
+
+const startFeedbackRound = defineRoute({
+  handler: ({ actor, body, context, headers, params }) =>
+    answer(
+      context.commands.feedback(
+        params.key,
+        { note: body?.note ?? null, only: body?.only ?? null, skip: body?.skip ?? [] },
+        options(actor, headers),
+      ),
+    ),
+  method: 'POST',
+  operationId: 'startFeedbackRound',
+  path: '/v1/tickets/{key}/feedback-rounds',
+  request: {
+    body: z
+      .object({
+        note: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .meta({ description: "The operator's own feedback, addressed as the last item." }),
+        only: FeedbackRefs.optional().meta({
+          description: 'Take only these pending comments; the rest stay pending.',
+        }),
+        skip: FeedbackRefs.optional().meta({
+          description: 'Take every pending comment but these, which are dismissed for good.',
+        }),
+      })
+      .optional()
+      .meta({ id: 'StartFeedbackRound' }),
+    headers: CommandHeaders,
+    params: TicketParams,
+  },
+  responses: accepted,
+  scope: 'act',
+  summary:
+    "Take the open pull request's pending feedback, or the comments `only` names, back through work, review, and wrap-up on the same branch. Only at ready_for_handoff.",
+  tags: ['commands'],
+});
+
+const FeedbackCandidate = z
+  .object({
+    author: z.string(),
+    kind: z.enum(['comment', 'review', 'thread']),
+    location: z.string().nullable().meta({ description: '`path:line` of a review thread.' }),
+    ref: z.string().meta({ description: 'What `only` and `skip` name it by.' }),
+    summary: z.string().meta({ description: 'Its first line, at most 160 characters.' }),
+    url: z.string().nullable().meta({
+      description:
+        "GitHub's link to the comment, where its full text is. A thread links its latest comment, which GitHub shows within the thread.",
+    }),
+  })
+  .meta({ id: 'FeedbackCandidate' });
+
+export const PendingFeedback = z
+  .object({
+    candidates: z.array(FeedbackCandidate),
+    pullRequestUrl: z.string(),
+    skipped: z
+      .array(
+        z.object({
+          author: z.string(),
+          id: z.string(),
+          kind: z.enum(['comment', 'review', 'thread']),
+          url: z.string().nullable(),
+        }),
+      )
+      .meta({ description: 'Not from collaborators or codeHost.feedback.authors.' }),
+    ticket: z.string(),
+    truncated: z.boolean().meta({
+      description: 'GitHub had more than one page; only the newest 100 of each list were read.',
+    }),
+  })
+  .meta({ id: 'PendingFeedback' });
+
+const listPendingFeedback = defineRoute({
+  handler: ({ context, params }) => {
+    const listed = context.commands.pendingFeedback(params.key);
+    if (listed.kind === 'refused') {
+      throw new ProblemError(refusals[listed.reason], listed.message);
+    }
+    const { kind: _kind, ...body } = listed;
+    return { body, status: 200 };
+  },
+  method: 'GET',
+  operationId: 'listPendingFeedback',
+  path: '/v1/tickets/{key}/feedback',
+  request: { params: TicketParams },
+  responses: {
+    200: {
+      description: "The pull request's comments no feedback round took or dismissed.",
+      schema: PendingFeedback,
+    },
+  },
+  scope: 'read',
+  summary: "List the open pull request's pending feedback, to pick a round's comments",
+  tags: ['commands'],
+});
+
 const rerunTicket = defineRoute({
   handler: async ({ actor, context, headers, params }) =>
     answer(await context.commands.rerun(params.key, options(actor, headers))),
@@ -204,6 +309,8 @@ export const commandRoutes = [
   retryTicket,
   completeTicket,
   cancelTicket,
+  startFeedbackRound,
+  listPendingFeedback,
   rerunTicket,
   stopRun,
 ];

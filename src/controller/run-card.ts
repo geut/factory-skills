@@ -1,6 +1,8 @@
+import path from 'node:path';
 import type {
   ActionRecord,
   FactorySnapshot,
+  FeedbackRoundItem,
   ReviewVerdict,
   RunId,
   RunRecord,
@@ -8,7 +10,9 @@ import type {
   StageName,
   TerminalKind,
 } from '../domain.ts';
+import type { SkippedFeedback } from '../ports/pull-request-feedback.ts';
 import { runStatusLabel } from '../runtime/policy.ts';
+import type { FeedbackCandidate } from '../stages/feedback.ts';
 import { stages } from '../stages/index.ts';
 import { runReview, verificationSummary } from '../stages/review/parse.ts';
 import { card, encodeCard, type CardTone, type FactoryCard } from './card.ts';
@@ -339,6 +343,112 @@ export function attentionCard(snapshot: FactorySnapshot, message: string): strin
       stage: snapshot.execution.stage,
       task: currentStep(snapshot),
       tone: status === 'failed' ? 'failed' : 'attention',
+    }),
+  );
+}
+
+// The most items a feedback round's card lists; the task file has the rest.
+const ROUND_CARD_ITEMS = 5;
+
+function roundItemLine(item: FeedbackRoundItem): string {
+  const where = item.kind === 'note' ? 'note' : (item.location ?? item.kind);
+  return `${item.id} ${item.author} · ${where}: ${item.summary}`;
+}
+
+// One line per comment with a link, so the expanded card opens each one.
+function links(items: ReadonlyArray<[string, string | null]>): Array<string> {
+  return items.flatMap(([label, url]) => (url === null ? [] : [`${label}: ${url}`]));
+}
+
+// The card a feedback round posts when it starts: each item on its own line,
+// what was skipped, and where the full text is. Empty when the ticket has no
+// round.
+export function feedbackRoundCard(snapshot: FactorySnapshot): string {
+  const task = snapshot.tasks.findLast((item) => item.feedback !== null);
+  const round = task?.feedback ?? null;
+  if (task === undefined || round === null) {
+    return '';
+  }
+  const shown = round.items.slice(0, ROUND_CARD_ITEMS).map((item) => roundItemLine(item));
+  const more = round.items.length - shown.length;
+  const skippedBy = [...new Set(round.skipped.map((item) => item.author))];
+  return encodeCard(
+    card({
+      // The first line is what a collapsed card shows: where to read it all.
+      body: [
+        `Full text: ${path.join(snapshot.execution.factoryDir, task.taskFile)}`,
+        `From ${round.pullRequestUrl}.`,
+        ...links(round.items.slice(0, ROUND_CARD_ITEMS).map((item) => [item.id, item.url])),
+        ...(round.skipped.length === 0
+          ? []
+          : [
+              `Skipped ${round.skipped.length}, from ${skippedBy.join(', ')}: not collaborators or codeHost.feedback.authors.`,
+            ]),
+      ].join('\n'),
+      displayRef: snapshot.ticket.displayRef,
+      items: more > 0 ? [...shown, `+${more} more in the task file`] : shown,
+      outcome: `feedback round ${round.round} · ${round.items.length} item${round.items.length === 1 ? '' : 's'}`,
+      progress: progressText(snapshot),
+      stage: 'work',
+      task: taskLabel(snapshot, task),
+      tone: 'progress',
+    }),
+  );
+}
+
+// The most pending comments the card lists; the API lists them all.
+const PENDING_CARD_ITEMS = 20;
+
+// What `/factory feedback <ticket> --list` shows: the pull request's pending
+// comments, each with the ref --only and --skip take, and how to start a round
+// on some of them.
+export function pendingFeedbackCard(
+  snapshot: FactorySnapshot,
+  listed: {
+    candidates: ReadonlyArray<FeedbackCandidate>;
+    pullRequestUrl: string;
+    skipped: ReadonlyArray<SkippedFeedback>;
+    truncated: boolean;
+  },
+): string {
+  const { candidates } = listed;
+  const shown = candidates.slice(0, PENDING_CARD_ITEMS).map((item) => {
+    const where = item.location ?? item.kind;
+    return `${item.ref} ${item.author} · ${where}: ${item.summary}`;
+  });
+  const more = candidates.length - shown.length;
+  const skippedBy = [...new Set(listed.skipped.map((item) => item.author))];
+  const ref = snapshot.ticket.commandRef;
+  return encodeCard(
+    card({
+      body: [
+        candidates.length === 0
+          ? `Nothing pending on ${listed.pullRequestUrl}: every comment was taken by a round or dismissed. A note alone still starts one.`
+          : `Pending on ${listed.pullRequestUrl}. Pick with --only <refs>, or take all but --skip <refs>, which are dismissed for good.`,
+        ...links(candidates.slice(0, PENDING_CARD_ITEMS).map((item) => [item.ref, item.url])),
+        ...(listed.skipped.length === 0
+          ? []
+          : [
+              `Skipped ${listed.skipped.length}, from ${skippedBy.join(', ')}: not collaborators or codeHost.feedback.authors.`,
+            ]),
+        ...(listed.truncated
+          ? ['GitHub had more than one page; only the newest 100 of each list were read.']
+          : []),
+      ].join('\n'),
+      displayRef: snapshot.ticket.displayRef,
+      items:
+        more > 0 ? [...shown, `+${more} more: GET /v1/tickets/{key}/feedback lists all`] : shown,
+      next:
+        candidates.length === 0
+          ? `/factory feedback ${ref} "note"`
+          : `/factory feedback ${ref} --only ${candidates
+              .slice(0, 2)
+              .map((item) => item.ref)
+              .join(',')}`,
+      outcome: `${candidates.length} pending comment${candidates.length === 1 ? '' : 's'}`,
+      progress: progressText(snapshot),
+      stage: snapshot.execution.stage,
+      tone: 'attention',
     }),
   );
 }

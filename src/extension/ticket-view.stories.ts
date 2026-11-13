@@ -1,6 +1,7 @@
 import { ticketDetailOf, type TicketDetail } from '../controller/view.ts';
 import {
   askingUser,
+  feedbackRoundWorking,
   handoffReady,
   planRunning,
   readyForReview,
@@ -72,6 +73,13 @@ export const component: Component = {
       handoffReady,
       '## Outcome\n\nThe dashboard reads the factory schema v2 database, read-only.',
       13,
+    ),
+    view(
+      'feedback round in work',
+      'A feedback round on the handed-off ticket: its runs read F1, and the header shows the round and its first item.',
+      feedbackRoundWorking,
+      'This run has no message yet.',
+      15,
     ),
     view(
       'plan running',

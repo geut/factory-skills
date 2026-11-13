@@ -691,9 +691,10 @@ function issueContext(
 export const wrapupValidator: Validator<'wrapup'> = {
   validate: ({ deps, run, session, snapshot }) => {
     const { execution } = snapshot;
-    // The baseline is taken when the first wrap-up input is prepared.
+    // The baseline is taken when a pass's first wrap-up input is prepared:
+    // the first wrap-up, then each feedback round's.
     const baselineText =
-      snapshot.runs.find((item) => item.sessionId === session.id && item.baseline !== null)
+      snapshot.runs.findLast((item) => item.sessionId === session.id && item.baseline !== null)
         ?.baseline ?? null;
     const baseline = baselineText === null ? null : parseBaseline(baselineText);
     if (

@@ -1478,6 +1478,134 @@
         }
       }
     },
+    "/v1/tickets/{key}/feedback-rounds": {
+      "post": {
+        "operationId": "startFeedbackRound",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Take the open pull request's pending feedback, or the comments `only` names, back through work, review, and wrap-up on the same branch. Only at ready_for_handoff.",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "description": "Repeating a command with the same key returns the first result instead of applying it again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "description": "Repeating a command with the same key returns the first result instead of applying it again."
+          },
+          {
+            "in": "header",
+            "name": "x-factory-on-behalf-of",
+            "schema": {
+              "description": "Who the client acts for, such as a dashboard user. Stored, never verified.",
+              "type": "string"
+            },
+            "description": "Who the client acts for, such as a dashboard user. Stored, never verified."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartFeedbackRound"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The command is committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tickets/{key}/feedback": {
+      "get": {
+        "operationId": "listPendingFeedback",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "List the open pull request's pending feedback, to pick a round's comments",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pull request's comments no feedback round took or dismissed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingFeedback"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets/{key}/reruns": {
       "post": {
         "operationId": "rerunTicket",
@@ -1743,6 +1871,34 @@
           }
         }
       },
+      "StartFeedbackRound": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "description": "The operator's own feedback, addressed as the last item.",
+            "type": "string",
+            "minLength": 1
+          },
+          "only": {
+            "description": "Take only these pending comments; the rest stay pending.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "skip": {
+            "description": "Take every pending comment but these, which are dismissed for good.",
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "properties": {
@@ -1784,6 +1940,7 @@
           "type": {
             "type": "string",
             "enum": [
+              "code_host_unavailable",
               "insufficient_scope",
               "internal_error",
               "invalid_state",
@@ -2566,6 +2723,17 @@
               "type": "string"
             }
           },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackRound"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A feedback round's items, for task `F<n>`; null for a planned task."
+          },
           "id": {
             "type": "string"
           },
@@ -2642,12 +2810,143 @@
         },
         "required": [
           "blockedBy",
+          "feedback",
           "id",
           "ordinal",
           "stage",
           "status",
           "summaries",
           "title"
+        ],
+        "additionalProperties": false
+      },
+      "FeedbackRound": {
+        "type": "object",
+        "properties": {
+          "dismissed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GitHub ids of the comments the operator dismissed with this round."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackRoundItem"
+            }
+          },
+          "pullRequestUrl": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "comment",
+                    "review",
+                    "thread"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "author",
+                "kind",
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Feedback left out: not from collaborators or codeHost.feedback.authors."
+          },
+          "taken": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GitHub ids of the comments this round took; no later round offers them."
+          }
+        },
+        "required": [
+          "dismissed",
+          "items",
+          "pullRequestUrl",
+          "round",
+          "skipped",
+          "taken"
+        ],
+        "additionalProperties": false
+      },
+      "FeedbackRoundItem": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "`F1`..`Fn`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "note",
+              "review",
+              "thread"
+            ]
+          },
+          "location": {
+            "description": "`path:line` of a review thread; null otherwise.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "description": "The comment’s ref, as `only` names it; null for the operator’s note.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file."
+          },
+          "url": {
+            "description": "GitHub's link to the comment; null for the operator's note.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "author",
+          "id",
+          "kind",
+          "location",
+          "ref",
+          "summary",
+          "url"
         ],
         "additionalProperties": false
       },
@@ -4703,6 +5002,118 @@
           "tokensInput",
           "tokensOutput",
           "type"
+        ],
+        "additionalProperties": false
+      },
+      "PendingFeedback": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackCandidate"
+            }
+          },
+          "pullRequestUrl": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "comment",
+                    "review",
+                    "thread"
+                  ]
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "author",
+                "id",
+                "kind",
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Not from collaborators or codeHost.feedback.authors."
+          },
+          "ticket": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "GitHub had more than one page; only the newest 100 of each list were read."
+          }
+        },
+        "required": [
+          "candidates",
+          "pullRequestUrl",
+          "skipped",
+          "ticket",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "FeedbackCandidate": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "review",
+              "thread"
+            ]
+          },
+          "location": {
+            "description": "`path:line` of a review thread.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "description": "What `only` and `skip` name it by."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Its first line, at most 160 characters."
+          },
+          "url": {
+            "description": "GitHub's link to the comment, where its full text is. A thread links its latest comment, which GitHub shows within the thread.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "author",
+          "kind",
+          "location",
+          "ref",
+          "summary",
+          "url"
         ],
         "additionalProperties": false
       },

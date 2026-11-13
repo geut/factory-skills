@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
+import { z } from 'zod';
+import { PendingFeedback } from '../api/commands.ts';
 import type { ParsedCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
+import { pendingFeedbackCard } from '../controller/run-card.ts';
 import {
   cardsSince,
   latestRevision,
@@ -28,6 +31,8 @@ export type FactoryClient = {
   cardsSince: (revision: number) => Array<{ card: string; revision: number }>;
   close: () => void;
   command: (command: ParsedCommand) => Promise<string>;
+  // The ticket's pending feedback, for the picker, or why it cannot be read.
+  pendingFeedback: (ref: string) => Promise<PendingFeedbackView | string>;
   progress: () => Array<TicketProgress>;
   revision: () => number;
   runningChildren: () => Array<RunningChildRow>;
@@ -35,7 +40,11 @@ export type FactoryClient = {
   ticketDetail: (ref: string | null) => TicketDetail | string;
 };
 
+export type PendingFeedbackView = z.infer<typeof PendingFeedback> & { displayRef: string };
+
 type Problem = { detail?: string; title?: string };
+
+const ProblemBody = z.object({ detail: z.string().optional(), title: z.string().optional() });
 
 export function noServerMessage(factoryRoot: string): string {
   return `No factory server is running for ${factoryRoot}. Start it with \`factory serve\` in a Herdr pane.`;
@@ -120,6 +129,41 @@ export function createFactoryClient(input: {
     };
   }
 
+  // The pull request's pending feedback, through the server, which reads GitHub.
+  async function pendingFeedback(
+    url: string,
+    key: string,
+  ): Promise<{ problem: string } | z.infer<typeof PendingFeedback>> {
+    let token: string;
+    try {
+      token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
+    } catch {
+      return { problem: `Cannot read ${localTokenPath(input.factoryRoot)}; restart the server.` };
+    }
+    let response: Response;
+    try {
+      response = await send(`${url}/v1/tickets/${key}/feedback`, {
+        headers: { authorization: `Bearer ${token}` },
+        method: 'GET',
+      });
+    } catch (error: unknown) {
+      return {
+        problem: `Cannot reach the factory server at ${url}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const payload: unknown = await response.json().catch(() => ({}));
+    const listed = PendingFeedback.safeParse(payload);
+    if (response.status === 200 && listed.success) {
+      return listed.data;
+    }
+    const problem = ProblemBody.safeParse(payload);
+    return {
+      problem:
+        (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
+        `The server answered ${response.status}.`,
+    };
+  }
+
   async function command(parsed: ParsedCommand): Promise<string> {
     if (parsed.kind === 'invalid') {
       return parsed.message;
@@ -153,6 +197,24 @@ export function createFactoryClient(input: {
         return `No factory execution matches ${parsed.ref}.`;
       }
       sent = await post(url, `/v1/tickets/${key}/reruns`, undefined);
+    } else if (parsed.kind === 'feedback') {
+      const key = keyFor(open, parsed.ref);
+      if (key === null) {
+        return `No factory execution matches ${parsed.ref}.`;
+      }
+      if (parsed.list) {
+        const snapshot = findTicket(open, parsed.ref);
+        if (snapshot === null) {
+          return `No factory execution matches ${parsed.ref}.`;
+        }
+        const listed = await pendingFeedback(url, key);
+        return 'problem' in listed ? listed.problem : pendingFeedbackCard(snapshot, listed);
+      }
+      sent = await post(url, `/v1/tickets/${key}/feedback-rounds`, {
+        ...(parsed.note === null ? {} : { note: parsed.note }),
+        ...(parsed.only === null ? {} : { only: parsed.only }),
+        ...(parsed.skip.length === 0 ? {} : { skip: parsed.skip }),
+      });
     } else if (parsed.kind === 'cancel') {
       const key = keyFor(open, parsed.ref);
       if (key === null) {
@@ -200,6 +262,24 @@ export function createFactoryClient(input: {
       db = null;
     },
     command,
+    pendingFeedback: async (ref) => {
+      const open = database();
+      if (open === null) {
+        return unavailable();
+      }
+      const url = serverUrl(open);
+      if (url === null) {
+        return noServerMessage(input.factoryRoot);
+      }
+      const snapshot = findTicket(open, ref);
+      if (snapshot === null) {
+        return `No factory execution matches ${ref}.`;
+      }
+      const listed = await pendingFeedback(url, ticketKeyOf(snapshot));
+      return 'problem' in listed
+        ? listed.problem
+        : { ...listed, displayRef: snapshot.ticket.displayRef };
+    },
     progress: () => {
       const open = database();
       return open === null ? [] : progressOf(open);

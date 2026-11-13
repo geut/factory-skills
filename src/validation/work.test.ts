@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
+import { taskId } from '../domain.ts';
 import { validationContext } from './fixture.ts';
 import { collectWorkDiff, COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
@@ -287,4 +288,55 @@ test('an untracked OS metadata file is not part of the work diff, and a tracked 
   git(cwd, ['add', '.DS_Store']);
   const tracked = collectWorkDiff(cwd);
   assert.match('diff' in tracked ? tracked.diff : '', /\.DS_Store/);
+});
+
+test('a feedback round works on top of the round start, and may change nothing', async () => {
+  const { baseSha, cwd } = repo();
+  // Wrap-up committed the first pass; the round starts from that commit.
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nfirst pass\n');
+  git(cwd, ['-c', 'commit.gpgsign=false', 'commit', '-qam', 'first pass']);
+  const roundBase = git(cwd, ['rev-parse', 'HEAD']);
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nfirst pass\nround one\n');
+  // The ticket directory lives outside the worktree, as the factory root's does.
+  const ticketDir = mkdtempSync(path.join(process.cwd(), '.scratch-work-ticket-'));
+  roots.push(ticketDir);
+  mkdirSync(path.join(ticketDir, 'feedback', '1'), { recursive: true });
+  writeFileSync(
+    path.join(ticketDir, 'feedback', '1', 'task.md'),
+    "# Feedback round 1\n\n## Acceptance criteria\n\n- [ ] F1: comment (alice): Rename it.\n- [ ] F2: the operator's note: Explain it.\n",
+  );
+  const round = (output: string, roundBaseSha: string | null) =>
+    workValidator.validate(
+      validationContext('work', (snapshot, finished, owner) => {
+        snapshot.execution.worktreePath = cwd;
+        snapshot.execution.worktreeBaseSha = baseSha;
+        snapshot.execution.roundBaseSha = roundBaseSha;
+        snapshot.execution.factoryDir = ticketDir;
+        owner.taskId = taskId('F1');
+        snapshot.tasks.push({
+          blockedBy: [],
+          feedback: null,
+          ordinal: 2,
+          specHash: null,
+          stage: 'work',
+          status: 'active',
+          summaries: {},
+          taskFile: 'feedback/1/task.md',
+          taskId: taskId('F1'),
+          title: 'Feedback round 1',
+        });
+        finished.resultJson = JSON.stringify({ output });
+      }),
+    );
+  // The worker's answers are review's to judge; work passes on its diff.
+  const passed = await round('## Summary\n\nRenamed it.\n', roundBase);
+  assert.equal(passed.status, 'passed', passed.status === 'failed' ? passed.summary : '');
+  // Without the round start, the first pass's commit is one work made.
+  const committed = await round('', null);
+  assert.match(committed.status === 'failed' ? committed.summary : '', /unexpected commit/);
+  // A round may decline every item and change nothing.
+  git(cwd, ['checkout', '--', 'README.md']);
+  const empty = await round('', roundBase);
+  assert.equal(empty.status, 'passed', empty.status === 'failed' ? empty.summary : '');
+  assert.equal(empty.status === 'passed' ? empty.detail.diff : null, '');
 });

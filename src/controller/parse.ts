@@ -5,6 +5,16 @@ export type ParsedCommand =
   | { answer: string; kind: 'reply'; ref: string }
   | { kind: 'retry'; ref: string }
   | { kind: 'complete'; ref: string }
+  // `--list` shows the pending comments and changes nothing; otherwise a round
+  // starts on all of them, `--only` some, or all but `--skip` ones.
+  | {
+      kind: 'feedback';
+      list: boolean;
+      note: string | null;
+      only: Array<string> | null;
+      ref: string;
+      skip: Array<string>;
+    }
   | { kind: 'stop'; ref: string }
   | { kind: 'rerun'; ref: string }
   | { kind: 'cancel'; reason: string | null; ref: string }
@@ -13,13 +23,61 @@ export type ParsedCommand =
   | { kind: 'ticket'; ref: string | null }
   | { kind: 'invalid'; message: string };
 
+const FEEDBACK_USAGE =
+  'Usage: /factory feedback <ticket> [--list] [--only <ref,ref>] [--skip <ref,ref>] ["note"]';
+
+function refList(value: string | undefined): Array<string> | null {
+  const refs = (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return refs.length === 0 ? null : refs;
+}
+
+function parseFeedback(rest: string): ParsedCommand {
+  const tokens = rest.length === 0 ? [] : rest.split(/\s+/);
+  const ref = tokens.shift();
+  if (ref === undefined || ref.startsWith('--')) {
+    return { kind: 'invalid', message: FEEDBACK_USAGE };
+  }
+  let list = false;
+  let only: Array<string> | null = null;
+  let skip: Array<string> = [];
+  while (tokens[0]?.startsWith('--') === true) {
+    const flag = tokens.shift();
+    if (flag === '--list') {
+      list = true;
+    } else if (flag === '--only' || flag === '--skip') {
+      const refs = refList(tokens.shift());
+      if (refs === null) {
+        return {
+          kind: 'invalid',
+          message: `${flag} needs refs, such as ${flag} r2841,c6799. ${FEEDBACK_USAGE}`,
+        };
+      }
+      if (flag === '--only') {
+        only = refs;
+      } else {
+        skip = refs;
+      }
+    } else {
+      return { kind: 'invalid', message: FEEDBACK_USAGE };
+    }
+  }
+  let note = tokens.join(' ').trim();
+  if (note.startsWith('"') && note.endsWith('"') && note.length >= 2) {
+    note = note.slice(1, -1);
+  }
+  return { kind: 'feedback', list, note: note.length === 0 ? null : note, only, ref, skip };
+}
+
 export function parseFactoryCommand(args: string): ParsedCommand {
   const trimmed = args.trim();
   if (trimmed.length === 0) {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -67,6 +125,8 @@ export function parseFactoryCommand(args: string): ParsedCommand {
         return { kind: 'invalid', message: 'Usage: /factory complete <ticket>' };
       }
       return { kind: 'complete', ref: rest };
+    case 'feedback':
+      return parseFeedback(rest);
     case 'cancel': {
       if (rest.length === 0) {
         return { kind: 'invalid', message: 'Usage: /factory cancel <ticket> ["reason"]' };
@@ -105,7 +165,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
       };
   }
 }

@@ -35,6 +35,7 @@ import {
 import { sha256 } from '../src/hash.ts';
 import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports/code-host.ts';
 import type { GithubClient } from '../src/ports/github.ts';
+import type { PullRequestFeedback, SkippedFeedback } from '../src/ports/pull-request-feedback.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
 import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
@@ -1936,6 +1937,7 @@ function codeHostWith(
     },
     kind: 'github',
     pullRequest: () => null,
+    pullRequestFeedback: () => ({ items: [], skipped: [], truncated: false }),
     pullRequestOutcome: (current) => ({
       commits: [{ committedAt: '2026-10-15T12:00:00Z', sha: 'abc' }],
       pullRequest: current,
@@ -2529,4 +2531,260 @@ test('a failing worktree setup stops the ticket with its output, and retry reuse
   writeFileSync(flag, '');
   await service.command('retry proj-123');
   await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
+});
+
+// A code host whose open pull request has one review thread to address.
+function codeHostWithFeedback(sinces: Array<string>): CodeHost {
+  const found: Array<string> = [];
+  const host = codeHostWith('open', found);
+  return {
+    ...host,
+    pullRequest: (url) => ({
+      ...(host.findPullRequest('factory/proj-123') ?? noPullRequest()),
+      url,
+    }),
+    pullRequestFeedback: (pullRequest, seen) => {
+      sinces.push(pullRequest.url);
+      const items: PullRequestFeedback['items'] = [
+        {
+          commentIds: ['501'],
+          comments: [
+            {
+              author: 'reviewer',
+              body: 'Name the flag after what it keeps.',
+              createdAt: '2026-10-16T11:00:00Z',
+              id: '501',
+              url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
+            },
+          ],
+          kind: 'thread',
+          line: 1,
+          path: 'change.txt',
+          ref: 'r501',
+          threadId: 'PRRT_1',
+        },
+      ];
+      return {
+        items: items.filter((item) => item.commentIds.some((id) => !seen.has(id))),
+        skipped: skippedByFake.filter((item) => !seen.has(item.id)),
+        truncated: false,
+      };
+    },
+  };
+}
+
+const skippedByFake: Array<SkippedFeedback> = [
+  { author: 'coderabbitai', id: '502', kind: 'review', url: null },
+];
+
+function noPullRequest(): never {
+  throw new Error('the fake code host has no pull request');
+}
+
+test('a feedback round takes the pull request feedback back through work, review, and wrap-up', async () => {
+  const sinces: Array<string> = [];
+  const harness = await reachWrapup({ limits: { feedbackRounds: 1 } }, () =>
+    codeHostWithFeedback(sinces),
+  );
+  const { branch, db, runtime, service, work, wrapup } = harness;
+  // Not at handoff yet: no round.
+  assert.match(
+    await service.command('feedback proj-123'),
+    /proj-123 is wrapup\/active, not ready for handoff/,
+  );
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await service.syncPullRequests();
+  // The first handoff opened the session and diff panes. Say the person closed
+  // the diff pane and Herdr gave its id to a pane of their own.
+  await waitFor(() => runtime.panes.length === 2);
+  const [sessionPane, diffPane] = ['pane-1', 'pane-2'];
+  runtime.paneProcesses.set(diffPane, [{ marker: 'their own shell', pid: 1 }]);
+  // Wrap-up committed and pushed the first pass; the round starts on top.
+  git(work.cwd, ['add', '-A']);
+  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
+
+  const started = await service.command('feedback proj-123 "Also mention the flag in the README."');
+  assert.match(started, /stage: work/);
+  await waitFor(() => launchesOf(runtime, 'work').length === 2);
+  const roundWork = launchesOf(runtime, 'work')[1];
+  // The round's card lists its items, for every Pi session.
+  const roundCard =
+    harness.notified.find((card) => card.includes('feedback round 1 · 2 items')) ?? '';
+  assert.match(roundCard, /item: F1 reviewer · change\.txt:1: Name the flag after what it keeps\./);
+  assert.match(roundCard, /item: F2 operator · note: Also mention the flag in the README\./);
+  assert.match(roundCard, /Full text: .*feedback\/1\/task\.md/);
+  assert.equal(roundWork?.cwd, work.cwd);
+  // The round closes the earlier handoff's own pane, and only that one.
+  await waitFor(() => runtime.closedPanes.length > 0);
+  assert.deepEqual(runtime.closedPanes, [sessionPane]);
+  assert.match(roundWork?.prompt ?? '', /Task: F1 Feedback round 1/);
+  assert.match(
+    roundWork?.prompt ?? '',
+    /This task is feedback round 1 on the ticket's pull request/,
+  );
+  assert.match(
+    roundWork?.prompt ?? '',
+    /edit factory state\.\nIn this feedback round, end your reply with ## Feedback responses/,
+  );
+  // Deduped per execution, so a rerun's round 1 is a new round.
+  const execution = String(
+    db.prepare('SELECT id FROM ticket_executions WHERE is_current = 1').get()?.['id'],
+  );
+  assert.equal(
+    String(
+      db.prepare("SELECT dedupe_key FROM events WHERE kind = 'feedback'").get()?.['dedupe_key'],
+    ),
+    `feedback:${execution}:1`,
+  );
+  // The feedback of the ticket's own pull request.
+  assert.deepEqual(sinces, ['https://github.com/geut/factory-skills/pull/7']);
+  const factoryDir = String(
+    db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
+      'factory_dir'
+    ],
+  );
+  const taskFile = path.join(factoryDir, 'feedback', '1', 'task.md');
+  const task = readFileSync(taskFile, 'utf8');
+  assert.match(task, /^qa: none$/m);
+  assert.match(task, /^- \[ \] F1: review thread on `change.txt:1` \(reviewer\): Name the flag/m);
+  assert.match(task, /^- \[ \] F2: the operator's note: Also mention the flag in the README\.$/m);
+  assert.match(task, /- 1 from coderabbitai: not a collaborator/);
+  // The controller keeps each item's place and first line on task F1.
+  const stored: unknown = JSON.parse(
+    String(
+      db.prepare("SELECT feedback_json FROM tasks WHERE task_id = 'F1'").get()?.['feedback_json'],
+    ),
+  );
+  assert.deepEqual(stored, {
+    dismissed: [],
+    items: [
+      {
+        author: 'reviewer',
+        id: 'F1',
+        kind: 'thread',
+        location: 'change.txt:1',
+        ref: 'r501',
+        summary: 'Name the flag after what it keeps.',
+        url: 'https://github.com/geut/factory-skills/pull/7#discussion_r1',
+      },
+      {
+        author: 'operator',
+        id: 'F2',
+        kind: 'note',
+        location: null,
+        ref: null,
+        summary: 'Also mention the flag in the README.',
+        url: null,
+      },
+    ],
+    pullRequestUrl: 'https://github.com/geut/factory-skills/pull/7',
+    round: 1,
+    skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+    taken: ['501', '502'],
+  });
+
+  // The worker's answers are asked for, not checked: a reply that answers one
+  // item, or none, goes on to review, which judges every item.
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  writeFileSync(path.join(work.cwd, 'flag.txt'), 'keepFilter\n');
+  runtime.emit(roundWork?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output:
+      '## Status\n\nready_for_review\n\n## Feedback responses\n\n- F1: addressed — renamed the flag\n',
+    usage: sampleUsage(40),
+  });
+
+  // Review sees the round, then wrap-up starts again in its own session.
+  await waitFor(() => launchesOf(runtime, 'review').length === 2);
+  const roundReview = launchesOf(runtime, 'review')[1];
+  assert.match(roundReview?.prompt ?? '', /This task is feedback round 1/);
+  assert.match(roundReview?.prompt ?? '', /AC1: F1: review thread on `change.txt:1`/);
+  assert.match(roundReview?.prompt ?? '', /Give each item its Verification line/);
+  assert.equal(launchesOf(runtime, 'work').length, 2);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(roundReview?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output: reviewOutput('approve', 'none', 'Checked the round.', ['AC2']),
+    usage: sampleUsage(20),
+  });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 2);
+  const roundWrapup = launchesOf(runtime, 'wrapup')[1];
+  assert.equal(roundWrapup?.sessionId, wrapup.sessionId);
+  assert.equal(roundWrapup?.mode, 'resume');
+  assert.match(roundWrapup?.prompt ?? '', /This wrap-up closes feedback round 1 \(task F1\)/);
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  runtime.emit(roundWrapup?.runId ?? runId('missing'), {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch, ['change.txt', 'flag.txt']),
+    usage: sampleUsage(40),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  // The round's handoff opens a fresh session and diff pane, on the session's model.
+  await waitFor(() => runtime.panes.length === 4);
+  const reopened = runtime.panes[2]?.target;
+  assert.equal(reopened?.kind === 'session' ? reopened.model : null, 'work-model');
+  // The round's diff pane shows only what the round changed.
+  const roundDiff = runtime.panes[3]?.target;
+  const roundPatch = roundDiff?.kind === 'diff' ? readFileSync(roundDiff.file, 'utf8') : '';
+  assert.match(roundPatch, /\+\+\+ b\/flag\.txt/);
+  assert.doesNotMatch(roundPatch, /change\.txt/);
+  assert.match(runtime.panes[2]?.marker ?? '', /^handoff:/);
+  assert.equal(
+    String(db.prepare("SELECT status FROM tasks WHERE task_id = 'F1'").get()?.['status']),
+    'done',
+  );
+  // The limit is one round here.
+  assert.match(
+    await service.command('feedback proj-123 "more"'),
+    /proj-123 has had 1 feedback round, the limit \(limits\.feedbackRounds\)/,
+  );
+  // Round 1 took the thread and saw the skipped comment: nothing is pending.
+  assert.match(await service.command('feedback proj-123 --list'), /Nothing pending on .*pull\/7/);
+  await closeWhenIdle(db);
+});
+
+test('a retried feedback round with the same Idempotency-Key gets the round it started', async () => {
+  const harness = await reachWrapup({}, () => codeHostWithFeedback([]));
+  const { branch, db, runtime, service, wrapup } = harness;
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await service.syncPullRequests();
+  const key = String(
+    db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
+      'factory_dir'
+    ],
+  )
+    .split('/')
+    .at(-1);
+  const options = { actor: null, idempotencyKey: 'retry-me' };
+  const request = { note: null, only: null, skip: [] };
+  const first = service.commands.feedback(key ?? '', request, options);
+  assert.equal(first.kind, 'accepted');
+  // The response was lost; the client sends the same request again.
+  const again = service.commands.feedback(key ?? '', request, options);
+  assert.equal(again.kind, 'accepted', again.kind === 'refused' ? again.message : '');
+  assert.equal(
+    again.kind === 'accepted' && first.kind === 'accepted' ? again.revision : null,
+    first.kind === 'accepted' ? first.revision : null,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM tasks WHERE task_id LIKE 'F%'").get()?.['n'],
+    1,
+  );
+  // Another key is a new request, refused while the round runs.
+  const other = service.commands.feedback(key ?? '', request, {
+    ...options,
+    idempotencyKey: 'other',
+  });
+  assert.match(other.kind === 'refused' ? other.message : '', /not ready for handoff/);
+  await closeWhenIdle(db);
 });

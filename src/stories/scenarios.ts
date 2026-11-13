@@ -457,3 +457,56 @@ export function completed(): Scenario {
   }
   return scenario;
 }
+
+// A feedback round on the handed-off ticket: task F1 holds two reviewer
+// comments, and its work run has just started.
+export function feedbackRoundWorking(): Scenario {
+  const { snapshot } = handoffReady();
+  for (const item of snapshot.attention) {
+    item.status = 'resolved';
+  }
+  const ordinal = Math.max(...snapshot.tasks.map((item) => item.ordinal)) + 1;
+  snapshot.tasks.push({
+    blockedBy: [],
+    feedback: {
+      dismissed: [],
+      items: [
+        {
+          author: 'dpaez',
+          id: 'F1',
+          kind: 'comment',
+          location: null,
+          ref: 'c6799058255',
+          summary:
+            'When a feedback round starts the ticket is moved to `work` stage, screenshots like `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on `plan` stage.',
+          url: 'https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-1',
+        },
+        {
+          author: 'dpaez',
+          id: 'F2',
+          kind: 'thread',
+          location: 'src/lib/factory/ticket-actions.ts:42',
+          ref: 'r2841017733',
+          summary: 'Make it visually clear that this is a feedback round.',
+          url: 'https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2',
+        },
+      ],
+      pullRequestUrl: 'https://github.com/dpaez/factory-dashboard/pull/71',
+      round: 1,
+      skipped: [{ author: 'coderabbitai', kind: 'review', url: null }],
+      taken: ['6799058255', '2841017733', '2841017790'],
+    },
+    ordinal,
+    specHash: null,
+    stage: 'work',
+    status: 'active',
+    summaries: {},
+    taskFile: 'tickets/dpaez-factory-dashboard-11/feedback/1/task.md',
+    taskId: taskId('F1'),
+    title: 'Feedback round 1',
+  });
+  snapshot.execution.stage = 'work';
+  snapshot.execution.status = 'active';
+  const work = run(snapshot, session(snapshot, 'work', 'F1'), { minutesAgo: 2, terminal: null });
+  return { run: work, snapshot };
+}

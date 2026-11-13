@@ -18,7 +18,12 @@ import {
 } from '../../validation/work.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import { acceptanceCriteria, qaPaths, testGaps, testPlan } from './criteria.ts';
-import { qaSettings, type QaPrepared, type QaValidationReport } from './definition.ts';
+import {
+  qaSettings,
+  qaValidationCommands,
+  type QaPrepared,
+  type QaValidationReport,
+} from './definition.ts';
 
 export const QA_VALIDATOR_VERSION = 'qa.v1';
 
@@ -135,8 +140,8 @@ function artifact(
 
 // Checks QA's own output first: every criterion tested or in the ledger with a
 // reason, every screenshot on disk. Then it runs the QA commands itself; a
-// failing command means the product misses a criterion. Then it runs
-// validation.qa.commands, so QA's files meet the project's bar: a failure that
+// failing command means the product misses a criterion. Then it runs the work
+// and validation.qa commands, so QA's files meet the project's bar: a failure that
 // names a file QA changed this round is QA's to correct, any other goes back
 // to work.
 async function validateQa(input: {
@@ -281,7 +286,7 @@ export const qaValidator: Validator<'qa'> = {
   leaseMs: (snapshot) =>
     validationLeaseMs([
       ...qaSettings(snapshot.execution.policy).commands,
-      ...snapshot.execution.policy.validation.qa.commands,
+      ...qaValidationCommands(snapshot.execution.policy),
     ]),
   validate: ({ run, session, snapshot }) => {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
@@ -305,7 +310,7 @@ export const qaValidator: Validator<'qa'> = {
       factoryDir: snapshot.execution.factoryDir,
       taskFile: task.taskFile,
       taskId: task.taskId,
-      validationCommands: snapshot.execution.policy.validation.qa.commands,
+      validationCommands: qaValidationCommands(snapshot.execution.policy),
       worktree,
     });
   },

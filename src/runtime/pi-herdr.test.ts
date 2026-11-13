@@ -16,6 +16,7 @@ import {
   herdrProcessInfoArgs,
   herdrRenameArgs,
   markedPrompt,
+  paneProcessIdsOf,
   paneProcessIsLive,
   parsePaneId,
   promptMarker,
@@ -227,24 +228,44 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
     env,
     freshBin: 'fresh',
     hunkBin: 'hunk',
+    marker: 'handoff:action-1',
     piBin: pi,
-    target: { kind: 'session', sessionFile },
+    target: {
+      kind: 'session',
+      model: 'claude-code/claude-opus-5-5',
+      sessionFile,
+      thinking: 'medium',
+    },
   });
   writeFileSync(path.join(directory, 'seen'), '');
   writeFileSync(script, pane, { mode: 0o755 });
   execFileSync('/bin/bash', [script], { env: { PATH: '/usr/bin:/bin' } });
   // A handoff pane outlives its ticket; its marker keeps the stray sweep off it.
-  assert.equal(readFileSync(path.join(directory, 'seen'), 'utf8'), `${env.PATH}|loaded|handoff`);
+  assert.equal(
+    readFileSync(path.join(directory, 'seen'), 'utf8'),
+    `${env.PATH}|loaded|handoff:action-1`,
+  );
 
   const bare = renderPaneScript({
     cwd: directory,
     env: {},
     freshBin: 'fresh',
     hunkBin: 'hunk',
+    marker: 'handoff:action-1',
     piBin: pi,
-    target: { kind: 'session', sessionFile },
+    target: {
+      kind: 'session',
+      model: 'claude-code/claude-opus-5-5',
+      sessionFile,
+      thinking: 'medium',
+    },
   });
   assert.doesNotMatch(bare, /export (PATH|BASH_ENV)=/);
+  // The session reopens on its own model, whatever credentials Pi stored.
+  assert.match(
+    bare,
+    /session\.jsonl' --model 'claude-code\/claude-opus-5-5' --thinking 'medium'$/m,
+  );
 });
 
 test('the diff pane opens the patch in Hunk when it is installed, else in Fresh', () => {
@@ -268,6 +289,7 @@ test('the diff pane opens the patch in Hunk when it is installed, else in Fresh'
         env: { PATH: `${bin}:/usr/bin:/bin` },
         freshBin: 'fresh',
         hunkBin: 'hunk',
+        marker: 'handoff:action-2',
         piBin: 'pi',
         target: { file, kind: 'diff', notes },
       }),
@@ -854,10 +876,16 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
   for (const name of ['📦 repo#1', '🔀 repo#1']) {
     await restarted.openPane({
       cwd: directory,
+      marker: 'handoff:action-3',
       name,
       scriptFile: path.join(directory, `${name.length}.sh`),
       tab: { key: 'repo#1-key', label: 'repo#1' },
-      target: { kind: 'session', sessionFile: path.join(directory, 'r5.jsonl') },
+      target: {
+        kind: 'session',
+        model: 'work-model',
+        sessionFile: path.join(directory, 'r5.jsonl'),
+        thinking: 'medium',
+      },
     });
   }
   assert.deepEqual(layout(), ['split p5', 'split p8']);
@@ -1015,4 +1043,22 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
     worktree: '/repo/.factory/worktrees/proj-1',
   });
   assert.doesNotMatch(discovered, /--system-prompt/);
+});
+
+test('a pane’s processes are its foreground processes, then its shell', () => {
+  assert.deepEqual(
+    paneProcessIdsOf(
+      JSON.stringify({
+        result: { process_info: { foreground_processes: [{ pid: 9 }, { pid: 12 }], shell_pid: 4 } },
+      }),
+    ),
+    [9, 12, 4],
+  );
+  assert.deepEqual(paneProcessIdsOf('not json'), []);
+  assert.deepEqual(
+    paneProcessIdsOf(
+      JSON.stringify({ result: { process_info: { foreground_processes: [], shell_pid: null } } }),
+    ),
+    [],
+  );
 });

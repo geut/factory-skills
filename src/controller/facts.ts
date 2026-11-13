@@ -108,3 +108,9 @@ export function recordCommit(
        committed_at = coalesce(excluded.committed_at, committed_at)`,
   ).run(fact.executionId, fact.sha, fact.committedAt);
 }
+
+// The pull request recorded for an execution, if any.
+export function pullRequestUrlOf(db: DatabaseSync, executionId: string): string | null {
+  const found = db.prepare('SELECT url FROM pull_requests WHERE execution_id = ?').get(executionId);
+  return found === undefined ? null : String(found['url']);
+}

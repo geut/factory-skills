@@ -117,3 +117,45 @@ test('the extension never creates the controller', () => {
   const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /createFactoryService|\.recover\(/);
 });
+
+test('a feedback round goes through the API and is refused before handoff', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  await serverFor(codeRoot, pi, new FakeRuntime());
+  const client = createFactoryClient({ factoryRoot });
+  await client.command(parseFactoryCommand('start proj-123.md'));
+  assert.match(
+    await client.command(parseFactoryCommand('feedback proj-123 "Also rename the flag"')),
+    /proj-123 is plan\/\w+, not ready for handoff/,
+  );
+  assert.deepEqual(parseFactoryCommand('feedback proj-123 "Also rename the flag"'), {
+    kind: 'feedback',
+    list: false,
+    note: 'Also rename the flag',
+    only: null,
+    ref: 'proj-123',
+    skip: [],
+  });
+  assert.deepEqual(parseFactoryCommand('feedback proj-123 --list'), {
+    kind: 'feedback',
+    list: true,
+    note: null,
+    only: null,
+    ref: 'proj-123',
+    skip: [],
+  });
+  assert.deepEqual(
+    parseFactoryCommand('feedback proj-123 --only r2841,c6799 --skip p12 "and the README"'),
+    {
+      kind: 'feedback',
+      list: false,
+      note: 'and the README',
+      only: ['r2841', 'c6799'],
+      ref: 'proj-123',
+      skip: ['p12'],
+    },
+  );
+  assert.equal(parseFactoryCommand('feedback proj-123 --only').kind, 'invalid');
+  assert.equal(parseFactoryCommand('feedback proj-123 --bogus').kind, 'invalid');
+  assert.equal(parseFactoryCommand('feedback').kind, 'invalid');
+  client.close();
+});

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
+import { feedbackRoundOf } from '../stages/feedback.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import {
   errorReport,
@@ -209,6 +210,8 @@ export function commandCheck(
 
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
+  // The commit work leaves its changes uncommitted on: the ticket's base, or
+  // the start of the feedback round.
   baseSha: string;
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
@@ -264,14 +267,17 @@ async function validateWork(input: {
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
   validate: ({ session, snapshot }) => {
-    const { factoryDir, policy, worktreeBaseSha, worktreePath } = snapshot.execution;
+    const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
     }
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
+    const round = task === null ? null : feedbackRoundOf(task);
     return validateWork({
-      allowsEmptyDiff: allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
-      baseSha: worktreeBaseSha,
+      // A feedback round may decline every item and change nothing; review
+      // judges each item either way.
+      allowsEmptyDiff: round !== null || allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
+      baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),

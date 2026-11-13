@@ -6,7 +6,7 @@ CREATE TABLE schema_meta (
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 ) STRICT;
 
-INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 6);
+INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 7);
 
 -- A ticket is the stable external identity. Starting the same ticket again
 -- finds this row; rerunning it creates a new ticket_execution generation.
@@ -107,6 +107,9 @@ CREATE TABLE tasks (
   version         INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  -- A feedback round's items (task F<n>); null for a planned task. Added by
+  -- schema 7, so it comes last, as it does in an upgraded database.
+  feedback_json   TEXT CHECK (feedback_json IS NULL OR json_valid(feedback_json)),
 
   PRIMARY KEY (execution_id, task_id),
   UNIQUE (execution_id, ordinal),
@@ -979,6 +982,6 @@ CREATE TABLE pull_request_commits (
 
 -- Publish the identity only when the complete schema is ready to commit.
 PRAGMA application_id = 1178682196; -- "FACT"
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 
 COMMIT;

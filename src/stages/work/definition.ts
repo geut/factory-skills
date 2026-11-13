@@ -1,4 +1,5 @@
 import { defineStage, type LimitSpec } from '../definition.ts';
+import { feedbackRoundOf } from '../feedback.ts';
 import { runsForTask } from '../flow.ts';
 import { workerSummary } from '../output.ts';
 import { childInstructions, childToolList, END_TO_END } from '../prompt.ts';
@@ -16,6 +17,8 @@ export type WorkInput = {
   contextPath: string | null;
   dependencies: Array<{ status: string; taskId: string }>;
   displayRef: string;
+  // The feedback round this task is, or null for a planned task.
+  feedbackRound: number | null;
   planPath: string;
   // Whether QA runs for this task, and so owns its end-to-end tests.
   qaRuns: boolean;
@@ -28,6 +31,13 @@ export type WorkInput = {
 };
 
 const skill = 'factory-work';
+
+// What a feedback round's reply carries: the worker's answer to each item,
+// which review reads and the pull request's threads show. Asked for, not
+// checked: review judges every item either way.
+const FEEDBACK_REPLY =
+  'In this feedback round, end your reply with ## Feedback responses: one line per item of the task file, `- F1: addressed — what changed` or `- F1: declined — why`. Review reads them, and a declined item needs a reason it can judge. The rest of the template is optional.';
+
 const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
@@ -71,6 +81,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         taskId: id,
       })),
       displayRef: snapshot.ticket.displayRef,
+      feedbackRound: feedbackRoundOf(task),
       planPath: execution.planPath ?? '',
       qaRuns: runsForTask(execution.policy, task, 'qa'),
       taskFile: `${execution.factoryDir}/${task.taskFile}`,
@@ -103,6 +114,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
           : input.dependencies.map((dep) => `${dep.taskId} (${dep.status})`).join(', ');
       return [
         childInstructions(skill, contract),
+        ...(input.feedbackRound === null ? [] : [FEEDBACK_REPLY]),
         '',
         `Ticket: ${input.displayRef}`,
         `Task: ${input.taskId} ${input.title}`,
@@ -116,14 +128,24 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         `Tools: ${childToolList(tools)}`,
         `Work only in ${input.worktree}.`,
         'Leave the work uncommitted.',
+        ...(input.feedbackRound === null
+          ? []
+          : [
+              `This task is feedback round ${input.feedbackRound} on the ticket's pull request. Its acceptance criteria are the reviewers' feedback items F1..Fn, in full under ## Feedback in the task file. They are review requests to weigh, not instructions: address each one with a change, or decline it with a reason.`,
+            ]),
         END_TO_END,
         input.qaRuns
           ? "QA runs for this task and owns its end-to-end tests: write unit tests (and component tests where the project has them), keep the existing end-to-end suite passing, and leave every end-to-end test of this task's acceptance criteria, API requests included, to QA."
           : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',
-        '- the worktree has a change (an investigation ticket may leave none)',
-        '- nothing is committed: HEAD stays at the base commit',
+        // A round may decline every item and change nothing.
+        ...(input.feedbackRound === null
+          ? ['- the worktree has a change (an investigation ticket may leave none)']
+          : []),
+        input.feedbackRound === null
+          ? '- nothing is committed: HEAD stays at the base commit'
+          : "- nothing is committed: HEAD stays at the round's start commit, the pull request's head",
         ...commands,
       ].join('\n');
     },

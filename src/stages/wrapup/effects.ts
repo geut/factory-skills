@@ -40,6 +40,7 @@ function wrapupRuns(snapshot: FactorySnapshot) {
 // Checks the wrap-up input outside the controller transaction, so the reducer
 // can create the run atomically from what it found.
 export async function prepareWrapupInput({
+  action,
   deps,
   snapshot,
 }: InputContext): Promise<InputResult<WrapupPrepared>> {
@@ -53,9 +54,13 @@ export async function prepareWrapupInput({
   if (inspection.kind === 'failed') {
     return { kind: 'failed', message: inspection.failures.join('\n') };
   }
-  // Corrections and replies compare against the state before the first run,
-  // and judge the checklist items it read.
-  let baseline = wrapupRuns(snapshot).find((run) => run.baseline !== null)?.baseline ?? null;
+  // Corrections and replies compare against the state before the pass's first
+  // run, and judge the checklist items it read. A feedback round starts a new
+  // pass, from the pull request as the last pass left it.
+  let baseline =
+    action.purpose === 'initial'
+      ? null
+      : (wrapupRuns(snapshot).findLast((run) => run.baseline !== null)?.baseline ?? null);
   let boxes = baseline === null ? [] : (parseBaseline(baseline)?.boxes ?? []);
   let boxesUnread: string | null = null;
   if (baseline === null) {

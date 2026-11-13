@@ -78,6 +78,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
         worktreeSetup: [],
       },
       retry: null,
+      roundBaseSha: null,
       stage: 'plan',
       status: 'active',
       statusReason: null,
@@ -114,6 +115,7 @@ export function addTasks(snapshot: FactorySnapshot, count = 6, longTitles = fals
     const title = titles[index] ?? `Task ${id}`;
     snapshot.tasks.push({
       blockedBy: (dependencies[id] ?? []).map((item) => taskId(item)),
+      feedback: null,
       ordinal: index + 1,
       specHash: null,
       stage: null,

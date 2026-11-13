@@ -38,6 +38,7 @@ import {
   type WorktreeStatus,
   type TicketId,
 } from '../domain.ts';
+import { parseFeedbackRound } from '../stages/feedback.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { isTitleTemplate, type TitleTemplate } from '../stages/wrapup/title.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
@@ -545,6 +546,12 @@ export function loadGeneration(
 }
 
 // The change cursor: the newest events.revision, or 0 before any event.
+// The revision that recorded a command under `dedupeKey`, or null when none did.
+export function recordedRevision(db: DatabaseSync, dedupeKey: string): number | null {
+  const found = db.prepare('SELECT revision FROM events WHERE dedupe_key = ?').get(dedupeKey);
+  return found === undefined ? null : integer(row(found), 'revision');
+}
+
 export function latestRevision(db: DatabaseSync): number {
   return integer(
     row(db.prepare('SELECT coalesce(max(revision), 0) AS revision FROM events').get()),
@@ -632,6 +639,8 @@ function hydrate(
     statusReasonCode: nullableText(executionRow, 'status_reason_code'),
     ticketId: ticket.id,
     version: integer(executionRow, 'version'),
+    // The column predates feedback rounds; it holds the round's start commit.
+    roundBaseSha: nullableText(executionRow, 'worktree_head_sha'),
     worktreeBaseBranch: nullableText(executionRow, 'worktree_base_branch'),
     worktreeBaseSha: nullableText(executionRow, 'worktree_base_sha'),
     worktreeBranch: nullableText(executionRow, 'worktree_branch'),
@@ -681,8 +690,10 @@ function loadTasks(db: DatabaseSync, execution: ExecutionId): Array<TaskRecord> 
       )
       .all(execution, id);
     const stage = nullableText(record, 'stage');
+    const feedback = nullableText(record, 'feedback_json');
     return {
       blockedBy: deps.map((dep) => taskId(text(row(dep), 'depends_on_task_id'))),
+      feedback: feedback === null ? null : parseFeedbackRound(feedback),
       ordinal: integer(record, 'ordinal'),
       specHash: nullableText(record, 'spec_hash'),
       stage: stage === null ? null : taskStage(stage),
@@ -1055,8 +1066,8 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
       (id, ticket_id, generation, stage, status, version, status_reason_code, status_reason,
        retryable, status_details_json, policy_json, input_json, input_hash, input_fetched_at, factory_dir, plan_path,
        worktree_path, worktree_branch, worktree_base_branch, worktree_status, worktree_base_sha,
-       message, message_at, created_at, updated_at, factory_version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       worktree_head_sha, message, message_at, created_at, updated_at, factory_version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution.id,
     execution.ticketId,
@@ -1079,6 +1090,7 @@ function insertExecution(db: DatabaseSync, snapshot: FactorySnapshot, now: strin
     execution.worktreeBaseBranch,
     execution.worktreeStatus,
     execution.worktreeBaseSha,
+    execution.roundBaseSha,
     execution.message,
     now,
     now,
@@ -1133,7 +1145,7 @@ function updateExecution(
        SET stage = ?, status = ?, version = ?, status_reason_code = ?, status_reason = ?,
            retryable = ?, status_details_json = ?, plan_path = ?, worktree_path = ?, worktree_branch = ?,
            worktree_base_branch = ?, worktree_status = ?, worktree_base_sha = ?,
-           message = ?, message_at = ?, updated_at = ?,
+           worktree_head_sha = ?, message = ?, message_at = ?, updated_at = ?,
            finished_at = CASE
              WHEN ? IN ('complete', 'cancelled') THEN coalesce(finished_at, ?)
              ELSE NULL
@@ -1154,6 +1166,7 @@ function updateExecution(
       after.worktreeBaseBranch,
       after.worktreeStatus,
       after.worktreeBaseSha,
+      after.roundBaseSha,
       after.message,
       now,
       now,
@@ -1170,9 +1183,9 @@ function updateExecution(
 function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, now: string): void {
   db.prepare(
     `INSERT INTO tasks
-      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json,
+      (execution_id, task_id, ordinal, title, task_file, spec_hash, status, stage, summaries_json, feedback_json,
        created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     execution,
     task.taskId,
@@ -1183,6 +1196,7 @@ function insertTask(db: DatabaseSync, execution: ExecutionId, task: TaskRecord, 
     task.status,
     task.stage,
     jsonText(task.summaries),
+    task.feedback === null ? null : jsonText(task.feedback),
     now,
     now,
   );
@@ -1577,6 +1591,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'reply':
     case 'retry':
     case 'complete':
+    case 'feedback':
     case 'pull_request_closed':
     case 'cancel':
       return loadCurrentByTicketKey(db, event.ticketId);
@@ -1635,6 +1650,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'input_ready':
     case 'input_failed':
     case 'complete':
+    case 'feedback':
     case 'pull_request_closed':
     case 'cancel':
     case 'rerun':
@@ -2057,21 +2073,46 @@ export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): vo
   ).run(now);
 }
 
+// `result` is what the action left behind, such as the pane it opened.
 export function finishLeasedAction(
   db: DatabaseSync,
   action: ActionId,
   now: string,
   outcome: 'succeeded' | 'failed',
   error: string | null,
+  result: Record<string, unknown> | null = null,
 ): void {
   immediateTransaction(db, () => {
     db.prepare(
       `UPDATE actions
        SET status = ?, last_error = ?, lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
-           completed_at = ?, updated_at = ?
+           completed_at = ?, updated_at = ?, result_json = coalesce(?, result_json)
        WHERE id = ? AND status = 'leased'`,
-    ).run(outcome, error, now, now, action);
+    ).run(outcome, error, now, now, result === null ? null : JSON.stringify(result), action);
   });
+}
+
+// The handoff panes an execution opened, oldest first, with their pane ids.
+export function handoffPanes(
+  db: DatabaseSync,
+  executionId: ExecutionId,
+): Array<{ actionId: string; kind: 'open_diff' | 'open_pane'; paneId: string }> {
+  return db
+    .prepare(
+      `SELECT id, kind, json_extract(result_json, '$.paneId') AS pane_id FROM actions
+       WHERE execution_id = ? AND kind IN ('open_pane', 'open_diff') AND status = 'succeeded'
+         AND json_extract(result_json, '$.paneId') IS NOT NULL
+       ORDER BY created_at, id`,
+    )
+    .all(executionId)
+    .map((item) => {
+      const record = row(item);
+      return {
+        actionId: text(record, 'id'),
+        kind: text(record, 'kind') === 'open_diff' ? 'open_diff' : 'open_pane',
+        paneId: text(record, 'pane_id'),
+      };
+    });
 }
 
 export function loadSnapshotByRun(db: DatabaseSync, id: RunId): FactorySnapshot | null {
