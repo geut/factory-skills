@@ -4,7 +4,7 @@ import { parseFactoryConfig } from '../../config.ts';
 import { sessionId } from '../../domain.ts';
 import { addTasks, blank, run, session, task } from '../../stories/fixtures.ts';
 import { acceptanceCriteria, testGaps, testPlan } from './criteria.ts';
-import { qa, readQaSettings } from './definition.ts';
+import { qa, qaValidationCommands, readQaSettings } from './definition.ts';
 import { QA_VALIDATOR_VERSION } from './effects.ts';
 
 const models = { review: 'review-model', work: 'work-model' };
@@ -43,6 +43,27 @@ test('QA validation runs validation.qa.commands, or the work commands when it li
     qaCommands({ qa: { commands: [{ name: 'lint' }] } }),
     'FACTORY.json validation.qa.commands must be objects with a name, an argv array, and an optional timeoutMs.',
   );
+});
+
+test('QA validation runs every work command, then the validation.qa ones work does not run', () => {
+  const lint = { argv: ['npm', 'run', 'lint'], name: 'lint', timeoutMs: 1 };
+  const check = { argv: ['npm', 'run', 'check'], name: 'check', timeoutMs: 1 };
+  const format = { argv: ['npm', 'run', 'format:check'], name: 'format', timeoutMs: 1 };
+  const commands = (qaList: Array<typeof lint>) =>
+    qaValidationCommands({
+      validation: {
+        qa: { commands: qaList },
+        work: { commands: [lint, check] },
+        wrapup: { generated: [] },
+      },
+    }).map((command) => command.name);
+  assert.deepEqual(commands([lint]), ['lint', 'check']);
+  assert.deepEqual(commands([]), ['lint', 'check']);
+  assert.deepEqual(commands([{ ...lint, name: 'lint again' }, format]), [
+    'lint',
+    'check',
+    'format',
+  ]);
 });
 
 test('criteria, test plan rows, and ledger lines are keyed AC1..ACn', () => {

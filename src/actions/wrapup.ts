@@ -85,8 +85,10 @@ export async function openHandoffPane(
     try {
       if (action.kind === 'open_diff') {
         // Wrap-up may have committed the work, so the diff runs from the
-        // commit the worktree started at.
-        const collected = collectWorkDiff(action.cwd, snapshot.execution.worktreeBaseSha ?? 'HEAD');
+        // commit the worktree started at; after a feedback round, from the
+        // commit the round started at, so it shows only what the round did.
+        const { roundBaseSha, worktreeBaseSha } = snapshot.execution;
+        const collected = collectWorkDiff(action.cwd, roundBaseSha ?? worktreeBaseSha ?? 'HEAD');
         const file = `${sessionFile}.diff`;
         mkdirSync(path.dirname(file), { recursive: true });
         const patch = 'diff' in collected ? collected.diff : `# ${collected.message}\n`;

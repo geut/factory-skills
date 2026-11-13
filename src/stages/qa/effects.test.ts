@@ -116,12 +116,14 @@ function validate(
   );
 }
 
-test('QA runs validation.qa.commands after its own, and hands on both groups of checks', async () => {
-  const report = await validate(worktree(), { again: ['check', 'lint'] });
+test('QA runs every work command after its own, and hands on both groups of checks', async () => {
+  // validation.qa lists only lint, yet the type check still runs: QA's
+  // files must pass what work had to.
+  const report = await validate(worktree(), { again: ['lint'] });
   assert.equal(report.status, 'passed');
   assert.deepEqual(
     report.checks.filter((check) => check.kind === 'command').map((check) => check.name),
-    ['e2e', 'check', 'lint'],
+    ['e2e', 'test', 'check', 'lint'],
   );
   assert.deepEqual(
     report.status === 'passed' ? report.detail.workChecks.map((check) => check.name) : null,
@@ -141,6 +143,18 @@ test('a lint failure in a file QA wrote is QA’s to correct', async () => {
   assert.match(
     report.status === 'failed' ? report.failures.join('\n') : '',
     /lint .* failed after QA in e2e\/app\.e2e\.ts:/,
+  );
+});
+
+test('a type error in a test QA wrote fails QA, though validation.qa leaves the type check out', async () => {
+  const report = await validate(worktree(), {
+    again: ['lint'],
+    typecheck: command('check', 'e2e/app.e2e.ts:994:39 Error: Argument of type', 1),
+  });
+  assert.equal(report.status === 'failed' && report.detail.reason, 'incomplete');
+  assert.match(
+    report.status === 'failed' ? report.failures.join('\n') : '',
+    /check .* failed after QA in e2e\/app\.e2e\.ts:/,
   );
 });
 

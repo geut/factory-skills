@@ -2604,6 +2604,9 @@ test('a feedback round takes the pull request feedback back through work, review
   await waitFor(() => runtime.panes.length === 2);
   const [sessionPane, diffPane] = ['pane-1', 'pane-2'];
   runtime.paneProcesses.set(diffPane, [{ marker: 'their own shell', pid: 1 }]);
+  // Wrap-up committed and pushed the first pass; the round starts on top.
+  git(work.cwd, ['add', '-A']);
+  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
 
   const started = await service.command('feedback proj-123 "Also mention the flag in the README."');
   assert.match(started, /stage: work/);
@@ -2725,6 +2728,11 @@ test('a feedback round takes the pull request feedback back through work, review
   await waitFor(() => runtime.panes.length === 4);
   const reopened = runtime.panes[2]?.target;
   assert.equal(reopened?.kind === 'session' ? reopened.model : null, 'work-model');
+  // The round's diff pane shows only what the round changed.
+  const roundDiff = runtime.panes[3]?.target;
+  const roundPatch = roundDiff?.kind === 'diff' ? readFileSync(roundDiff.file, 'utf8') : '';
+  assert.match(roundPatch, /\+\+\+ b\/flag\.txt/);
+  assert.doesNotMatch(roundPatch, /change\.txt/);
   assert.match(runtime.panes[2]?.marker ?? '', /^handoff:/);
   assert.equal(
     String(db.prepare("SELECT status FROM tasks WHERE task_id = 'F1'").get()?.['status']),
