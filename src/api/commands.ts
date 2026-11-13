@@ -223,7 +223,10 @@ const FeedbackCandidate = z
     location: z.string().nullable().meta({ description: '`path:line` of a review thread.' }),
     ref: z.string().meta({ description: 'What `only` and `skip` name it by.' }),
     summary: z.string().meta({ description: 'Its first line, at most 160 characters.' }),
-    url: z.string().nullable(),
+    url: z.string().nullable().meta({
+      description:
+        "GitHub's link to the comment, where its full text is. A thread links its latest comment, which GitHub shows within the thread.",
+    }),
   })
   .meta({ id: 'FeedbackCandidate' });
 

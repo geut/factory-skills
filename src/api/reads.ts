@@ -130,7 +130,9 @@ const FeedbackRoundItem = z
       description:
         "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file.",
     }),
-    url: z.string().nullable(),
+    url: z.string().nullable().meta({
+      description: "GitHub's link to the comment; null for the operator's note.",
+    }),
   })
   .meta({ id: 'FeedbackRoundItem' });
 

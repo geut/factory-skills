@@ -2932,6 +2932,7 @@
             "description": "The comment's first line, at most 160 characters. The full text is at `url`, and in the round's task file."
           },
           "url": {
+            "description": "GitHub's link to the comment; null for the operator's note.",
             "type": [
               "string",
               "null"
@@ -5099,6 +5100,7 @@
             "description": "Its first line, at most 160 characters."
           },
           "url": {
+            "description": "GitHub's link to the comment, where its full text is. A thread links its latest comment, which GitHub shows within the thread.",
             "type": [
               "string",
               "null"

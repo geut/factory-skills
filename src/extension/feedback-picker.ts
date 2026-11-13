@@ -1,4 +1,6 @@
 import {
+  getCapabilities,
+  hyperlink,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -58,9 +60,25 @@ export function pickedFeedback(
   return only.length > 0 ? { only } : null;
 }
 
+// Makes text open a URL in terminals that follow OSC 8 links; plain text
+// where the link would print as noise.
+export type Link = (text: string, url: string) => string;
+
+const plainLink: Link = (text) => text;
+
+export function terminalLink(): Link {
+  return getCapabilities().hyperlinks ? hyperlink : plainLink;
+}
+
 export function renderFeedbackPicker(
-  input: FeedbackPickerState & { height: number; theme: AgentsViewTheme; width: number },
+  input: FeedbackPickerState & {
+    height: number;
+    link?: Link;
+    theme: AgentsViewTheme;
+    width: number;
+  },
 ): Array<string> {
+  const link = input.link ?? plainLink;
   const { candidates, height, theme, width } = input;
   const rule = fitLine(theme.fg('accent', '─'.repeat(Math.max(1, width))), width);
   const ticked = new Set(input.ticked);
@@ -108,7 +126,7 @@ export function renderFeedbackPicker(
       const box = ticked.has(item.ref) ? theme.fg('success', '[x]') : theme.fg('dim', '[ ]');
       const place = item.location === null ? '' : ` · ${item.location}`;
       const row = fitLine(
-        ` ${index === cursor ? '▶' : ' '} ${box} ${theme.fg('accent', item.ref)} ${theme.fg('muted', `${item.author}${place}`)} · ${item.summary}`,
+        ` ${index === cursor ? '▶' : ' '} ${box} ${theme.fg('accent', item.url === null ? item.ref : link(item.ref, item.url))} ${theme.fg('muted', `${item.author}${place}`)} · ${item.summary}`,
         width,
       );
       body.push(index === cursor ? theme.bg('selectedBg', row) : row);
@@ -122,7 +140,7 @@ export function renderFeedbackPicker(
       const detail = [
         `${selected.kind} by ${selected.author}${selected.location === null ? '' : ` on ${selected.location}`}`,
         selected.summary,
-        ...(selected.url === null ? [] : [selected.url]),
+        ...(selected.url === null ? [] : [link(selected.url, selected.url)]),
       ];
       for (const [index, text] of detail.entries()) {
         for (const line of wrapTextWithAnsi(text, Math.max(1, width - 4))) {
@@ -233,6 +251,7 @@ export class FactoryFeedbackPicker implements Component {
     return renderFeedbackPicker({
       ...this.state,
       height: Math.max(12, this.tui.terminal.rows),
+      link: terminalLink(),
       theme: this.theme,
       width,
     });

@@ -355,6 +355,11 @@ function roundItemLine(item: FeedbackRoundItem): string {
   return `${item.id} ${item.author} · ${where}: ${item.summary}`;
 }
 
+// One line per comment with a link, so the expanded card opens each one.
+function links(items: ReadonlyArray<[string, string | null]>): Array<string> {
+  return items.flatMap(([label, url]) => (url === null ? [] : [`${label}: ${url}`]));
+}
+
 // The card a feedback round posts when it starts: each item on its own line,
 // what was skipped, and where the full text is. Empty when the ticket has no
 // round.
@@ -373,6 +378,7 @@ export function feedbackRoundCard(snapshot: FactorySnapshot): string {
       body: [
         `Full text: ${path.join(snapshot.execution.factoryDir, task.taskFile)}`,
         `From ${round.pullRequestUrl}.`,
+        ...links(round.items.slice(0, ROUND_CARD_ITEMS).map((item) => [item.id, item.url])),
         ...(round.skipped.length === 0
           ? []
           : [
@@ -419,6 +425,7 @@ export function pendingFeedbackCard(
         candidates.length === 0
           ? `Nothing pending on ${listed.pullRequestUrl}: every comment was taken by a round or dismissed. A note alone still starts one.`
           : `Pending on ${listed.pullRequestUrl}. Pick with --only <refs>, or take all but --skip <refs>, which are dismissed for good.`,
+        ...links(candidates.slice(0, PENDING_CARD_ITEMS).map((item) => [item.ref, item.url])),
         ...(listed.skipped.length === 0
           ? []
           : [

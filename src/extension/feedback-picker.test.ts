@@ -97,3 +97,25 @@ test('the list scrolls with the cursor and every line fits the width', () => {
   assert.doesNotMatch(text, / r3 /);
   assert.match(text, /2 skipped \(not collaborators\) · only the newes/);
 });
+
+test('each ref links to its comment, and the selected one shows its link in full', () => {
+  const lines = renderFeedbackPicker({
+    candidates: [candidate('r1'), { ...candidate('c2'), url: null }],
+    cursor: 0,
+    displayRef: 'proj-1',
+    height: 20,
+    link: (text, url) => `<${text}|${url}>`,
+    message: null,
+    note: null,
+    pullRequestUrl: 'https://x/pull/7',
+    skipped: 0,
+    theme,
+    ticked: [],
+    truncated: false,
+    width: 80,
+  });
+  const text = lines.join('\n');
+  assert.match(text, /\[ \] <r1\|https:\/\/x\/pull\/7#r1>/);
+  assert.match(text, /\[ \] c2 /);
+  assert.match(text, /^ {2}<https:\/\/x\/pull\/7#r1\|https:\/\/x\/pull\/7#r1>/m);
+});

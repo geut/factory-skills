@@ -828,7 +828,7 @@
     src/lib/factory/ticket-actions.ts:42
     : Make it visually clear that this
     is a feedback round.
-  +8 lines · expand to read
+  +14 lines · expand to read
 
 == feedback round started · 60 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 2
@@ -841,7 +841,7 @@
     like if the task is on `plan` stage.
   • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it
     visually clear that this is a feedback round.
-  +5 lines · expand to read
+  +11 lines · expand to read
 
 == feedback round started · 80 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 2 items
@@ -853,7 +853,7 @@
     `plan` stage.
   • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that
     this is a feedback round.
-  +3 lines · expand to read
+  +5 lines · expand to read
 
 == feedback round started · 120 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 2 items
@@ -862,7 +862,7 @@
   • F1 dpaez · comment: When a feedback round starts the ticket is moved to `work` stage, screenshots like
     `ac1-feedback-round-enabled-board-inspector.png` look like if the task is on `plan` stage.
   • F2 dpaez · src/lib/factory/ticket-actions.ts:42: Make it visually clear that this is a feedback round.
-  +2 lines · expand to read
+  +4 lines · expand to read
 
 == feedback round started: many items · 40 cols ==
 ● dpaez/factory-dashboard#11 · work ·
@@ -886,7 +886,7 @@
   • F5 dpaez · comment: Bot finding 5:
     rename the helper.
   • +3 more in the task file
-  +8 lines · expand to read
+  +23 lines · expand to read
 
 == feedback round started: many items · 60 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 8
@@ -903,7 +903,7 @@
   • F4 dpaez · comment: Bot finding 4: rename the helper.
   • F5 dpaez · comment: Bot finding 5: rename the helper.
   • +3 more in the task file
-  +5 lines · expand to read
+  +20 lines · expand to read
 
 == feedback round started: many items · 80 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 8 items
@@ -919,7 +919,7 @@
   • F4 dpaez · comment: Bot finding 4: rename the helper.
   • F5 dpaez · comment: Bot finding 5: rename the helper.
   • +3 more in the task file
-  +3 lines · expand to read
+  +8 lines · expand to read
 
 == feedback round started: many items · 120 cols ==
 ● dpaez/factory-dashboard#11 · work · feedback round 1 · 8 items
@@ -932,7 +932,7 @@
   • F4 dpaez · comment: Bot finding 4: rename the helper.
   • F5 dpaez · comment: Bot finding 5: rename the helper.
   • +3 more in the task file
-  +2 lines · expand to read
+  +7 lines · expand to read
 
 == pending feedback to pick from · 40 cols ==
 ▲ dpaez/factory-dashboard#11 · wrapup
@@ -943,6 +943,15 @@
   oard/pull/71. Pick with --only <refs>,
   or take all but --skip <refs>, which
   are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#discussion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#discussion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not
   collaborators or
   codeHost.feedback.authors.
@@ -973,6 +982,15 @@
   https://github.com/dpaez/factory-dashboard/pull/71. Pick
   with --only <refs>, or take all but --skip <refs>, which
   are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashboard/pull/71#discuss
+  ion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashboard/pull/71#discuss
+  ion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashboard/pull/71#issueco
+  mment-6799058255
   Skipped 1, from passerby: not collaborators or
   codeHost.feedback.authors.
   • r2841017733 coderabbitai ·
@@ -994,6 +1012,12 @@
   6/6 done
   Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with
   --only <refs>, or take all but --skip <refs>, which are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
   • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider
     guarding the action when the pull request is closed.
@@ -1010,6 +1034,9 @@
   6/6 done
   Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with --only <refs>, or take all but --skip <refs>,
   which are dismissed for good.
+  r2841017733: https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+  r2841017790: https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+  c6799058255: https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
   • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider guarding the action when the pull request
     is closed.
@@ -1028,6 +1055,15 @@
   oard/pull/71. Pick with --only <refs>,
   or take all but --skip <refs>, which
   are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#discussion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#discussion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashb
+  oard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not
   collaborators or
   codeHost.feedback.authors.
@@ -1060,6 +1096,15 @@
   https://github.com/dpaez/factory-dashboard/pull/71. Pick
   with --only <refs>, or take all but --skip <refs>, which
   are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashboard/pull/71#discuss
+  ion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashboard/pull/71#discuss
+  ion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashboard/pull/71#issueco
+  mment-6799058255
   Skipped 1, from passerby: not collaborators or
   codeHost.feedback.authors.
   GitHub had more than one page; only the newest 100 of each
@@ -1083,6 +1128,12 @@
   6/6 done
   Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with
   --only <refs>, or take all but --skip <refs>, which are dismissed for good.
+  r2841017733:
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+  r2841017790:
+  https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+  c6799058255:
+  https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
   GitHub had more than one page; only the newest 100 of each list were read.
   • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider
@@ -1100,6 +1151,9 @@
   6/6 done
   Pending on https://github.com/dpaez/factory-dashboard/pull/71. Pick with --only <refs>, or take all but --skip <refs>,
   which are dismissed for good.
+  r2841017733: https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017733
+  r2841017790: https://github.com/dpaez/factory-dashboard/pull/71#discussion_r2841017790
+  c6799058255: https://github.com/dpaez/factory-dashboard/pull/71#issuecomment-6799058255
   Skipped 1, from passerby: not collaborators or codeHost.feedback.authors.
   GitHub had more than one page; only the newest 100 of each list were read.
   • r2841017733 coderabbitai · src/lib/factory/ticket-actions.ts:42: Consider guarding the action when the pull request
