@@ -324,6 +324,21 @@ test('a feedback round’s wrap-up comments on the pull request and leaves its b
   );
 });
 
+test('a feedback round that committed nothing says so in its comment', () => {
+  const round = feedbackRoundWorking().snapshot.tasks.find((item) => item.taskId === 'F1');
+  const [write] = acceptWithPullRequest((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    // The pull request is still at the commit the round started from.
+    snapshot.execution.roundBaseSha = 'abc';
+    if (round !== undefined) {
+      snapshot.tasks.push({ ...round, status: 'done' });
+    }
+  });
+  const markdown = write?.change.kind === 'comment' ? write.change.markdown : '';
+  assert.match(markdown, /^The factory finished feedback round 1 without a new commit\.$/m);
+  assert.doesNotMatch(markdown, /commits\//);
+});
+
 test('an accepted wrap-up names the project rule files the ticket changes', () => {
   const { runId, snapshot } = finishedWrapup();
   const passed = reduce({

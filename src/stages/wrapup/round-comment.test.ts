@@ -25,8 +25,8 @@ const items: Array<FeedbackRoundItem> = [
 ];
 
 const base = {
+  commit: { kind: 'pushed', sha: 'abcdef1234567890' } as const,
   files: ['src/filter.ts', 'README.md'],
-  head: 'abcdef1234567890',
   items,
   pullRequestUrl: 'https://github.com/geut/app/pull/9',
   round: 2,
@@ -67,4 +67,18 @@ test('an item review gave no line for is left as is, saying so', () => {
     verification: [],
   });
   assert.match(missing, /F1 .*: left as is: review gave no verdict/);
+});
+
+test('a round with nothing to commit says so instead of naming an older commit', () => {
+  const none = { ...base, commit: { kind: 'none' } as const, files: [] };
+  assert.match(
+    roundComment({ ...none, communication: { verbosity: 'standard', voice: 'factory' } }),
+    /^The factory finished feedback round 2 without a new commit\.\n\n- /,
+  );
+  const developer = roundComment({
+    ...none,
+    communication: { verbosity: 'full', voice: 'developer' },
+  });
+  assert.match(developer, /^Feedback round 2, with no new commit\./);
+  assert.doesNotMatch(developer, /commits\/|Files changed/);
 });

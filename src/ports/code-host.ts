@@ -209,16 +209,25 @@ function notFound(error: unknown): boolean {
   );
 }
 
-// `gh api --paginate` prints one JSON array per page; --slurp joins them.
-// The repository and number of a pull request URL.
-function pullRequestPath(url: string): { number: string; repo: string } {
+// The repository and number of a pull request URL, or null for another URL.
+function pullRequestPath(url: string): { number: string; repo: string } | null {
   const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
-  if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) {
-    throw new Error(`${url} is not a pull request URL.`);
-  }
-  return { number: match[3], repo: `${match[1]}/${match[2]}` };
+  const [, owner, name, number] = match ?? [];
+  return owner === undefined || name === undefined || number === undefined
+    ? null
+    : { number, repo: `${owner}/${name}` };
 }
 
+// A write needs a pull request URL; anything else is refused before gh runs.
+function writablePullRequest(url: string): { number: string; repo: string } {
+  const found = pullRequestPath(url);
+  if (found === null) {
+    throw new Error(`${url} is not a pull request URL.`);
+  }
+  return found;
+}
+
+// `gh api --paginate` prints one JSON array per page; --slurp joins them.
 function pages(value: unknown): Array<unknown> {
   if (!Array.isArray(value)) {
     return [];
@@ -245,8 +254,7 @@ export function createGithubCodeHost(
 ): CodeHost {
   const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
-    const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
-    return match?.[1] && match[2] ? `${match[1]}/${match[2]}` : (repo ?? '');
+    return pullRequestPath(url)?.repo ?? repo ?? '';
   }
   return {
     findPullRequest: (branch) => {
@@ -320,13 +328,13 @@ export function createGithubCodeHost(
     // gh versions over Projects (classic). The body goes through stdin, so no
     // shell or argument length limit touches it.
     setPullRequestBody: async (url, body) => {
-      const { number, repo: target } = pullRequestPath(url);
+      const { number, repo: target } = writablePullRequest(url);
       await write(['api', '-X', 'PATCH', `repos/${target}/pulls/${number}`, '-F', 'body=@-'], body);
     },
     // The hidden marker finds the comment again, and tells the feedback reader
     // it is the factory's own.
     commentOnPullRequest: async (url, key, markdown) => {
-      const { number, repo: target } = pullRequestPath(url);
+      const { number, repo: target } = writablePullRequest(url);
       const marker = `${FACTORY_MARKER}${key} -->`;
       const listed = pages(
         JSON.parse(

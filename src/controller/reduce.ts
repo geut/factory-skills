@@ -1218,8 +1218,13 @@ function handOff(
           kind: 'comment',
           markdown: roundComment({
             communication,
+            // A round that left every item as is has nothing to commit: the
+            // pull request is still where the round started.
+            commit:
+              closing.pullRequestHead === snapshot.execution.roundBaseSha
+                ? { kind: 'none' }
+                : { kind: 'pushed', sha: closing.pullRequestHead },
             files: closing.roundFiles,
-            head: closing.pullRequestHead,
             items: feedback.items,
             pullRequestUrl,
             round,
