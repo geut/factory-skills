@@ -126,6 +126,8 @@ export async function dispatchPending(input: {
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
+  // Replaces a pull request's body on the code host.
+  setPullRequestBody: (url: string, body: string) => void;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
@@ -180,6 +182,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    setPullRequestBody: (url: string, body: string) => void;
     tracker: () => ConfiguredTracker | null;
   },
   action: ActionRecord,
@@ -204,6 +207,8 @@ async function perform(
       return null;
     case 'update_ticket_source':
       return updateTicketSource(input, action, snapshot);
+    case 'update_pull_request':
+      return updatePullRequest(input, action);
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -510,6 +515,40 @@ async function updateTicketSource(
     input.now(),
     'failed',
     `Tracker update failed: ${failure}`,
+  );
+  return null;
+}
+
+// Sets the pull request's body. A code host that keeps failing leaves the
+// action failed, which the API shows as a warning; the ticket stays ready for
+// handoff either way.
+async function updatePullRequest(
+  input: {
+    db: DatabaseSync;
+    now: () => string;
+    setPullRequestBody: (url: string, body: string) => void;
+  },
+  action: Extract<ActionRecord, { kind: 'update_pull_request' }>,
+): Promise<RunId | null> {
+  let failure = '';
+  for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
+    try {
+      input.setPullRequestBody(action.pullRequestUrl, action.body);
+      finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
+      return null;
+    } catch (error: unknown) {
+      failure = messageOf(error);
+      if (attempt < action.maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  finishLeasedAction(
+    input.db,
+    action.id,
+    input.now(),
+    'failed',
+    `Pull request body not set: ${failure}`,
   );
   return null;
 }

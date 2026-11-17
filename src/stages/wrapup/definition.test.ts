@@ -127,3 +127,37 @@ test('with pull requests on, wrap-up is given the rendered title', () => {
   const off = initialPrompt(() => {});
   assert.doesNotMatch(off, /Pull request title:/);
 });
+
+test('wrap-up learns which sections make the pull request body, and the tone only in the developer voice', () => {
+  const short = initialPrompt((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    snapshot.execution.policy.communication = {
+      tone: 'dry',
+      verbosity: 'standard',
+      voice: 'factory',
+    };
+  });
+  assert.match(short, /it sets the body itself from ## PR summary and ## Tests,/);
+  assert.doesNotMatch(short, /Tone:/);
+
+  const full = initialPrompt((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    snapshot.execution.policy.communication = {
+      tone: 'terse, lowercase',
+      verbosity: 'full',
+      voice: 'developer',
+    };
+  });
+  assert.match(
+    full,
+    /from ## PR summary, ## Files, ## Tests, ## Decisions, ## Limitations, and ## Screenshots/,
+  );
+  assert.match(
+    full,
+    /in the first person, without mentioning the factory or agents\. Tone: terse, lowercase/,
+  );
+
+  // Without pull requests there is no body to set.
+  const off = initialPrompt(() => {});
+  assert.doesNotMatch(off, /sets the body itself/);
+});

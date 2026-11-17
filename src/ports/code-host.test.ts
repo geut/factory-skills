@@ -307,3 +307,24 @@ test('a feedback list longer than one page is flagged, and an unexpected payload
     /Unexpected pull request feedback from GitHub/,
   );
 });
+
+test('setting a pull request body sends it on stdin to gh pr edit, and a refusal throws', () => {
+  const writes: Array<{ args: Array<string>; input: string }> = [];
+  const host = createGithubCodeHost(config, gh({}), (args, input) => {
+    writes.push({ args, input });
+  });
+  host.setPullRequestBody('https://github.com/geut/app/pull/9', '## Summary\n\n`$(rm -rf /)`\n');
+  assert.deepEqual(writes, [
+    {
+      args: ['pr', 'edit', 'https://github.com/geut/app/pull/9', '--body-file', '-'],
+      input: '## Summary\n\n`$(rm -rf /)`\n',
+    },
+  ]);
+  const refusing = createGithubCodeHost(config, gh({}), () => {
+    throw new Error('GraphQL: Resource not accessible by integration');
+  });
+  assert.throws(
+    () => refusing.setPullRequestBody('https://github.com/geut/app/pull/9', 'x'),
+    /Resource not accessible/,
+  );
+});

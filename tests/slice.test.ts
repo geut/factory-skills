@@ -1498,9 +1498,13 @@ test('a valid handoff is ready for handoff, opens both panes, and complete finis
 test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after wrap-up commits them and opens the pull request', async () => {
   const url = 'https://github.com/geut/factory-skills/pull/7';
   let opened: PullRequestInfo | null = null;
+  const bodies: Array<{ body: string; url: string }> = [];
   const { branch, runtime, service, wrapup } = await reachWrapup({}, () => ({
     ...codeHostWith('open', []),
     pullRequest: () => opened,
+    setPullRequestBody: (target, body) => {
+      bodies.push({ body, url: target });
+    },
   }));
   git(wrapup.cwd, ['add', '--', 'change.txt']);
   git(wrapup.cwd, ['commit', '-m', 'Persist the filter']);
@@ -1542,6 +1546,34 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
       version: 1,
     });
   }
+  // The factory then set the pull request's body from the handoff, in its voice.
+  await waitFor(() => bodies.length === 1);
+  assert.equal(bodies[0]?.url, url);
+  assert.equal(
+    bodies[0]?.body,
+    [
+      '## Summary',
+      '',
+      'Persist the filter.',
+      '',
+      '## Files',
+      '',
+      '- `change.txt` — holds the persisted filter',
+      '',
+      '## Tests',
+      '',
+      'No validation commands are configured.',
+      '',
+      '## Decisions',
+      '',
+      '- Wrote the filter to a file, not the URL (change.txt:1)',
+      '',
+      '---',
+      '',
+      'Opened by the factory for proj-123.',
+      '',
+    ].join('\n'),
+  );
 });
 
 test('a failed handoff resumes the same wrap-up session with no correction limit', async () => {
@@ -1955,6 +1987,7 @@ function codeHostWith(
         },
       ],
     }),
+    setPullRequestBody: () => undefined,
     verifyWebhook: () => false,
   };
 }

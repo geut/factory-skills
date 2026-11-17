@@ -116,4 +116,127 @@ CREATE TABLE pull_request_commits (
   6: `
 ALTER TABLE tasks ADD COLUMN feedback_json TEXT CHECK (feedback_json IS NULL OR json_valid(feedback_json));
 `,
+  // Schema 8: the outbox can write to the code host (update_pull_request).
+  // SQLite cannot change a CHECK, so actions is rebuilt: the old table is
+  // renamed aside without rewriting what refers to it, the new one takes its
+  // name, and its indexes and triggers come back. The upgrade runs with
+  // foreign keys off and checks them before it commits.
+  7: `
+PRAGMA legacy_alter_table = ON;
+ALTER TABLE actions RENAME TO actions_before_8;
+PRAGMA legacy_alter_table = OFF;
+
+CREATE TABLE actions (
+  id                   TEXT PRIMARY KEY CHECK (length(trim(id)) > 0),
+  execution_id         TEXT NOT NULL REFERENCES ticket_executions(id) ON DELETE CASCADE,
+  run_id               TEXT,
+  attention_request_id TEXT,
+  attention_reply_id   TEXT,
+  retry_of_action_id   TEXT,
+  kind                 TEXT NOT NULL CHECK (
+    kind IN (
+      'fetch_ticket', 'prepare_worktree', 'prepare_input', 'launch_run', 'resume_run',
+      'interrupt_run', 'validate_run', 'notify_attention',
+      'publish_projection', 'update_ticket_source', 'open_diff', 'open_pane',
+      'update_pull_request'
+    )
+  ),
+  status               TEXT NOT NULL CHECK (
+    status IN ('pending', 'leased', 'succeeded', 'failed', 'cancelled')
+  ),
+  idempotency_key      TEXT NOT NULL UNIQUE,
+  payload_json         TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload_json)),
+  attempts             INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  max_attempts         INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+  available_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  lease_owner          TEXT,
+  lease_token          TEXT UNIQUE,
+  lease_expires_at     TEXT,
+  last_error           TEXT,
+  result_json          TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+  created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  completed_at         TEXT,
+
+  UNIQUE (execution_id, id),
+  FOREIGN KEY (execution_id, run_id)
+    REFERENCES agent_runs(execution_id, id),
+  FOREIGN KEY (execution_id, attention_request_id)
+    REFERENCES attention_requests(execution_id, id),
+  FOREIGN KEY (attention_request_id, attention_reply_id)
+    REFERENCES attention_replies(request_id, id),
+  FOREIGN KEY (execution_id, retry_of_action_id)
+    REFERENCES actions(execution_id, id),
+  CHECK (
+    (status = 'leased' AND lease_owner IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR
+    (status <> 'leased' AND lease_owner IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+  ),
+  CHECK (
+    (status IN ('succeeded', 'failed', 'cancelled') AND completed_at IS NOT NULL) OR
+    (status IN ('pending', 'leased') AND completed_at IS NULL)
+  ),
+  CHECK (attempts <= max_attempts),
+  CHECK (attention_reply_id IS NULL OR attention_request_id IS NOT NULL),
+  CHECK (
+    kind NOT IN ('launch_run', 'resume_run', 'interrupt_run', 'validate_run') OR
+    run_id IS NOT NULL
+  ),
+  CHECK (
+    kind <> 'resume_run' OR
+    (attention_request_id IS NOT NULL AND attention_reply_id IS NOT NULL)
+  ),
+  CHECK (kind <> 'notify_attention' OR attention_request_id IS NOT NULL)
+) STRICT;
+
+INSERT INTO actions SELECT * FROM actions_before_8;
+DROP TABLE actions_before_8;
+
+CREATE INDEX dispatchable_actions
+ON actions(status, available_at, lease_expires_at);
+
+CREATE UNIQUE INDEX one_active_validation_per_execution
+ON actions(execution_id)
+WHERE kind = 'validate_run' AND status IN ('pending', 'leased');
+
+CREATE UNIQUE INDEX one_start_action_per_run
+ON actions(run_id)
+WHERE run_id IS NOT NULL
+  AND kind IN ('launch_run', 'resume_run');
+
+CREATE TRIGGER terminal_action_is_immutable
+BEFORE UPDATE ON actions
+WHEN OLD.status IN ('succeeded', 'failed', 'cancelled')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal action is immutable');
+END;
+
+CREATE TRIGGER terminal_action_cannot_be_deleted
+BEFORE DELETE ON actions
+WHEN OLD.status IN ('succeeded', 'failed', 'cancelled')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal action is immutable');
+END;
+
+CREATE TRIGGER active_action_requires_current_execution_on_insert
+BEFORE INSERT ON actions
+WHEN NEW.status IN ('pending', 'leased')
+  AND NOT EXISTS (
+    SELECT 1 FROM ticket_executions AS e
+    WHERE e.id = NEW.execution_id AND e.is_current = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'active action requires the current execution');
+END;
+
+CREATE TRIGGER active_action_requires_current_execution_on_update
+BEFORE UPDATE OF status ON actions
+WHEN NEW.status IN ('pending', 'leased')
+  AND NOT EXISTS (
+    SELECT 1 FROM ticket_executions AS e
+    WHERE e.id = NEW.execution_id AND e.is_current = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'active action requires the current execution');
+END;
+`,
 };

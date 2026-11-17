@@ -112,6 +112,46 @@ test('a schema 3 database upgrades in place and keeps its tickets', () => {
   assert.deepEqual(shape(root), shape(freshRoot()));
 });
 
+test('the upgrade to schema 8 keeps every action, what refers to them, and their guards', () => {
+  const root = oldRoot(3);
+  const before = new DatabaseSync(stateDatabasePath(root));
+  before.exec(`
+    INSERT INTO actions (id, execution_id, kind, status, idempotency_key, completed_at)
+      VALUES ('a1', 'e1', 'update_ticket_source', 'succeeded', 'k1', '2026-11-17T00:00:00.000Z');
+    INSERT INTO actions (id, execution_id, kind, status, idempotency_key, retry_of_action_id)
+      VALUES ('a2', 'e1', 'update_ticket_source', 'pending', 'k2', 'a1');
+    INSERT INTO events (id, execution_id, action_id, direction, source, kind, dedupe_key, processing_status)
+      VALUES ('ev1', 'e1', 'a1', 'domain', 'action', 'action_finished', 'd1', 'pending');
+  `);
+  before.close();
+  const db = openStateDatabase(root);
+  assert.deepEqual(
+    db
+      .prepare('SELECT id, status, retry_of_action_id FROM actions ORDER BY id')
+      .all()
+      .map((row) => ({ ...row })),
+    [
+      { id: 'a1', retry_of_action_id: null, status: 'succeeded' },
+      { id: 'a2', retry_of_action_id: 'a1', status: 'pending' },
+    ],
+  );
+  assert.equal(
+    db.prepare("SELECT action_id FROM events WHERE id = 'ev1'").get()?.['action_id'],
+    'a1',
+  );
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.equal(db.prepare('PRAGMA foreign_keys').get()?.['foreign_keys'], 1);
+  // The new kind is accepted; a finished action is still immutable.
+  db.exec(
+    "INSERT INTO actions (id, execution_id, kind, status, idempotency_key) VALUES ('a3', 'e1', 'update_pull_request', 'pending', 'k3')",
+  );
+  assert.throws(
+    () => db.exec("DELETE FROM actions WHERE id = 'a1'"),
+    /terminal action is immutable/,
+  );
+  db.close();
+});
+
 test('a schema 3 database opened read-only is refused and left as it was', () => {
   const root = oldRoot(3);
   assert.throws(

@@ -75,6 +75,7 @@ function host(
           },
     pullRequestFeedback: () => feedback,
     pullRequestOutcome: unused,
+    setPullRequestBody: unused,
     verifyWebhook: unused,
   };
 }

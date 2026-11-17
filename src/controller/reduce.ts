@@ -25,8 +25,10 @@ import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/def
 import { feedbackRoundRefusal, feedbackRounds, feedbackTaskId } from '../stages/feedback.ts';
 import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
+import { runOutput } from '../stages/output.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
+import { pullRequestBody } from '../stages/wrapup/pr-body.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 import {
@@ -1193,6 +1195,26 @@ function handOff(
     },
   );
   const { communication } = snapshot.execution.policy;
+  // The factory sets the pull request's body from the accepted handoff, once:
+  // a feedback round leaves it as the first pass wrote it.
+  if (
+    pullRequestUrl !== null &&
+    snapshot.execution.policy.pullRequests &&
+    feedbackRounds(snapshot.tasks) === 0
+  ) {
+    snapshot.actions.push({
+      ...base,
+      body: pullRequestBody({
+        communication,
+        displayRef: ref,
+        handoff: runOutput(run),
+      }),
+      id: ids.action(),
+      idempotencyKey: `pr-body:${run.id}`,
+      kind: 'update_pull_request',
+      pullRequestUrl,
+    });
+  }
   trackerUpdate(snapshot, ids, {
     checklist: handoffChecklist(communication, checklist),
     comment: handoffComment(communication, { checklist, pullRequestUrl, rules }),

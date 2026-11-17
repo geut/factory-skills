@@ -942,6 +942,22 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       runId: runId(run),
     };
   }
+  if (
+    kind === 'update_pull_request' &&
+    run !== null &&
+    typeof payload['body'] === 'string' &&
+    typeof payload['pullRequestUrl'] === 'string'
+  ) {
+    return {
+      ...base,
+      attentionReplyId: null,
+      attentionRequestId: null,
+      body: payload['body'],
+      kind,
+      pullRequestUrl: payload['pullRequestUrl'],
+      runId: runId(run),
+    };
+  }
   if (kind === 'prepare_worktree' && typeof payload['slug'] === 'string') {
     return {
       ...base,
@@ -1014,6 +1030,8 @@ function payloadJson(action: ActionRecord): string {
       return jsonText({ name: action.name });
     case 'open_diff':
       return jsonText({ cwd: action.cwd, name: action.name });
+    case 'update_pull_request':
+      return jsonText({ body: action.body, pullRequestUrl: action.pullRequestUrl });
     case 'prepare_worktree':
       return jsonText({ slug: action.slug });
     case 'notify_attention':
@@ -2067,14 +2085,15 @@ export function claimNextAction(
   });
 }
 
-// Tracker updates a previous server leased and never finished go back to
-// pending. Their comment marker keeps a second attempt from posting twice.
+// Tracker and pull request updates a previous server leased and never
+// finished go back to pending. A comment marker keeps a second attempt from
+// posting twice, and setting the same body again changes nothing.
 export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): void {
   db.prepare(
     `UPDATE actions
      SET status = 'pending', lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
          updated_at = ?
-     WHERE kind = 'update_ticket_source' AND status = 'leased'`,
+     WHERE kind IN ('update_ticket_source', 'update_pull_request') AND status = 'leased'`,
   ).run(now);
 }
 

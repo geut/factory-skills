@@ -2334,7 +2334,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Tracker updates that failed. The ticket went on regardless."
+            "description": "Tracker updates, and pull request body updates, that failed. The ticket went on regardless."
           },
           "updatedAt": {
             "type": "string"
@@ -2595,7 +2595,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Tracker updates that failed. The ticket went on regardless."
+            "description": "Tracker updates, and pull request body updates, that failed. The ticket went on regardless."
           },
           "updatedAt": {
             "type": "string"

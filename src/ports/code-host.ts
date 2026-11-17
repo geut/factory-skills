@@ -51,6 +51,9 @@ export type CodeHost = {
     seen: ReadonlySet<string>,
   ) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
+  // Replaces the body of the pull request at `url`. Throws when the host
+  // refuses or cannot be reached.
+  setPullRequestBody: (url: string, body: string) => void;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
     headers: Record<string, string | undefined>,
@@ -74,6 +77,16 @@ export const ghJson: GhJson = (args) => {
     throw new Error((result.stderr || result.stdout || 'gh failed').trim());
   }
   return JSON.parse(result.stdout) as unknown;
+};
+
+// Runs a gh command that writes, with `input` on its stdin.
+export type GhRun = (args: Array<string>, input: string) => void;
+
+export const ghRun: GhRun = (args, input) => {
+  const result = spawnSync('gh', args, { encoding: 'utf8', input });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
+  }
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,7 +181,11 @@ export function verifyGithubSignature(
   return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 
-export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson = ghJson): CodeHost {
+export function createGithubCodeHost(
+  config: CodeHostConfig | null,
+  gh: GhJson = ghJson,
+  write: GhRun = ghRun,
+): CodeHost {
   const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
     const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
@@ -223,6 +240,8 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
       ]);
       return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], seen });
     },
+    // The body goes through stdin, so no shell or argument length limit
+    // touches it.
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;
       const fresh = gh(['pr', 'view', pullRequest.url, '--json', PR_FIELDS]);
@@ -239,6 +258,9 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
           return review === null ? [] : [review];
         }),
       };
+    },
+    setPullRequestBody: (url, body) => {
+      write(['pr', 'edit', url, '--body-file', '-'], body);
     },
     verifyWebhook: verifyGithubSignature,
   };

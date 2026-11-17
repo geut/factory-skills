@@ -1,3 +1,4 @@
+import type { Communication } from '../../communication.ts';
 import { factoryRootOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { defineStage } from '../definition.ts';
@@ -29,10 +30,19 @@ export type WrapupPrepared = {
   verification: Array<string>;
 };
 
+// The handoff sections the controller builds the pull request body from.
+function pullRequestSections(communication: Communication): string {
+  return communication.verbosity === 'full'
+    ? '## PR summary, ## Files, ## Tests, ## Decisions, ## Limitations, and ## Screenshots'
+    : '## PR summary and ## Tests';
+}
+
 export type WrapupInput = {
   adrPath: string | null;
   baseBranch: string | null;
   codeRoot: string;
+  // The ticket's verbosity and voice, for what the pull request says.
+  communication: Communication;
   contextPath: string | null;
   displayRef: string;
   factoryRoot: string;
@@ -126,6 +136,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       adrPath: prepared.adrPath,
       baseBranch: execution.worktreeBaseBranch,
       codeRoot: execution.policy.codeRoot,
+      communication: execution.policy.communication,
       contextPath: prepared.contextPath,
       displayRef: snapshot.ticket.displayRef,
       factoryRoot: factoryRootOf(execution.factoryDir),
@@ -214,7 +225,9 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         ...(input.screenshots.length === 0
           ? []
           : [
-              'QA screenshots (add a ## Screenshots section to the PR summary with each one):',
+              input.communication.verbosity === 'full'
+                ? 'QA screenshots (add a ## Screenshots section after ## PR summary with each one; it goes in the pull request body):'
+                : 'QA screenshots (the pull request body leaves them out; tell the human which to add):',
               ...input.screenshots.map(
                 (shot) => `- Task ${shot.taskId} ${shot.name}: ${shot.path}`,
               ),
@@ -254,6 +267,16 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         input.pullRequests
           ? `codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD. Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it; pass the title to gh in single quotes.`
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
+        ...(input.pullRequests && input.feedbackRound === null
+          ? [
+              `Open the pull request with your ## PR summary as its body. Once the controller accepts your handoff, it sets the body itself from ${pullRequestSections(input.communication)}, so write those for the pull request's reader.`,
+            ]
+          : []),
+        ...(input.communication.voice === 'developer'
+          ? [
+              `Write the ## PR summary, the ## Decisions, and the commit summary as the developer who owns this work, in the first person, without mentioning the factory or agents. Tone: ${input.communication.tone}`,
+            ]
+          : []),
         ...(input.feedbackRound === null
           ? []
           : [
