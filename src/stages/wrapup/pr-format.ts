@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { textsAtBase } from '../../actions/review-rules.ts';
 import { CONTEXT_FILE_NAMES } from '../review/rules.ts';
 
 // The pull request format a project asks for (ADR-004), read at the ticket's
@@ -22,19 +23,32 @@ const TEMPLATE_NAME = 'pull_request_template.md';
 
 type Heading = { level: number; line: number; text: string };
 
-// A markdown document's headings, outside code fences and HTML comments.
+// A markdown document's headings, outside code fences and HTML comments. A
+// comment is taken out first, inline or across lines, so neither a fence in a
+// comment nor a hint on a heading's line changes what the headings are.
 function headingsOf(text: string): Array<Heading> {
   const headings: Array<Heading> = [];
   let fenced = false;
   let commented = false;
   for (const [line, raw] of text.split('\n').entries()) {
-    const trimmed = raw.trim();
+    let visible = raw;
+    if (commented) {
+      const close = visible.indexOf('-->');
+      if (close < 0) {
+        continue;
+      }
+      commented = false;
+      visible = visible.slice(close + 3);
+    }
+    visible = visible.replaceAll(/<!--.*?-->/g, '');
+    const open = visible.indexOf('<!--');
+    if (open >= 0) {
+      commented = true;
+      visible = visible.slice(0, open);
+    }
+    const trimmed = visible.trim();
     if (/^(```|~~~)/.test(trimmed)) {
       fenced = !fenced;
-      continue;
-    }
-    if (commented || trimmed.startsWith('<!--')) {
-      commented = !trimmed.includes('-->');
       continue;
     }
     const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(trimmed);
@@ -93,11 +107,6 @@ function git(codeRoot: string, args: Array<string>): string | null {
   return result.status === 0 ? result.stdout : null;
 }
 
-// A file's text at the base commit, or null when it is not there.
-function textAt(codeRoot: string, sha: string, file: string): string | null {
-  return git(codeRoot, ['show', `${sha}:${file}`]);
-}
-
 // The repository paths directly in `directory` at the base commit.
 function namesIn(codeRoot: string, sha: string, directory: string): Array<string> {
   const listed = git(codeRoot, [
@@ -110,26 +119,26 @@ function namesIn(codeRoot: string, sha: string, directory: string): Array<string
   return listed === null ? [] : listed.split('\n').filter((line) => line.length > 0);
 }
 
+// Throws when the base commit cannot be read.
 export function readPrFormat(input: { codeRoot: string; sha: string }): PrFormat {
   const { codeRoot, sha } = input;
-  // Pi loads the first of these the root has, so only that one counts.
-  for (const name of CONTEXT_FILE_NAMES) {
-    const text = textAt(codeRoot, sha, name);
-    if (text === null) {
-      continue;
-    }
-    const section = prInstructions(text);
-    if (section !== null) {
-      return { kind: 'instructions', path: name, text: section };
-    }
-    break;
+  // Read as Pi reads them, symlinks followed: AGENTS.md is often a link to
+  // CLAUDE.md. Pi loads the first of these the root has, so only that counts.
+  const contexts = textsAtBase({ codeRoot, files: [...CONTEXT_FILE_NAMES], sha });
+  const loaded = CONTEXT_FILE_NAMES.find((name) => (contexts.get(name) ?? null) !== null);
+  const instructions = loaded === undefined ? null : prInstructions(contexts.get(loaded) ?? '');
+  if (loaded !== undefined && instructions !== null) {
+    return { kind: 'instructions', path: loaded, text: instructions };
   }
-  for (const directory of TEMPLATE_DIRECTORIES) {
-    const file = namesIn(codeRoot, sha, directory).find(
+  const templates = TEMPLATE_DIRECTORIES.flatMap((directory) =>
+    namesIn(codeRoot, sha, directory).filter(
       (name) => name.split('/').at(-1)?.toLowerCase() === TEMPLATE_NAME,
-    );
-    const text = file === undefined ? null : textAt(codeRoot, sha, file);
-    if (file !== undefined && text !== null) {
+    ),
+  );
+  const texts = textsAtBase({ codeRoot, files: templates, sha });
+  for (const file of templates) {
+    const text = texts.get(file) ?? null;
+    if (text !== null) {
       return { headings: templateHeadings(text), kind: 'template', path: file, text };
     }
   }

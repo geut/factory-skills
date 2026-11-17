@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -113,4 +113,39 @@ test('the format comes from the agent instructions, then a template, then the de
   git(later.codeRoot, ['add', '-A']);
   git(later.codeRoot, ['commit', '-m', 'add a template']);
   assert.deepEqual(readPrFormat(later), { kind: 'default' });
+});
+
+test('a hint on a heading’s line, or a fence inside a comment, does not change the headings', () => {
+  assert.deepEqual(
+    templateHeadings(['## Summary <!-- required -->', '<!--', '```', '-->', '## After'].join('\n')),
+    ['Summary', 'After'],
+  );
+  // A body that drops the hint, as the prompt asks, has the heading.
+  assert.deepEqual(missingHeadings(['Summary'], '## Summary\n\nKeeps the filter.'), []);
+});
+
+test('symlinked instructions and templates are read through their links', () => {
+  const linked = repo({ 'CLAUDE.md': '# Rules\n\n## Pull requests\nLead with the risk.\n' });
+  symlinkSync('CLAUDE.md', path.join(linked.codeRoot, 'AGENTS.md'));
+  mkdirSync(path.join(linked.codeRoot, '.github'));
+  writeFileSync(path.join(linked.codeRoot, 'TEMPLATE.md'), '## What changed\n');
+  symlinkSync('../TEMPLATE.md', path.join(linked.codeRoot, '.github/pull_request_template.md'));
+  git(linked.codeRoot, ['add', '-A']);
+  git(linked.codeRoot, ['commit', '-m', 'links']);
+  const sha = git(linked.codeRoot, ['rev-parse', 'HEAD']);
+  assert.deepEqual(readPrFormat({ codeRoot: linked.codeRoot, sha }), {
+    kind: 'instructions',
+    path: 'AGENTS.md',
+    text: '## Pull requests\nLead with the risk.',
+  });
+  // Without PR instructions, the linked template is read through its link.
+  writeFileSync(path.join(linked.codeRoot, 'CLAUDE.md'), '# Rules\n');
+  git(linked.codeRoot, ['commit', '-am', 'no PR rules']);
+  const next = git(linked.codeRoot, ['rev-parse', 'HEAD']);
+  assert.deepEqual(readPrFormat({ codeRoot: linked.codeRoot, sha: next }), {
+    headings: ['What changed'],
+    kind: 'template',
+    path: '.github/pull_request_template.md',
+    text: '## What changed\n',
+  });
 });

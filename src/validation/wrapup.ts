@@ -603,8 +603,10 @@ export function validateWrapup(input: {
           `${url} is titled "${found.title}", not ${wanted}; run gh pr edit ${found.number} --title ${shellQuote(wanted)} with <summary> replaced by your one-line summary.`,
         );
       }
-      // The project's own template: its headings, all of them, in order.
-      if (input.prFormat.kind === 'template') {
+      // The project's own template: its headings, all of them, in order. A
+      // feedback round leaves the body as it is, so only the first wrap-up
+      // answers for it.
+      if (input.prFormat.kind === 'template' && input.roundBase === null) {
         const missing = missingHeadings(input.prFormat.headings, found.body);
         if (missing.length > 0) {
           policy.push(

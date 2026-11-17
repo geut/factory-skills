@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import type { WrapupBaseline } from '../domain.ts';
+import { taskId, type WrapupBaseline } from '../domain.ts';
 import { markdownChecklist } from '../ports/markdown-checklist.ts';
 import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
@@ -162,6 +162,8 @@ function validate(
     // The ticket's issue body, with task 01 and its approving review.
     issue?: { body: string; review: string };
     pullRequests?: boolean;
+    // A feedback round's wrap-up, started from the base commit.
+    round?: boolean;
     // The ticket and the project's title template, for the title check.
     titled?: { displayRef: string; sourceKind: string; template: string | null };
   } = {},
@@ -180,6 +182,21 @@ function validate(
         execution.worktreeBaseSha = value.baseSha;
         execution.worktreeBranch = branch;
         execution.worktreePath = value.worktree;
+        if (options.round === true) {
+          execution.roundBaseSha = value.baseSha;
+          snapshot.tasks.push({
+            blockedBy: [],
+            feedback: null,
+            ordinal: 99,
+            specHash: null,
+            stage: 'wrapup',
+            status: 'active',
+            summaries: {},
+            taskFile: 'feedback/1/task.md',
+            taskId: taskId('F1'),
+            title: 'Feedback round 1',
+          });
+        }
         if (options.titled !== undefined) {
           const { displayRef, sourceKind, template } = options.titled;
           execution.policy.pullRequestTitle =
@@ -629,6 +646,25 @@ test('a project PR template needs its headings in the pull request body, in orde
     failures(await withBody('## Summary\n\nPersist the filter.\n\n## Testing\n')),
     /body does not follow \.github\/PULL_REQUEST_TEMPLATE\.md: it needs these headings, in the template's order: "What changed"\. /,
   );
+  // A feedback round leaves the body as it is, so it does not answer for it.
+  const round = await validate(value, baseline, handoff(value, { merge: target }), {
+    findPullRequest: () => ({
+      author: 'dpaez',
+      body: '## Summary\n\nWritten before the project had a template.',
+      closedAt: null,
+      headBranch: branch,
+      headSha: git(value.worktree, ['rev-parse', 'HEAD']),
+      mergedAt: null,
+      number: 7,
+      openedAt: null,
+      state: 'open',
+      title: 'Persist the filter',
+      url: target,
+    }),
+    pullRequests: true,
+    round: true,
+  });
+  assert.doesNotMatch(failures(round), /does not follow/);
 });
 
 const url = 'https://github.com/geut/demo/pull/7';
