@@ -234,6 +234,61 @@ test('at minimal the handoff only moves the status; at standard it ticks and com
   assert.deepEqual(standard?.checklist, [{ key: '1:Reload keeps it.', text: 'Reload keeps it.' }]);
 });
 
+// The pull request writes an accepted wrap-up with an open pull request queues.
+function acceptWithPullRequest(setup: (snapshot: FactorySnapshot) => void) {
+  const { runId, snapshot } = finishedWrapup();
+  setup(snapshot);
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: noIssue,
+        pullRequest: {
+          author: 'dpaez',
+          closedAt: null,
+          headBranch: 'factory/demo',
+          headSha: 'abc',
+          mergedAt: null,
+          number: 9,
+          openedAt: null,
+          state: 'open',
+          title: 'Persist the filter',
+          url: 'https://github.com/geut/app/pull/9',
+        },
+        rules: [],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  return (passed.snapshot ?? snapshot).actions.filter(
+    (item): item is Extract<ActionRecord, { kind: 'update_pull_request' }> =>
+      item.kind === 'update_pull_request',
+  );
+}
+
+test('an accepted wrap-up queues the pull request body it built, once and only with pull requests on', () => {
+  const [queued, ...more] = acceptWithPullRequest((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    snapshot.execution.policy.communication = { tone: 't', verbosity: 'minimal', voice: 'factory' };
+  });
+  assert.equal(more.length, 0);
+  assert.equal(queued?.pullRequestUrl, 'https://github.com/geut/app/pull/9');
+  assert.match(queued?.idempotencyKey ?? '', /^pr-body:/);
+  assert.match(queued?.body ?? '', /Opened by the factory for /);
+  assert.doesNotMatch(queued?.body ?? '', /## Files/);
+  // Pull requests off: nothing to set.
+  assert.deepEqual(
+    acceptWithPullRequest(() => {}),
+    [],
+  );
+});
+
 test('an accepted wrap-up names the project rule files the ticket changes', () => {
   const { runId, snapshot } = finishedWrapup();
   const passed = reduce({

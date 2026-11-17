@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { CodeHostConfig } from '../config.ts';
 import { FEEDBACK_QUERY, feedbackFrom, type PullRequestFeedback } from './pull-request-feedback.ts';
@@ -51,6 +51,9 @@ export type CodeHost = {
     seen: ReadonlySet<string>,
   ) => PullRequestFeedback;
   pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
+  // Replaces the body of the pull request at `url`. Rejects when the host
+  // refuses or cannot be reached.
+  setPullRequestBody: (url: string, body: string) => Promise<void>;
   // Whether a webhook delivery is signed with `secret`.
   verifyWebhook: (
     headers: Record<string, string | undefined>,
@@ -75,6 +78,54 @@ export const ghJson: GhJson = (args) => {
   }
   return JSON.parse(result.stdout) as unknown;
 };
+
+// Runs a gh command that writes, with `input` on its stdin. It runs as a
+// child process the server awaits, so a slow GitHub never blocks the event
+// loop; the timeout only ends a gh that is stuck.
+export type GhRun = (args: Array<string>, input: string) => Promise<void>;
+
+export const GH_WRITE_TIMEOUT_MS = 5 * 60 * 1000;
+
+export function runCommand(input: {
+  args: Array<string>;
+  command: string;
+  stdin: string;
+  timeoutMs: number;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(input.command, input.args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: input.timeoutMs,
+    });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          signal === null
+            ? output.trim() || `${input.command} exited with code ${code ?? 'unknown'}`
+            : `${input.command} was stopped by ${signal} after ${input.timeoutMs} ms`,
+        ),
+      );
+    });
+    // A command that exits before reading stdin must not crash the server.
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(input.stdin);
+  });
+}
+
+export const ghRun: GhRun = (args, stdin) =>
+  runCommand({ args, command: 'gh', stdin, timeoutMs: GH_WRITE_TIMEOUT_MS });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -168,7 +219,11 @@ export function verifyGithubSignature(
   return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 
-export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson = ghJson): CodeHost {
+export function createGithubCodeHost(
+  config: CodeHostConfig | null,
+  gh: GhJson = ghJson,
+  write: GhRun = ghRun,
+): CodeHost {
   const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
     const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
@@ -223,6 +278,8 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
       ]);
       return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], seen });
     },
+    // The body goes through stdin, so no shell or argument length limit
+    // touches it.
     pullRequestOutcome: (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;
       const fresh = gh(['pr', 'view', pullRequest.url, '--json', PR_FIELDS]);
@@ -239,6 +296,19 @@ export function createGithubCodeHost(config: CodeHostConfig | null, gh: GhJson =
           return review === null ? [] : [review];
         }),
       };
+    },
+    // Through the REST API, like the reads here: `gh pr edit` fails on some
+    // gh versions over Projects (classic). The body goes through stdin, so no
+    // shell or argument length limit touches it.
+    setPullRequestBody: async (url, body) => {
+      const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+      if (match === null) {
+        throw new Error(`${url} is not a pull request URL.`);
+      }
+      await write(
+        ['api', '-X', 'PATCH', `repos/${match[1]}/${match[2]}/pulls/${match[3]}`, '-F', 'body=@-'],
+        body,
+      );
     },
     verifyWebhook: verifyGithubSignature,
   };

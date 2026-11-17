@@ -101,9 +101,10 @@ const TicketSummary = z
     status: z.enum(executionStatuses),
     statusReason: z.string().nullable(),
     title: z.string(),
-    trackerWarnings: z
-      .array(z.string())
-      .meta({ description: 'Tracker updates that failed. The ticket went on regardless.' }),
+    trackerWarnings: z.array(z.string()).meta({
+      description:
+        'Tracker updates, and pull request body updates, that failed. The ticket went on regardless.',
+    }),
     updatedAt: z.string(),
   })
   .meta({ id: 'TicketSummary' });
@@ -443,7 +444,8 @@ function summaryOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof 
     trackerWarnings: db
       .prepare(
         `SELECT last_error FROM actions
-         WHERE execution_id = ? AND kind = 'update_ticket_source' AND status = 'failed'
+         WHERE execution_id = ? AND kind IN ('update_ticket_source', 'update_pull_request')
+           AND status = 'failed'
          ORDER BY created_at`,
       )
       .all(execution.id)

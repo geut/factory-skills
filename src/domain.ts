@@ -683,6 +683,16 @@ export type ActionRecord =
       name: string;
       runId: RunId;
     })
+  // A write to the ticket's pull request after wrap-up passes: its body, as
+  // the factory assembled it. Best effort, like a tracker update.
+  | (ActionBase & {
+      attentionReplyId: null;
+      attentionRequestId: null;
+      body: string;
+      kind: 'update_pull_request';
+      pullRequestUrl: string;
+      runId: RunId;
+    })
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;

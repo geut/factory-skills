@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { OLDEST_UPGRADABLE_VERSION, upgrades } from './upgrades.ts';
 
 export const APPLICATION_ID = 0x46_41_43_54; // "FACT"
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const STATE_DATABASE_RELATIVE_PATH = path.join('db', 'state.sqlite');
 
 // The single executable carries schema.sql as an asset; source runs read it
@@ -287,22 +287,38 @@ function backUpBeforeUpgrade(db: DatabaseSync, databasePath: string): void {
 
 // Runs every step from the stored version to SCHEMA_VERSION in one
 // transaction. A concurrent opener that upgraded first leaves nothing to do.
+// A step may rebuild a table others refer to, so foreign keys are off while
+// the steps run (SQLite only switches them outside a transaction) and checked
+// before the upgrade commits.
 function upgrade(db: DatabaseSync): void {
-  immediateTransaction(db, () => {
-    const from = schemaVersion(db);
-    if (from === null || from >= SCHEMA_VERSION) {
-      return;
-    }
-    for (let version = from; version < SCHEMA_VERSION; version += 1) {
-      const step = upgrades[version];
-      if (step === undefined) {
-        throw new FactoryDatabaseError(`no upgrade step from schema ${version}`);
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    immediateTransaction(db, () => {
+      const from = schemaVersion(db);
+      if (from === null || from >= SCHEMA_VERSION) {
+        return;
       }
-      db.exec(step);
-    }
-    db.prepare('UPDATE schema_meta SET schema_version = ? WHERE singleton = 1').run(SCHEMA_VERSION);
-    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-  });
+      for (let version = from; version < SCHEMA_VERSION; version += 1) {
+        const step = upgrades[version];
+        if (step === undefined) {
+          throw new FactoryDatabaseError(`no upgrade step from schema ${version}`);
+        }
+        db.exec(step);
+      }
+      const broken = db.prepare('PRAGMA foreign_key_check').all();
+      if (broken.length > 0) {
+        throw new FactoryDatabaseError(
+          `upgrading to schema ${SCHEMA_VERSION} left ${broken.length} broken references, in ${[...new Set(broken.map((row) => String(row['table'])))].join(', ')}`,
+        );
+      }
+      db.prepare('UPDATE schema_meta SET schema_version = ? WHERE singleton = 1').run(
+        SCHEMA_VERSION,
+      );
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    });
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }
 
 export function initializeStateDatabase(factoryRoot: string): string {
