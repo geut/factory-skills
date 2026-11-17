@@ -317,6 +317,9 @@ export type ReviewValidationReport = ValidationReport<
 export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
+  // Where the pull request's format came from: the project's own
+  // (`instructions` or `template`), or the factory's `default`.
+  prFormat: 'default' | 'instructions' | 'template';
   pullRequest: PullRequestInfo | null;
   // The paths a feedback round's commits changed; empty for the first wrap-up.
   roundFiles: Array<string>;

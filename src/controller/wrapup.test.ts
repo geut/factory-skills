@@ -111,6 +111,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
       {
         checklist: noIssue,
+        prFormat: 'default' as const,
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -163,6 +164,7 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
             },
           ],
         },
+        prFormat: 'default' as const,
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -213,6 +215,7 @@ function handoffUpdate(communication: FactorySnapshot['execution']['policy']['co
           met: [{ id: 'B1', key: '1:Reload keeps it.', text: 'Reload keeps it.' }],
           open: [],
         },
+        prFormat: 'default' as const,
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -243,7 +246,10 @@ test('at minimal the handoff only moves the status; at standard it ticks and com
 });
 
 // The pull request writes an accepted wrap-up with an open pull request queues.
-function acceptWithPullRequest(setup: (snapshot: FactorySnapshot) => void) {
+function acceptWithPullRequest(
+  setup: (snapshot: FactorySnapshot) => void,
+  prFormat: 'default' | 'instructions' | 'template' = 'default',
+) {
   const { runId, snapshot } = finishedWrapup();
   setup(snapshot);
   const passed = reduce({
@@ -252,8 +258,10 @@ function acceptWithPullRequest(setup: (snapshot: FactorySnapshot) => void) {
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        prFormat,
         pullRequest: {
           author: 'dpaez',
+          body: '',
           closedAt: null,
           headBranch: 'factory/demo',
           headSha: 'abc',
@@ -292,6 +300,15 @@ test('an accepted wrap-up queues the pull request body it built, once and only w
   const body = queued?.change.kind === 'body' ? queued.change.body : '';
   assert.match(body, /Opened by the factory for /);
   assert.doesNotMatch(body, /## Files/);
+  // The project's own format: the agent wrote the body, so nothing to set.
+  for (const format of ['template', 'instructions'] as const) {
+    assert.deepEqual(
+      acceptWithPullRequest((snapshot) => {
+        snapshot.execution.policy.pullRequests = true;
+      }, format),
+      [],
+    );
+  }
   // Pull requests off: nothing to set.
   assert.deepEqual(
     acceptWithPullRequest(() => {}),
@@ -347,6 +364,7 @@ test('an accepted wrap-up names the project rule files the ticket changes', () =
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        prFormat: 'default' as const,
         pullRequest: null,
         roundFiles: [],
         rules: ['AGENTS.md'],
@@ -410,7 +428,14 @@ function failedWith(
       status: 'pending',
     });
   }
-  const detail = { checklist: noIssue, pullRequest: null, roundFiles: [], rules: [], usage: '' };
+  const detail = {
+    checklist: noIssue,
+    prFormat: 'default' as const,
+    pullRequest: null,
+    roundFiles: [],
+    rules: [],
+    usage: '',
+  };
   return (
     reduce({
       event: {

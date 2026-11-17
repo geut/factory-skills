@@ -49,6 +49,9 @@ export type Outcome =
       notice?: string;
       // For the stage that plans: the tasks to register, from its plan.
       plan?: { path: string; tasks: Array<PlannedTask> };
+      // For the closing stage: whether the project has its own PR format,
+      // whose body the agent wrote and the factory leaves alone.
+      projectPrFormat?: boolean;
       // For the closing stage: the pull request it checked, if any, and its head.
       pullRequestHead?: string;
       pullRequestUrl?: string;

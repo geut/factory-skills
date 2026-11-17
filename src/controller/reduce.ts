@@ -1158,6 +1158,8 @@ function handOff(
   ids: IdSource,
   closing: {
     checklist: IssueChecklist | null;
+    // The project's own PR format: the agent wrote the body in it.
+    projectPrFormat: boolean;
     // The pull request wrap-up checked, and its head after the push.
     pullRequestHead: string | null;
     pullRequestUrl: string | null;
@@ -1240,7 +1242,12 @@ function handOff(
       });
     }
   }
-  if (pullRequestUrl !== null && snapshot.execution.policy.pullRequests && round === 0) {
+  if (
+    pullRequestUrl !== null &&
+    snapshot.execution.policy.pullRequests &&
+    round === 0 &&
+    !closing.projectPrFormat
+  ) {
     snapshot.actions.push({
       ...base,
       change: {
@@ -1384,6 +1391,7 @@ function applyOutcome(
       if (step.kind === 'handoff') {
         return handOff(snapshot, session, run, outcome.notice ?? '', ids, {
           checklist: outcome.checklist ?? null,
+          projectPrFormat: outcome.projectPrFormat ?? false,
           pullRequestHead: outcome.pullRequestHead ?? null,
           pullRequestUrl: outcome.pullRequestUrl ?? null,
           roundFiles: outcome.roundFiles ?? [],

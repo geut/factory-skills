@@ -7,6 +7,7 @@ import { childInstructions, childToolList } from '../prompt.ts';
 import { formatFinding, latestReviews } from '../review/parse.ts';
 import type { IssueBox } from './checklist.ts';
 import { handoffSections, WRAPUP_HEADINGS } from './handoff.ts';
+import type { PrFormat } from './pr-format.ts';
 import { ticketTitle, titleExample } from './title.ts';
 
 // What wrap-up's input preparation captured before the agent runs.
@@ -20,6 +21,8 @@ export type WrapupPrepared = {
   // Why the tracker's checklist could not be read; null when it was.
   boxesUnread: string | null;
   contextPath: string | null;
+  // The pull request format the project asks for, at the base commit.
+  prFormat: PrFormat;
   // QA's screenshots from each task's latest passed QA validation.
   screenshots: Array<{ name: string; path: string; taskId: string }>;
   // Each task's QA test plan rows, such as `Task 01 AC1: e2e/filter.e2e.ts › survives a reload`.
@@ -35,6 +38,35 @@ function pullRequestSections(communication: Communication): string {
   return communication.verbosity === 'full'
     ? '## PR summary, ## Files, ## Tests, ## Decisions, ## Limitations, and ## Screenshots'
     : '## PR summary and ## Tests';
+}
+
+// How the agent writes the pull request body: in the project's own format,
+// which the controller leaves to it, or for the controller to build from the
+// handoff.
+function bodyInstructions(input: Pick<WrapupInput, 'communication' | 'prFormat'>): Array<string> {
+  const { prFormat } = input;
+  const extent = input.communication.verbosity === 'full' ? 'fully' : 'briefly';
+  switch (prFormat.kind) {
+    case 'default':
+      return [
+        `Open the pull request with your ## PR summary as its body. Once the controller accepts your handoff, it sets the body itself from ${pullRequestSections(input.communication)}, so write those for the pull request's reader.`,
+      ];
+    case 'template':
+      return [
+        `This project's pull request format is the template ${prFormat.path}, as of the base commit. Write the pull request body in it: keep every heading, in order, fill each section ${extent}, remove its <!-- --> hints, and add no other section and no attribution. Tick a checkbox only when your handoff's evidence supports it, and never delete one. The controller checks the headings and leaves the body to you.`,
+        'Template:',
+        prFormat.text.trimEnd(),
+      ];
+    case 'instructions':
+      return [
+        `This project's agent instructions (${prFormat.path}, as of the base commit) say how to write a pull request. Write the body that way, ${extent}, with no other section and no attribution. The controller leaves the body to you.`,
+        prFormat.text,
+      ];
+    default: {
+      const _exhaustive: never = prFormat;
+      return _exhaustive;
+    }
+  }
 }
 
 export type WrapupInput = {
@@ -54,6 +86,7 @@ export type WrapupInput = {
   minorFindings: Array<string>;
   model: string;
   planPath: string;
+  prFormat: PrFormat;
   pullRequests: boolean;
   // Each task's Verification lines from its latest valid review.
   reviewVerification: Array<string>;
@@ -113,6 +146,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           checklist: report.detail.checklist,
           kind: 'accept',
           notice: report.detail.usage,
+          projectPrFormat: report.detail.prFormat !== 'default',
           roundFiles: report.detail.roundFiles,
           rules: report.detail.rules,
           ...(report.detail.pullRequest === null
@@ -154,6 +188,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
       // Wrap-up runs on the work model.
       model: execution.policy.models.work,
       planPath: execution.planPath ?? '',
+      prFormat: prepared.prFormat,
       pullRequests: execution.policy.pullRequests,
       reviewVerification: notes.verification,
       screenshots: prepared.screenshots,
@@ -231,7 +266,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         ...(input.screenshots.length === 0
           ? []
           : [
-              input.communication.verbosity === 'full'
+              input.communication.verbosity === 'full' && input.prFormat.kind === 'default'
                 ? 'QA screenshots (add a ## Screenshots section after ## PR summary with each one; it goes in the pull request body):'
                 : 'QA screenshots (the pull request body leaves them out; tell the human which to add):',
               ...input.screenshots.map(
@@ -273,11 +308,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         input.pullRequests
           ? `codeHost.pullRequests is on: commit exactly the ## Files paths on the ticket branch, push it, and open or update the pull request. Its head must be your local HEAD. Title it exactly ${input.title}, with <summary> replaced by your one-line summary, when you create it and every time you edit it; pass the title to gh in single quotes.`
           : 'codeHost.pullRequests is off: do not commit or push; print the commands.',
-        ...(input.pullRequests && input.feedbackRound === null
-          ? [
-              `Open the pull request with your ## PR summary as its body. Once the controller accepts your handoff, it sets the body itself from ${pullRequestSections(input.communication)}, so write those for the pull request's reader.`,
-            ]
-          : []),
+        ...(input.pullRequests && input.feedbackRound === null ? bodyInstructions(input) : []),
         ...(input.communication.voice === 'developer'
           ? [
               `Write the ## PR summary, the ## Decisions, and the commit summary as the developer who owns this work, in the first person, without mentioning the factory or agents. Tone: ${input.communication.tone}`,

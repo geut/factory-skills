@@ -63,6 +63,7 @@ function host(
         ? null
         : {
             author: 'dpaez',
+            body: '',
             closedAt: null,
             headBranch: 'factory/proj-1',
             headSha: null,

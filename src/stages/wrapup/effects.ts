@@ -8,6 +8,7 @@ import type { InputContext, InputResult } from '../effects.ts';
 import { qaPaths, testPlan } from '../qa/criteria.ts';
 import { openBoxes, type IssueBox } from './checklist.ts';
 import type { WrapupPrepared } from './definition.ts';
+import { readPrFormat } from './pr-format.ts';
 
 function readText(file: string): string {
   try {
@@ -96,6 +97,13 @@ export async function prepareWrapupInput({
       boxes,
       boxesUnread,
       contextPath: inspection.contextPath,
+      prFormat:
+        snapshot.execution.worktreeBaseSha === null
+          ? { kind: 'default' }
+          : readPrFormat({
+              codeRoot: snapshot.execution.policy.codeRoot,
+              sha: snapshot.execution.worktreeBaseSha,
+            }),
       screenshots: deps
         .passedChecks('qa')
         .flatMap((check) =>
