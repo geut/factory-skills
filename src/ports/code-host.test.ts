@@ -317,6 +317,7 @@ test('setting a pull request body PATCHes it through the REST API, on stdin', as
   const writes: Array<{ args: Array<string>; input: string }> = [];
   const host = createGithubCodeHost(config, gh({}), async (args, input) => {
     writes.push({ args, input });
+    return '';
   });
   await host.setPullRequestBody(
     'https://github.com/geut/app/pull/9',
@@ -356,7 +357,15 @@ test('a write command runs without blocking, reads its stdin, and ends when stuc
     }),
     /got the body/,
   );
-  await runCommand({ args: ['-e', ''], command: node, stdin: 'ignored', timeoutMs: 10_000 });
+  assert.equal(
+    await runCommand({
+      args: ['-e', "process.stdout.write('[]')"],
+      command: node,
+      stdin: '',
+      timeoutMs: 10_000,
+    }),
+    '[]',
+  );
   // The event loop keeps running while the command runs.
   let ticks = 0;
   const timer = setInterval(() => {
@@ -377,4 +386,46 @@ test('a write command runs without blocking, reads its stdin, and ends when stuc
     runCommand({ args: [], command: 'factory-no-such-command', stdin: '', timeoutMs: 1000 }),
     /ENOENT/,
   );
+});
+
+test('a round comment is posted once under its key, and replaced on a retry', async () => {
+  let comments: Array<{ body: string; id: number }> = [{ body: 'Looks good.', id: 1 }];
+  const writes: Array<Array<string>> = [];
+  const host = createGithubCodeHost(config, gh({}), async (args, input) => {
+    writes.push(args);
+    if (args.includes('--paginate')) {
+      return JSON.stringify([comments]);
+    }
+    if (args.includes('POST')) {
+      comments = [...comments, { body: input, id: 2 }];
+    }
+    return '{}';
+  });
+  await host.commentOnPullRequest(
+    'https://github.com/geut/app/pull/9',
+    'feedback-round:1',
+    'Round 1.',
+  );
+  assert.deepEqual(writes.at(-1), [
+    'api',
+    '-X',
+    'POST',
+    'repos/geut/app/issues/9/comments',
+    '-F',
+    'body=@-',
+  ]);
+  assert.equal(comments[1]?.body, 'Round 1.\n\n<!-- factory:feedback-round:1 -->');
+  await host.commentOnPullRequest(
+    'https://github.com/geut/app/pull/9',
+    'feedback-round:1',
+    'Round 1, again.',
+  );
+  assert.deepEqual(writes.at(-1), [
+    'api',
+    '-X',
+    'PATCH',
+    'repos/geut/app/issues/comments/2',
+    '-F',
+    'body=@-',
+  ]);
 });

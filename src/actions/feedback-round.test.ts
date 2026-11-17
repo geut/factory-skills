@@ -55,6 +55,7 @@ function host(
   feedback: PullRequestFeedback,
 ): CodeHost {
   return {
+    commentOnPullRequest: unused,
     findPullRequest: unused,
     kind: 'github',
     pullRequest: () =>

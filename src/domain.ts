@@ -318,6 +318,8 @@ export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
   pullRequest: PullRequestInfo | null;
+  // The paths a feedback round's commits changed; empty for the first wrap-up.
+  roundFiles: Array<string>;
   // The project rule files the ticket changes, from its worktree's changes.
   rules: Array<string>;
   usage: string;
@@ -683,12 +685,13 @@ export type ActionRecord =
       name: string;
       runId: RunId;
     })
-  // A write to the ticket's pull request after wrap-up passes: its body, as
-  // the factory assembled it. Best effort, like a tracker update.
+  // A write to the ticket's pull request after wrap-up passes: its body, or a
+  // comment kept under a key, as the factory assembled them. Best effort, like
+  // a tracker update.
   | (ActionBase & {
       attentionReplyId: null;
       attentionRequestId: null;
-      body: string;
+      change: PullRequestChange;
       kind: 'update_pull_request';
       pullRequestUrl: string;
       runId: RunId;
@@ -726,6 +729,12 @@ export type ActionRecord =
       runId: null;
       update: 'cancelled' | 'handoff' | 'paused' | 'started';
     });
+
+// What an update_pull_request action writes. A comment's key finds it again,
+// so a retry replaces it instead of posting a second one.
+export type PullRequestChange =
+  | { body: string; kind: 'body' }
+  | { key: string; kind: 'comment'; markdown: string };
 
 export type FactorySnapshot = {
   actions: Array<ActionRecord>;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '../domain.ts';
-import { wrapupRunning } from '../stories/scenarios.ts';
+import { feedbackRoundWorking, wrapupRunning } from '../stories/scenarios.ts';
 import { errorReport, failedReport, passedReport } from '../validation/report.ts';
 import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
 import { parseFactoryCommand } from './parse.ts';
@@ -109,7 +109,13 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
     report: passedReport(
       WRAPUP_VALIDATOR_VERSION,
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
-      { checklist: noIssue, pullRequest: null, rules: [], usage: 'Stage  Sess  Input' },
+      {
+        checklist: noIssue,
+        pullRequest: null,
+        roundFiles: [],
+        rules: [],
+        usage: 'Stage  Sess  Input',
+      },
     ),
     runId,
     stage: 'wrapup' as const,
@@ -158,6 +164,7 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
           ],
         },
         pullRequest: null,
+        roundFiles: [],
         rules: [],
         usage: '',
       }),
@@ -207,6 +214,7 @@ function handoffUpdate(communication: FactorySnapshot['execution']['policy']['co
           open: [],
         },
         pullRequest: null,
+        roundFiles: [],
         rules: [],
         usage: '',
       }),
@@ -256,6 +264,7 @@ function acceptWithPullRequest(setup: (snapshot: FactorySnapshot) => void) {
           title: 'Persist the filter',
           url: 'https://github.com/geut/app/pull/9',
         },
+        roundFiles: [],
         rules: [],
         usage: '',
       }),
@@ -280,12 +289,38 @@ test('an accepted wrap-up queues the pull request body it built, once and only w
   assert.equal(more.length, 0);
   assert.equal(queued?.pullRequestUrl, 'https://github.com/geut/app/pull/9');
   assert.match(queued?.idempotencyKey ?? '', /^pr-body:/);
-  assert.match(queued?.body ?? '', /Opened by the factory for /);
-  assert.doesNotMatch(queued?.body ?? '', /## Files/);
+  const body = queued?.change.kind === 'body' ? queued.change.body : '';
+  assert.match(body, /Opened by the factory for /);
+  assert.doesNotMatch(body, /## Files/);
   // Pull requests off: nothing to set.
   assert.deepEqual(
     acceptWithPullRequest(() => {}),
     [],
+  );
+});
+
+test('a feedback round’s wrap-up comments on the pull request and leaves its body alone', () => {
+  const round = feedbackRoundWorking().snapshot.tasks.find((item) => item.taskId === 'F1');
+  const writes = acceptWithPullRequest((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    if (round !== undefined) {
+      snapshot.tasks.push({ ...round, status: 'done' });
+    }
+  });
+  assert.deepEqual(
+    writes.map((item) => [item.change.kind, item.idempotencyKey.split(':')[0]]),
+    [['comment', 'pr-round']],
+  );
+  const change = writes[0]?.change;
+  assert.equal(change?.kind === 'comment' ? change.key : null, 'feedback-round:1');
+  const markdown = change?.kind === 'comment' ? change.markdown : '';
+  assert.match(
+    markdown,
+    /^The factory finished feedback round 1 in \[abc\]\(https:\/\/github\.com\/geut\/app\/pull\/9\/commits\/abc\)\./,
+  );
+  assert.match(
+    markdown,
+    /^- \[F2 \(dpaez on src\/lib\/factory\/ticket-actions\.ts:42\)\]\(.*\): left as is: review gave no verdict$/m,
   );
 });
 
@@ -298,6 +333,7 @@ test('an accepted wrap-up names the project rule files the ticket changes', () =
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
         pullRequest: null,
+        roundFiles: [],
         rules: ['AGENTS.md'],
         usage: '',
       }),
@@ -359,7 +395,7 @@ function failedWith(
       status: 'pending',
     });
   }
-  const detail = { checklist: noIssue, pullRequest: null, rules: [], usage: '' };
+  const detail = { checklist: noIssue, pullRequest: null, roundFiles: [], rules: [], usage: '' };
   return (
     reduce({
       event: {

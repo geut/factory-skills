@@ -22,6 +22,7 @@ import type {
   FactorySnapshot,
   IdSource,
   InputReady,
+  PullRequestChange,
   RunId,
   RunRecord,
   SessionRecord,
@@ -126,12 +127,12 @@ export async function dispatchPending(input: {
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
-  // Replaces a pull request's body on the code host.
-  setPullRequestBody: (url: string, body: string) => Promise<void>;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
   tracker: () => ConfiguredTracker | null;
+  // Writes a change to a pull request on the code host.
+  updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
 }): Promise<void> {
   for (;;) {
     if (input.stopped()) {
@@ -182,8 +183,8 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
-    setPullRequestBody: (url: string, body: string) => Promise<void>;
     tracker: () => ConfiguredTracker | null;
+    updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
   },
   action: ActionRecord,
   snapshot: FactorySnapshot,
@@ -519,21 +520,21 @@ async function updateTicketSource(
   return null;
 }
 
-// Sets the pull request's body. A code host that keeps failing leaves the
-// action failed, which the API shows as a warning; the ticket stays ready for
-// handoff either way.
+// Writes the pull request's body or a comment on it. A code host that keeps
+// failing leaves the action failed, which the API shows as a warning; the
+// ticket stays ready for handoff either way.
 async function updatePullRequest(
   input: {
     db: DatabaseSync;
     now: () => string;
-    setPullRequestBody: (url: string, body: string) => Promise<void>;
+    updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
   },
   action: Extract<ActionRecord, { kind: 'update_pull_request' }>,
 ): Promise<RunId | null> {
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
-      await input.setPullRequestBody(action.pullRequestUrl, action.body);
+      await input.updatePullRequest(action.pullRequestUrl, action.change);
       finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
       return null;
     } catch (error: unknown) {
@@ -543,13 +544,9 @@ async function updatePullRequest(
       }
     }
   }
-  finishLeasedAction(
-    input.db,
-    action.id,
-    input.now(),
-    'failed',
-    `Pull request body not set: ${failure}`,
-  );
+  const what =
+    action.change.kind === 'body' ? 'Pull request body not set' : 'Pull request comment not posted';
+  finishLeasedAction(input.db, action.id, input.now(), 'failed', `${what}: ${failure}`);
   return null;
 }
 

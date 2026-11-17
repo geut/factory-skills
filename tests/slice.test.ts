@@ -1965,6 +1965,7 @@ function codeHostWith(
     url: 'https://github.com/geut/factory-skills/pull/7',
   });
   return {
+    commentOnPullRequest: async () => undefined,
     findPullRequest: (branch) => {
       found.push(branch);
       return state === null ? null : pullRequest(branch);

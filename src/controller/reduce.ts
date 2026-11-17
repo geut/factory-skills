@@ -27,8 +27,10 @@ import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts'
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import { runOutput } from '../stages/output.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
+import { latestReviews } from '../stages/review/parse.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { pullRequestBody } from '../stages/wrapup/pr-body.ts';
+import { roundComment } from '../stages/wrapup/round-comment.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 import {
@@ -1154,10 +1156,17 @@ function handOff(
   run: RunRecord,
   notice: string,
   ids: IdSource,
-  pullRequestUrl: string | null,
-  checklist: IssueChecklist | null,
-  rules: Array<string>,
+  closing: {
+    checklist: IssueChecklist | null;
+    // The pull request wrap-up checked, and its head after the push.
+    pullRequestHead: string | null;
+    pullRequestUrl: string | null;
+    // What a feedback round changed.
+    roundFiles: Array<string>;
+    rules: Array<string>;
+  },
 ): Reduction {
+  const { checklist, pullRequestUrl, rules } = closing;
   // Pi always gets the factory's own wording: it is not outward.
   const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine('factory', rules)];
   const ref = snapshot.ticket.displayRef;
@@ -1195,20 +1204,44 @@ function handOff(
     },
   );
   const { communication } = snapshot.execution.policy;
+  const round = feedbackRounds(snapshot.tasks);
   // The factory sets the pull request's body from the accepted handoff, once:
-  // a feedback round leaves it as the first pass wrote it.
-  if (
-    pullRequestUrl !== null &&
-    snapshot.execution.policy.pullRequests &&
-    feedbackRounds(snapshot.tasks) === 0
-  ) {
+  // a feedback round leaves it as the first pass wrote it, and comments.
+  if (pullRequestUrl !== null && snapshot.execution.policy.pullRequests && round > 0) {
+    const taskId = feedbackTaskId(round);
+    const feedback = snapshot.tasks.find((item) => item.taskId === taskId)?.feedback ?? null;
+    if (feedback !== null && closing.pullRequestHead !== null) {
+      snapshot.actions.push({
+        ...base,
+        change: {
+          key: `feedback-round:${round}`,
+          kind: 'comment',
+          markdown: roundComment({
+            communication,
+            files: closing.roundFiles,
+            head: closing.pullRequestHead,
+            items: feedback.items,
+            pullRequestUrl,
+            round,
+            verification:
+              latestReviews(snapshot).find((review) => review.taskId === taskId)?.result
+                .verification ?? [],
+          }),
+        },
+        id: ids.action(),
+        idempotencyKey: `pr-round:${run.id}`,
+        kind: 'update_pull_request',
+        pullRequestUrl,
+      });
+    }
+  }
+  if (pullRequestUrl !== null && snapshot.execution.policy.pullRequests && round === 0) {
     snapshot.actions.push({
       ...base,
-      body: pullRequestBody({
-        communication,
-        displayRef: ref,
-        handoff: runOutput(run),
-      }),
+      change: {
+        body: pullRequestBody({ communication, displayRef: ref, handoff: runOutput(run) }),
+        kind: 'body',
+      },
       id: ids.action(),
       idempotencyKey: `pr-body:${run.id}`,
       kind: 'update_pull_request',
@@ -1344,16 +1377,13 @@ function applyOutcome(
       }
       const step = nextStep(snapshot, session.stage, task?.taskId ?? null);
       if (step.kind === 'handoff') {
-        return handOff(
-          snapshot,
-          session,
-          run,
-          outcome.notice ?? '',
-          ids,
-          outcome.pullRequestUrl ?? null,
-          outcome.checklist ?? null,
-          outcome.rules ?? [],
-        );
+        return handOff(snapshot, session, run, outcome.notice ?? '', ids, {
+          checklist: outcome.checklist ?? null,
+          pullRequestHead: outcome.pullRequestHead ?? null,
+          pullRequestUrl: outcome.pullRequestUrl ?? null,
+          roundFiles: outcome.roundFiles ?? [],
+          rules: outcome.rules ?? [],
+        });
       }
       const sameTask = step.kind === 'stage' && task !== null && step.taskId === task.taskId;
       if (task !== null && !sameTask) {

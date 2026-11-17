@@ -113,10 +113,16 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           checklist: report.detail.checklist,
           kind: 'accept',
           notice: report.detail.usage,
+          roundFiles: report.detail.roundFiles,
           rules: report.detail.rules,
           ...(report.detail.pullRequest === null
             ? {}
-            : { pullRequestUrl: report.detail.pullRequest.url }),
+            : {
+                pullRequestUrl: report.detail.pullRequest.url,
+                ...(report.detail.pullRequest.headSha === null
+                  ? {}
+                  : { pullRequestHead: report.detail.pullRequest.headSha }),
+              }),
         }
       : { failures: report.failures, kind: 'correct' },
   contract,
@@ -280,7 +286,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
         ...(input.feedbackRound === null
           ? []
           : [
-              `This wrap-up closes feedback round ${input.feedbackRound} (task F${input.feedbackRound}) on the open pull request. Commit the round's changes as a new commit on top of the branch and push it to the same pull request: no amend, rebase, or force-push, and no new pull request. Update the pull request's body to say what the round changed, keep its title, and keep ## Files listing every path the ticket changes.`,
+              `This wrap-up closes feedback round ${input.feedbackRound} (task F${input.feedbackRound}) on the open pull request. Commit the round's changes as a new commit on top of the branch and push it to the same pull request: no amend, rebase, or force-push, and no new pull request. Leave the pull request's body and title as they are: the controller comments on the pull request with what the round did. Keep ## Files listing every path the ticket changes.`,
             ]),
       ].join('\n'),
   },
