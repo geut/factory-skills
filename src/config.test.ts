@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -277,31 +277,63 @@ test('FACTORY.json communication reads with defaults, and a bad value stops the 
   );
 });
 
-test('writing communication replaces only that block, keeps the indentation, and refuses a broken file', () => {
+const minimal = { tone: 'dry', verbosity: 'minimal', voice: 'developer' } as const;
+
+function factoryRoot(text: string) {
   const root = mkdtempSync(path.join(tmpdir(), 'factory-config-'));
   const file = path.join(root, 'FACTORY.json');
-  writeFileSync(
-    file,
-    '{\n\t"name": "catalog",\n\t"models": { "review": "review-model", "work": "work-model" },\n\t"communication": { "verbosity": "full" }\n}\n',
+  writeFileSync(file, text);
+  return { file, root };
+}
+
+test('writing communication changes only that block; every other byte stays', () => {
+  const { file, root } = factoryRoot(
+    '{\n\t"name": "catalog",\n\t"communication": {\n\t\t"verbosity": "full"\n\t},\n\t"server": { "host": "127.0.0.1", "port": 7731 },\n\t"models": { "review": "review-model", "work": "work-model" }\n}\n',
   );
-  const saved = writeCommunication(root, { tone: 'dry', verbosity: 'minimal', voice: 'developer' });
-  assert.equal(saved.kind, 'ok');
-  const text = readFileSync(file, 'utf8');
-  assert.match(text, /^\{\n\t"name": "catalog",\n\t"models": \{/);
-  assert.deepEqual(JSON.parse(text), {
-    communication: { tone: 'dry', verbosity: 'minimal', voice: 'developer' },
-    models: { review: 'review-model', work: 'work-model' },
-    name: 'catalog',
-  });
+  assert.equal(writeCommunication(root, minimal).kind, 'ok');
+  assert.equal(
+    readFileSync(file, 'utf8'),
+    '{\n\t"name": "catalog",\n\t"communication": { "verbosity": "minimal", "voice": "developer", "tone": "dry" },\n\t"server": { "host": "127.0.0.1", "port": 7731 },\n\t"models": { "review": "review-model", "work": "work-model" }\n}\n',
+  );
   const reread = readFactoryConfig(root);
   assert.equal(reread.kind === 'ok' ? reread.config.communication.voice : null, 'developer');
   assert.deepEqual(readdirSync(root), ['FACTORY.json']);
+  rmSync(root, { force: true, recursive: true });
+});
 
-  // A FACTORY.json that no longer parses is left as it is.
+test('a FACTORY.json without communication gets it as its last key', () => {
+  const { file, root } = factoryRoot(
+    '{\n  "name": "a \\"communication\\": {} name",\n  "models": { "review": "r", "work": "w" }\n}\n',
+  );
+  assert.equal(writeCommunication(root, minimal).kind, 'ok');
+  assert.equal(
+    readFileSync(file, 'utf8'),
+    '{\n  "name": "a \\"communication\\": {} name",\n  "models": { "review": "r", "work": "w" },\n  "communication": { "verbosity": "minimal", "voice": "developer", "tone": "dry" }\n}\n',
+  );
+  rmSync(root, { force: true, recursive: true });
+});
+
+test('refused settings, or a FACTORY.json that would not parse, change nothing', () => {
   const broken = '{ "models": { "work": "same", "review": "same" } }\n';
-  writeFileSync(file, broken);
-  const refused = writeCommunication(root, { tone: 'dry', verbosity: 'minimal', voice: 'factory' });
-  assert.equal(refused.kind, 'error');
+  const { file, root } = factoryRoot(broken);
+  assert.equal(writeCommunication(root, minimal).kind, 'error');
   assert.equal(readFileSync(file, 'utf8'), broken);
+  const refused = writeCommunication(root, { ...minimal, voice: 'robot' });
+  assert.match(refused.kind === 'error' ? refused.message : '', /Invalid communication settings/);
+  assert.equal(readFileSync(file, 'utf8'), broken);
+  rmSync(root, { force: true, recursive: true });
+});
+
+test('a write that fails throws, leaves FACTORY.json as it was, and no temporary file', () => {
+  const original = '{ "models": { "review": "r", "work": "w" } }\n';
+  const { file, root } = factoryRoot(original);
+  chmodSync(root, 0o555);
+  try {
+    assert.throws(() => writeCommunication(root, minimal), /EACCES/);
+  } finally {
+    chmodSync(root, 0o755);
+  }
+  assert.equal(readFileSync(file, 'utf8'), original);
+  assert.deepEqual(readdirSync(root), ['FACTORY.json']);
   rmSync(root, { force: true, recursive: true });
 });

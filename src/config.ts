@@ -1,6 +1,8 @@
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { type Communication, readCommunication } from './communication.ts';
+import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
+import { Communication, readCommunication, withCommunication } from './communication.ts';
 import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 import {
@@ -726,31 +728,54 @@ export function readFactoryConfig(factoryRoot: string): ConfigResult {
     : parseFactoryConfig(read.value);
 }
 
-// Replaces FACTORY.json's `communication` block and leaves every other key as
-// it was. The file stays the only source of the settings (ADR-004). It is
-// written beside FACTORY.json and renamed over it, so a reader never sees half
-// a file; a FACTORY.json that would not parse afterwards is left alone.
-export function writeCommunication(
-  factoryRoot: string,
-  communication: Communication,
-): ConfigResult {
+// FACTORY.json around a rewrite: any object before, and one whose block is
+// complete after.
+const FactoryJsonBefore = z.looseObject({ communication: z.unknown().optional() });
+const FactoryJsonAfter = z.looseObject({ communication: Communication });
+
+// Replaces FACTORY.json's `communication` block and leaves every other byte as
+// it was. The file stays the only source of the settings (ADR-004). A request
+// the rules refuse, or a FACTORY.json that would not parse afterwards, changes
+// nothing. The new text goes to a file beside FACTORY.json that is renamed over
+// it, so a reader never sees half a file; a write that fails removes that file
+// and throws, and FACTORY.json stays as it was.
+export function writeCommunication(factoryRoot: string, input: unknown): ConfigResult {
+  const communication = Communication.safeParse(input);
+  if (!communication.success) {
+    return {
+      kind: 'error',
+      message: `Invalid communication settings: ${z.prettifyError(communication.error)}`,
+    };
+  }
   const file = path.join(factoryRoot, 'FACTORY.json');
   const read = readFactoryJson(file);
   if ('message' in read) {
     return { kind: 'error', message: read.message };
   }
-  if (!isRecord(read.value)) {
+  const before = FactoryJsonBefore.safeParse(read.value);
+  if (!before.success) {
     return { kind: 'error', message: 'FACTORY.json must be an object.' };
   }
-  const next = { ...read.value, communication };
-  const checked = parseFactoryConfig(next);
+  const text = withCommunication(read.text, communication.data);
+  // The edit must change exactly the block: anything else is a bug here, and
+  // the file is left alone.
+  const after = FactoryJsonAfter.parse(JSON.parse(text));
+  const { communication: written, ...rest } = after;
+  const { communication: _replaced, ...kept } = before.data;
+  if (!isDeepStrictEqual(written, communication.data) || !isDeepStrictEqual(rest, kept)) {
+    throw new Error('Rewriting FACTORY.json communication changed more than the block.');
+  }
+  const checked = parseFactoryConfig(after);
   if (checked.kind === 'error') {
     return checked;
   }
-  // Keep the file's indentation: a tab, or the spaces of its first key.
-  const indent = /^\{\r?\n([\t ]+)"/.exec(read.text)?.[1] ?? '  ';
   const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(next, null, indent)}\n`);
-  renameSync(temporary, file);
+  try {
+    writeFileSync(temporary, text);
+    renameSync(temporary, file);
+  } catch (error: unknown) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
   return checked;
 }

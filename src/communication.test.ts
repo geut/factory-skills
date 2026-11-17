@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_COMMUNICATION, readCommunication, storedCommunication } from './communication.ts';
+import {
+  DEFAULT_COMMUNICATION,
+  readCommunication,
+  storedCommunication,
+  withCommunication,
+} from './communication.ts';
 
 test('FACTORY.json communication takes defaults for what it leaves out', () => {
   assert.deepEqual(readCommunication(undefined), DEFAULT_COMMUNICATION);
@@ -46,4 +51,19 @@ test('an execution stored before communication settings communicates as before',
   assert.deepEqual(storedCommunication({ verbosity: 'loud' }), DEFAULT_COMMUNICATION);
   const set = { tone: 'dry', verbosity: 'standard', voice: 'developer' } as const;
   assert.deepEqual(storedCommunication(set), set);
+});
+
+test('the communication block is spliced in place, past strings and nested values', () => {
+  const settings = { tone: 'say "hi" {ok}', verbosity: 'standard', voice: 'factory' } as const;
+  const block = String.raw`{ "verbosity": "standard", "voice": "factory", "tone": "say \"hi\" {ok}" }`;
+  // An empty object gets the key on its own line.
+  assert.equal(withCommunication('{}\n', settings), `{\n  "communication": ${block}\n}\n`);
+  // A key named communication inside another block is not the top-level one.
+  const nested =
+    '{"stages": {"communication": [1, {"x": "}"}]}, "communication": null, "name": "n"}';
+  assert.equal(
+    withCommunication(nested, settings),
+    `{"stages": {"communication": [1, {"x": "}"}]}, "communication": ${block}, "name": "n"}`,
+  );
+  assert.deepEqual(JSON.parse(withCommunication(nested, settings)).communication, settings);
 });

@@ -75,3 +75,98 @@ export function storedCommunication(value: unknown): Communication {
   const parsed = Communication.safeParse(value);
   return parsed.success ? parsed.data : DEFAULT_COMMUNICATION;
 }
+
+// FACTORY.json's text with its top-level `communication` set to these settings
+// on one line, and every other byte as it was: the block is replaced where it
+// stands, or added as the last key. `text` must already parse as a JSON object.
+export function withCommunication(text: string, communication: Communication): string {
+  const block = `{ "verbosity": ${JSON.stringify(communication.verbosity)}, "voice": ${JSON.stringify(communication.voice)}, "tone": ${JSON.stringify(communication.tone)} }`;
+  const span = topLevelValue(text, 'communication');
+  if (span !== null) {
+    return `${text.slice(0, span.start)}${block}${text.slice(span.end)}`;
+  }
+  const close = text.lastIndexOf('}');
+  const before = text.slice(0, close).trimEnd();
+  // The file's indentation: a tab, or the spaces of its first key.
+  const indent = /^\{\r?\n([\t ]+)"/.exec(text)?.[1] ?? '  ';
+  const separator = before.endsWith('{') ? '' : ',';
+  return `${before}${separator}\n${indent}"communication": ${block}\n${text.slice(close)}`;
+}
+
+// Where a top-level key's value starts and ends in a JSON object's text.
+function topLevelValue(text: string, key: string): { end: number; start: number } | null {
+  let depth = 0;
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"') {
+      const end = stringEnd(text, index);
+      const colon = skipSpace(text, end);
+      if (depth === 1 && text[colon] === ':' && JSON.parse(text.slice(index, end)) === key) {
+        const start = skipSpace(text, colon + 1);
+        return { end: valueEnd(text, start), start };
+      }
+      index = end;
+      continue;
+    }
+    if (char === '{' || char === '[') {
+      depth += 1;
+    } else if (char === '}' || char === ']') {
+      depth -= 1;
+    }
+    index += 1;
+  }
+  return null;
+}
+
+// The index just past the string that opens at `start`.
+function stringEnd(text: string, start: number): number {
+  let index = start + 1;
+  while (index < text.length && text[index] !== '"') {
+    index += text[index] === '\\' ? 2 : 1;
+  }
+  return index + 1;
+}
+
+function skipSpace(text: string, start: number): number {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index] ?? '')) {
+    index += 1;
+  }
+  return index;
+}
+
+// The index just past the value that starts at `start`.
+function valueEnd(text: string, start: number): number {
+  const first = text[start];
+  if (first === '"') {
+    return stringEnd(text, start);
+  }
+  if (first !== '{' && first !== '[') {
+    // A number, true, false, or null runs to the next delimiter.
+    let index = start;
+    while (index < text.length && !/[\s,}\]]/.test(text[index] ?? '')) {
+      index += 1;
+    }
+    return index;
+  }
+  let depth = 0;
+  let index = start;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"') {
+      index = stringEnd(text, index);
+      continue;
+    }
+    if (char === '{' || char === '[') {
+      depth += 1;
+    } else if (char === '}' || char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+    index += 1;
+  }
+  return index;
+}
