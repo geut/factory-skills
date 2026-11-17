@@ -1,3 +1,4 @@
+import { DEFAULT_COMMUNICATION } from '../communication.ts';
 import { DEFAULT_LIMITS } from '../config.ts';
 import {
   actionId,
@@ -68,6 +69,7 @@ export function blank(input: { displayRef?: string; title?: string } = {}): Fact
       policy: {
         codeHostRepo: null,
         codeRoot: '/repo',
+        communication: DEFAULT_COMMUNICATION,
         labels: { map: {} },
         limits: { ...DEFAULT_LIMITS },
         models: { plan: 'qwen3.8-max', review: 'kimi-k3', work: 'qwen3.8-max' },

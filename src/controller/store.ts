@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { storedCommunication } from '../communication.ts';
 import { DEFAULT_LIMITS, readStageSettings, type InternalLabel, type Limits } from '../config.ts';
 import {
   RUN_PURPOSES,
@@ -177,6 +178,7 @@ function parsePolicy(raw: string): Policy {
   return {
     codeHostRepo: typeof value['codeHostRepo'] === 'string' ? value['codeHostRepo'] : null,
     codeRoot: value['codeRoot'],
+    communication: storedCommunication(value['communication']),
     labels: parseLabelMap(labels['map']),
     // A limit the execution's policy does not name keeps its default.
     limits: Object.fromEntries(

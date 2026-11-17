@@ -17,7 +17,8 @@ import { createRouter } from '../src/api/router.ts';
 import { apiRoutes } from '../src/api/routes.ts';
 import { StatsExportRunLine, StatsExportTicketLine } from '../src/api/stats.ts';
 import { unusedCommands } from '../src/api/testing.ts';
-import { DEFAULT_LIMITS } from '../src/config.ts';
+import { DEFAULT_COMMUNICATION } from '../src/communication.ts';
+import { DEFAULT_LIMITS, writeCommunication } from '../src/config.ts';
 import { factoryRootOf } from '../src/controller/keys.ts';
 import { createFactoryService } from '../src/controller/service.ts';
 import { applyControllerEvent, loadGeneration } from '../src/controller/store.ts';
@@ -437,6 +438,7 @@ test('restart dispatches a reserved launch once and does not relaunch a running 
   const policy: Policy = {
     codeHostRepo: null,
     codeRoot,
+    communication: DEFAULT_COMMUNICATION,
     labels: { map: {} },
     limits: { ...DEFAULT_LIMITS },
     models: { plan: 'work-model', review: 'review-model', work: 'work-model' },
@@ -2188,6 +2190,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        saveCommunication: null,
         trackerInventory: null,
         webhooks: null,
       },
@@ -2531,6 +2534,48 @@ test('a failing worktree setup stops the ticket with its output, and retry reuse
   writeFileSync(flag, '');
   await service.command('retry proj-123');
   await waitFor(() => runtime.launches.some((launch) => launch.stage === 'plan'));
+});
+
+test('a ticket keeps the communication settings it started with; a later ticket takes the new ones', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  writeFileSync(path.join(codeRoot, 'proj-124.md'), '# Sort the list\n');
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    runtime: new FakeRuntime(),
+  });
+  await service.command('start proj-123.md');
+  const saved = writeCommunication(factoryRoot, {
+    tone: 'terse',
+    verbosity: 'minimal',
+    voice: 'developer',
+  });
+  assert.equal(saved.kind, 'ok');
+  await service.command('start proj-124.md');
+  const db = openStateDatabase(factoryRoot);
+  const communication = (title: string) =>
+    JSON.parse(
+      String(
+        db
+          .prepare(
+            `SELECT e.policy_json FROM ticket_executions e JOIN tickets t ON t.id = e.ticket_id WHERE t.title = ?`,
+          )
+          .get(title)?.['policy_json'],
+      ),
+    ).communication;
+  assert.deepEqual(communication('Remember the filter'), {
+    tone: 'succinct, technical, to the point',
+    verbosity: 'full',
+    voice: 'factory',
+  });
+  assert.deepEqual(communication('Sort the list'), {
+    tone: 'terse',
+    verbosity: 'minimal',
+    voice: 'developer',
+  });
+  db.close();
 });
 
 // A code host whose open pull request has one review thread to address.

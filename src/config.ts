@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { type Communication, readCommunication } from './communication.ts';
 import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 import {
@@ -125,6 +126,8 @@ export const DEFAULT_SYNC_MINUTES = 10;
 
 export type FactoryConfig = {
   codeHost: CodeHostConfig | null;
+  // How much the factory writes outside, and in whose voice (ADR-004).
+  communication: Communication;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
@@ -403,9 +406,15 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     return settings;
   }
 
+  const communication = readCommunication(value['communication']);
+  if (typeof communication === 'string') {
+    return { kind: 'error', message: communication };
+  }
+
   return {
     config: {
       codeHost,
+      communication,
       labels,
       limits,
       models: { plan, review, work },
@@ -694,22 +703,54 @@ export function readStageSettings(
   return { kind: 'ok', stages: read };
 }
 
-export function readFactoryConfig(factoryRoot: string): ConfigResult {
-  const file = path.join(factoryRoot, 'FACTORY.json');
+function readFactoryJson(file: string): { text: string; value: unknown } | { message: string } {
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
   } catch {
     return {
-      kind: 'error',
       message: `Missing ${file}. Create FACTORY.json with models.work and models.review before /factory start.`,
     };
   }
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return { text, value: JSON.parse(text) };
   } catch {
-    return { kind: 'error', message: `${file} is not valid JSON.` };
+    return { message: `${file} is not valid JSON.` };
   }
-  return parseFactoryConfig(parsed);
+}
+
+export function readFactoryConfig(factoryRoot: string): ConfigResult {
+  const read = readFactoryJson(path.join(factoryRoot, 'FACTORY.json'));
+  return 'message' in read
+    ? { kind: 'error', message: read.message }
+    : parseFactoryConfig(read.value);
+}
+
+// Replaces FACTORY.json's `communication` block and leaves every other key as
+// it was. The file stays the only source of the settings (ADR-004). It is
+// written beside FACTORY.json and renamed over it, so a reader never sees half
+// a file; a FACTORY.json that would not parse afterwards is left alone.
+export function writeCommunication(
+  factoryRoot: string,
+  communication: Communication,
+): ConfigResult {
+  const file = path.join(factoryRoot, 'FACTORY.json');
+  const read = readFactoryJson(file);
+  if ('message' in read) {
+    return { kind: 'error', message: read.message };
+  }
+  if (!isRecord(read.value)) {
+    return { kind: 'error', message: 'FACTORY.json must be an object.' };
+  }
+  const next = { ...read.value, communication };
+  const checked = parseFactoryConfig(next);
+  if (checked.kind === 'error') {
+    return checked;
+  }
+  // Keep the file's indentation: a tab, or the spaces of its first key.
+  const indent = /^\{\r?\n([\t ]+)"/.exec(read.text)?.[1] ?? '  ';
+  const temporary = `${file}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(next, null, indent)}\n`);
+  renameSync(temporary, file);
+  return checked;
 }

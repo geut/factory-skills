@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
-import { parseFactoryConfig, type ConfigResult } from '../config.ts';
+import {
+  parseFactoryConfig,
+  readFactoryConfig,
+  writeCommunication,
+  type ConfigResult,
+} from '../config.ts';
 import { factoryIdentity } from '../controller/facts.ts';
 import { openStateDatabase } from '../state/database.ts';
+import type { ApiContext } from './route.ts';
 import { createRouter } from './router.ts';
 import { apiRoutes } from './routes.ts';
 import { unusedCommands } from './testing.ts';
@@ -18,7 +24,10 @@ after(() => {
   }
 });
 
-async function serveWith(config: ConfigResult) {
+async function serveWith(
+  config: ConfigResult | (() => ConfigResult),
+  saveCommunication: ApiContext['saveCommunication'] = null,
+) {
   const db = openStateDatabase(mkdtempSync(path.join(tmpdir(), 'factory-api-')), { create: true });
   const server = createServer(
     createRouter({
@@ -27,9 +36,10 @@ async function serveWith(config: ConfigResult) {
         commands: unusedCommands,
         db,
         events: null,
-        factoryConfig: () => config,
+        factoryConfig: typeof config === 'function' ? config : () => config,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        saveCommunication,
         trackerInventory: null,
         webhooks: null,
       },
@@ -57,6 +67,11 @@ test('the factory route lists every stage in flow order, and which are on', asyn
   const response = await fetch(`${base}/v1/factory`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
+    communication: {
+      tone: 'succinct, technical, to the point',
+      verbosity: 'full',
+      voice: 'factory',
+    },
     factoryId,
     name: 'catalog',
     stages: [
@@ -95,4 +110,53 @@ test('a FACTORY.json the server cannot read is a problem that keeps its paths in
   const response = await fetch(`${base}/v1/factory`);
   assert.equal(response.status, 500);
   assert.doesNotMatch(JSON.stringify(await response.json()), /\/srv\/app/);
+});
+
+test('PUT /v1/factory/communication rewrites FACTORY.json, and GET reads it back', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-api-root-'));
+  const file = path.join(root, 'FACTORY.json');
+  writeFileSync(
+    file,
+    `${JSON.stringify({ models: { review: 'review-model', work: 'work-model' }, name: 'catalog' }, null, 2)}\n`,
+  );
+  const { base } = await serveWith(
+    () => readFactoryConfig(root),
+    (communication) => writeCommunication(root, communication),
+  );
+  const put = (body: unknown) =>
+    fetch(`${base}/v1/factory/communication`, {
+      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json' },
+      method: 'PUT',
+    });
+  const settings = { tone: 'terse, lowercase', verbosity: 'standard', voice: 'developer' };
+  const saved = await put(settings);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), settings);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {
+    communication: settings,
+    models: { review: 'review-model', work: 'work-model' },
+    name: 'catalog',
+  });
+  const read = (await (await fetch(`${base}/v1/factory`)).json()) as { communication: unknown };
+  assert.deepEqual(read.communication, settings);
+
+  // The whole block, by the same rules as the file; a refusal changes nothing.
+  const before = readFileSync(file, 'utf8');
+  const refused = await put({ verbosity: 'loud', voice: 'developer' });
+  assert.equal(refused.status, 400);
+  const problem = (await refused.json()) as { errors: Array<{ path: string }>; type: string };
+  assert.equal(problem.type, 'validation_error');
+  assert.deepEqual(problem.errors.map((error) => error.path).sort(), [
+    'body.tone',
+    'body.verbosity',
+  ]);
+  assert.equal(readFileSync(file, 'utf8'), before);
+});
+
+test('setting communication needs an act token', () => {
+  const route = apiRoutes.find(
+    (item) => item.method === 'PUT' && item.path === '/v1/factory/communication',
+  );
+  assert.equal(route?.scope, 'act');
 });

@@ -8,7 +8,12 @@ import { buildOpenApiDocument } from '../api/openapi.ts';
 import { ProblemError } from '../api/problem.ts';
 import { createRouter } from '../api/router.ts';
 import { apiRoutes } from '../api/routes.ts';
-import { DEFAULT_SYNC_MINUTES, readFactoryConfig, type LinearTrackerConfig } from '../config.ts';
+import {
+  DEFAULT_SYNC_MINUTES,
+  readFactoryConfig,
+  writeCommunication,
+  type LinearTrackerConfig,
+} from '../config.ts';
 import {
   createFactoryService,
   factoryPaths,
@@ -306,6 +311,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         factoryConfig: () => readFactoryConfig(factoryRoot),
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+        saveCommunication: (communication) => writeCommunication(factoryRoot, communication),
         trackerInventory: async () => {
           const current = readFactoryConfig(factoryRoot);
           const configured = current.kind === 'ok' ? current.config.tracker : null;

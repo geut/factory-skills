@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Communication } from '../communication.ts';
 import { factoryIdentity } from '../controller/facts.ts';
 import { flowOrder, stageEnabled } from '../stages/flow.ts';
 import { stageNames, stages } from '../stages/index.ts';
@@ -24,6 +25,10 @@ const FactoryStage = z
 
 const Factory = z
   .object({
+    communication: Communication.meta({
+      description:
+        'How much new tickets write outside, and in whose voice: FACTORY.json `communication`, with defaults. A ticket keeps the settings it started with.',
+    }),
     factoryId: z.string(),
     name: z.string().nullable().meta({ description: 'FACTORY.json `name`, when set.' }),
     stages: z.array(FactoryStage).meta({ description: 'Every stage, in flow order.' }),
@@ -42,6 +47,7 @@ const factory = defineRoute({
     }
     return {
       body: {
+        communication: read.config.communication,
         factoryId: factoryIdentity(database(context)).factoryId,
         name: read.config.name,
         stages: flowOrder.map((stage) => ({
@@ -63,4 +69,35 @@ const factory = defineRoute({
   tags: ['meta'],
 });
 
-export const factoryRoutes: Array<Route> = [factory];
+// PUT /v1/factory/communication: the owner sets how new tickets communicate
+// outside. FACTORY.json stays the only source (ADR-004): the route rewrites
+// its `communication` block and answers with what the file now says.
+const putCommunication = defineRoute({
+  handler: ({ body, context }) => {
+    if (context.saveCommunication === null) {
+      throw new ProblemError('internal_error', 'The server has no FACTORY.json.');
+    }
+    const saved = context.saveCommunication(body);
+    if (saved.kind === 'error') {
+      // The rest of FACTORY.json no longer parses; the message names the
+      // server's paths, so the server log keeps it and the file is unchanged.
+      throw new Error(`PUT /v1/factory/communication: ${saved.message}`);
+    }
+    return { body: saved.config.communication, status: 200 };
+  },
+  method: 'PUT',
+  operationId: 'putCommunication',
+  path: '/v1/factory/communication',
+  request: { body: Communication },
+  responses: {
+    200: {
+      description: 'FACTORY.json now has these settings; tickets started from now on use them.',
+      schema: Communication,
+    },
+  },
+  scope: 'act',
+  summary: 'Set how much new tickets write outside, and in whose voice',
+  tags: ['meta'],
+});
+
+export const factoryRoutes: Array<Route> = [factory, putCommunication];

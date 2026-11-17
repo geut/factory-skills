@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import {
   allowsEmptyDiff,
@@ -7,6 +10,8 @@ import {
   DEFAULT_SETUP_TIMEOUT_MS,
   parseFactoryConfig,
   pullRequestsAllowed,
+  readFactoryConfig,
+  writeCommunication,
 } from './config.ts';
 
 const models = { review: 'review-model', work: 'work-model' };
@@ -256,4 +261,47 @@ test('worktree setup takes commands with a ten-minute default timeout', () => {
   for (const worktree of [{ setup: [{ argv: [], name: 'x' }] }, { setup: 'pnpm install' }, 'x']) {
     assert.equal(parseFactoryConfig({ models, worktree }).kind, 'error', JSON.stringify(worktree));
   }
+});
+
+test('FACTORY.json communication reads with defaults, and a bad value stops the config', () => {
+  const read = parseFactoryConfig({ models });
+  assert.deepEqual(read.kind === 'ok' ? read.config.communication : read.message, {
+    tone: 'succinct, technical, to the point',
+    verbosity: 'full',
+    voice: 'factory',
+  });
+  const bad = parseFactoryConfig({ communication: { voice: 'robot' }, models });
+  assert.equal(
+    bad.kind === 'error' ? bad.message : 'parsed',
+    'FACTORY.json communication.voice must be one of factory, developer.',
+  );
+});
+
+test('writing communication replaces only that block, keeps the indentation, and refuses a broken file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'factory-config-'));
+  const file = path.join(root, 'FACTORY.json');
+  writeFileSync(
+    file,
+    '{\n\t"name": "catalog",\n\t"models": { "review": "review-model", "work": "work-model" },\n\t"communication": { "verbosity": "full" }\n}\n',
+  );
+  const saved = writeCommunication(root, { tone: 'dry', verbosity: 'minimal', voice: 'developer' });
+  assert.equal(saved.kind, 'ok');
+  const text = readFileSync(file, 'utf8');
+  assert.match(text, /^\{\n\t"name": "catalog",\n\t"models": \{/);
+  assert.deepEqual(JSON.parse(text), {
+    communication: { tone: 'dry', verbosity: 'minimal', voice: 'developer' },
+    models: { review: 'review-model', work: 'work-model' },
+    name: 'catalog',
+  });
+  const reread = readFactoryConfig(root);
+  assert.equal(reread.kind === 'ok' ? reread.config.communication.voice : null, 'developer');
+  assert.deepEqual(readdirSync(root), ['FACTORY.json']);
+
+  // A FACTORY.json that no longer parses is left as it is.
+  const broken = '{ "models": { "work": "same", "review": "same" } }\n';
+  writeFileSync(file, broken);
+  const refused = writeCommunication(root, { tone: 'dry', verbosity: 'minimal', voice: 'factory' });
+  assert.equal(refused.kind, 'error');
+  assert.equal(readFileSync(file, 'utf8'), broken);
+  rmSync(root, { force: true, recursive: true });
 });
