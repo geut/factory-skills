@@ -52,28 +52,31 @@ export async function applyTicketUpdate(
       failed = error;
     }
   }
-  if (update.comment !== null && updates.comments && tracker.capabilities.has('comment')) {
-    // The met items go in the comment when they were not ticked on the issue:
-    // ticking is off, or it failed.
-    const metHeading =
-      failed !== null
-        ? 'Met (ticking them on the issue failed):'
-        : updates.checklist
-          ? null
-          : 'Met:';
-    const markdown = [
-      update.comment,
-      ...(metHeading === null || update.checklist.length === 0
-        ? []
-        : ['', metHeading, ...update.checklist.map((item) => `- [x] ${item.text}`)]),
-      ...(conflicts.length === 0
-        ? []
-        : [
-            '',
-            'Not ticked, because the item changed on the issue:',
-            ...conflicts.map((text) => `- ${text}`),
-          ]),
-    ].join('\n');
+  // The met items go in the comment when they were not ticked on the issue:
+  // ticking is off, or it failed.
+  const metHeading =
+    failed !== null ? 'Met (ticking them on the issue failed):' : updates.checklist ? null : 'Met:';
+  const notes = [
+    ...(metHeading === null || update.checklist.length === 0
+      ? []
+      : ['', metHeading, ...update.checklist.map((item) => `- [x] ${item.text}`)]),
+    ...(conflicts.length === 0
+      ? []
+      : [
+          '',
+          'Not ticked, because the item changed on the issue:',
+          ...conflicts.map((text) => `- ${text}`),
+        ]),
+  ];
+  // An update the ticket's verbosity gave no comment still reports what its
+  // ticks could not show.
+  const markdown =
+    update.comment !== null
+      ? [update.comment, ...notes].join('\n')
+      : notes.length === 0
+        ? null
+        : notes.slice(1).join('\n');
+  if (markdown !== null && updates.comments && tracker.capabilities.has('comment')) {
     // Without a key of its own, the action's key makes a retried comment a
     // no-op, even after a crash.
     await tracker.comment(

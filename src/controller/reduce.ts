@@ -32,8 +32,10 @@ import { currentStep, nextAction, progressText } from './progress.ts';
 import {
   cancelledComment,
   feedbackRoundComment,
+  handoffChecklist,
   handoffComment,
   pausedComment,
+  ruleChangesLine,
   startedComment,
 } from './tracker-comments.ts';
 
@@ -1154,14 +1156,8 @@ function handOff(
   checklist: IssueChecklist | null,
   rules: Array<string>,
 ): Reduction {
-  // A change to the project's rules is named before anyone merges it.
-  const ruleChanges =
-    rules.length === 0
-      ? []
-      : [
-          '',
-          `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`,
-        ];
+  // Pi always gets the factory's own wording: it is not outward.
+  const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine('factory', rules)];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
   snapshot.execution.status = 'ready_for_handoff';
@@ -1198,11 +1194,7 @@ function handOff(
   );
   const { communication } = snapshot.execution.policy;
   trackerUpdate(snapshot, ids, {
-    // Minimal writes only the pull request: no ticks on the issue.
-    checklist:
-      communication.verbosity === 'minimal'
-        ? []
-        : (checklist?.met.map(({ key, text }) => ({ key, text })) ?? []),
+    checklist: handoffChecklist(communication, checklist),
     comment: handoffComment(communication, { checklist, pullRequestUrl, rules }),
     // One handoff comment per ticket: a rerun's replaces it.
     commentKey: `handoff:${snapshot.ticket.id}`,

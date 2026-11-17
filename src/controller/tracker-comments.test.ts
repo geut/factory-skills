@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import {
   cancelledComment,
   feedbackRoundComment,
+  handoffChecklist,
   handoffComment,
   pausedComment,
+  ruleChangesLine,
   startedComment,
 } from './tracker-comments.ts';
 
@@ -99,4 +101,23 @@ test('a pause asks at every level, and the factory voice says how to answer', ()
       ].join('\n'),
     );
   }
+});
+
+test('handoff ticks the met boxes except at minimal, and names rule changes per voice', () => {
+  const met = { ...checklist, met: [{ id: 'B1', key: 'k1', text: 'Reload keeps it.' }] };
+  assert.deepEqual(handoffChecklist({ verbosity: 'minimal', voice: 'factory' }, met), []);
+  for (const verbosity of ['standard', 'full'] as const) {
+    assert.deepEqual(handoffChecklist({ verbosity, voice: 'factory' }, met), [
+      { key: 'k1', text: 'Reload keeps it.' },
+    ]);
+  }
+  assert.deepEqual(handoffChecklist({ verbosity: 'full', voice: 'factory' }, null), []);
+  assert.match(
+    ruleChangesLine('factory', ['AGENTS.md']),
+    /^This ticket changes project rules: AGENTS\.md\./,
+  );
+  assert.equal(
+    ruleChangesLine('developer', ['AGENTS.md', 'CLAUDE.md']),
+    'This changes project rules: AGENTS.md, CLAUDE.md. Check them before merging.',
+  );
 });

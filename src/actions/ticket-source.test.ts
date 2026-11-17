@@ -150,3 +150,33 @@ test('with both off, only the mapped status is written', async () => {
   await applyTicketUpdate(tracker, issue, handoff, { checklist: false, comments: false });
   assert.deepEqual(calls, [['status', 'in_review']]);
 });
+
+test('an update with ticks but no comment still says which boxes it could not tick', async () => {
+  const quiet = { ...handoff, comment: null };
+  const keys = ['1:A reload keeps the filter.', '1:The filter is labelled.'];
+  const clean = fake(['checklist', 'comment', 'status']);
+  await applyTicketUpdate(clean.tracker, issue, quiet);
+  // Every box ticked: nothing to say, so no comment.
+  assert.deepEqual(clean.calls, [
+    ['tickBoxes', keys],
+    ['status', 'in_review'],
+  ]);
+
+  const changed = fake(['checklist', 'comment', 'status'], ['1:The filter is labelled.']);
+  await applyTicketUpdate(changed.tracker, issue, quiet);
+  assert.deepEqual(changed.calls[1], [
+    'comment',
+    'Not ticked, because the item changed on the issue:\n- The filter is labelled.',
+    'handoff:T1',
+    'replace',
+  ]);
+
+  const off = fake(['checklist', 'comment', 'status']);
+  await applyTicketUpdate(off.tracker, issue, quiet, { checklist: false, comments: true });
+  assert.deepEqual(off.calls[0], [
+    'comment',
+    'Met:\n- [x] A reload keeps the filter.\n- [x] The filter is labelled.',
+    'handoff:T1',
+    'replace',
+  ]);
+});

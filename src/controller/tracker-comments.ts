@@ -8,6 +8,7 @@ import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 //                              minimal  standard              full
 //   started, round, cancelled  no       no                    yes
 //   handoff                    no       PR link, left open    + decisions, rule changes
+//   checklist ticks            no       yes                   yes
 //   pause question             yes      yes                   yes
 
 type Settings = Pick<Communication, 'verbosity' | 'voice'>;
@@ -96,19 +97,29 @@ export function handoffComment(
   if (verbosity === 'standard') {
     return [opening, ...open].join('\n');
   }
-  // A change to the project's rules is named before anyone merges it.
-  const ruleChanges =
-    rules.length === 0
-      ? []
-      : [
-          '',
-          voice === 'factory'
-            ? `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`
-            : `This changes project rules: ${rules.join(', ')}. Check them before merging.`,
-        ];
+  const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine(voice, rules)];
   const decisions =
     checklist === null || checklist.decisions.length === 0
       ? []
       : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)];
   return [opening, ...ruleChanges, ...decisions, ...open].join('\n');
+}
+
+// The issue's met checklist items to tick at handoff: none at minimal, which
+// writes only the pull request.
+export function handoffChecklist(
+  { verbosity }: Settings,
+  checklist: IssueChecklist | null,
+): Array<{ key: string; text: string }> {
+  return verbosity === 'minimal'
+    ? []
+    : (checklist?.met.map(({ key, text }) => ({ key, text })) ?? []);
+}
+
+// A change to the project's rules is named before anyone merges it: on the
+// issue at full, and to the person in Pi at every level.
+export function ruleChangesLine(voice: Communication['voice'], rules: Array<string>): string {
+  return voice === 'factory'
+    ? `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`
+    : `This changes project rules: ${rules.join(', ')}. Check them before merging.`;
 }
