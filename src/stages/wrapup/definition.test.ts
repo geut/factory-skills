@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addTasks, blank, review, run, session } from '../../stories/fixtures.ts';
 import { wrapup } from './definition.ts';
+import type { PrFormat } from './pr-format.ts';
 import { parseTitleTemplate } from './title.ts';
 
 test('wrap-up is given each task’s review verification, gaps included', () => {
@@ -27,6 +28,7 @@ test('wrap-up is given each task’s review verification, gaps included', () => 
         boxes: [],
         boxesUnread: null,
         contextPath: null,
+        prFormat: { kind: 'default' },
         screenshots: [],
         testPlan: [],
         usage: '',
@@ -61,6 +63,7 @@ test('wrap-up is given the issue’s open boxes as B1..Bn and each task’s QA t
     ],
     boxesUnread: null as string | null,
     contextPath: null,
+    prFormat: { kind: 'default' } as const,
     screenshots: [],
     testPlan: ['Task 01 AC1: e2e/filter.e2e.ts › survives a reload'],
     usage: '',
@@ -83,7 +86,10 @@ test('wrap-up is given the issue’s open boxes as B1..Bn and each task’s QA t
   assert.match(turn(), /none, because the tracker could not be read \(gh: rate limited\)/);
 });
 
-function initialPrompt(edit: (snapshot: ReturnType<typeof blank>) => void): string {
+function initialPrompt(
+  edit: (snapshot: ReturnType<typeof blank>) => void,
+  prFormat: PrFormat = { kind: 'default' },
+): string {
   const snapshot = blank();
   snapshot.execution.worktreePath = '/repo/.factory/worktrees/demo';
   edit(snapshot);
@@ -97,6 +103,7 @@ function initialPrompt(edit: (snapshot: ReturnType<typeof blank>) => void): stri
         boxes: [],
         boxesUnread: null,
         contextPath: null,
+        prFormat,
         screenshots: [],
         testPlan: [],
         usage: '',
@@ -160,4 +167,40 @@ test('wrap-up learns which sections make the pull request body, and the tone onl
   // Without pull requests there is no body to set.
   const off = initialPrompt(() => {});
   assert.doesNotMatch(off, /sets the body itself/);
+});
+
+test('wrap-up writes the body in the project’s own format, which the controller leaves to it', () => {
+  const template: PrFormat = {
+    headings: ['What changed', 'Checklist'],
+    kind: 'github',
+    path: '.github/pull_request_template.md',
+    text: '## What changed\n\n<!-- what and why -->\n\n## Checklist\n\n- [ ] Tests added\n',
+  };
+  const templated = initialPrompt((snapshot) => {
+    snapshot.execution.policy.pullRequests = true;
+    snapshot.execution.policy.communication = { tone: 't', verbosity: 'minimal', voice: 'factory' };
+  }, template);
+  assert.match(
+    templated,
+    /pull request format is the template \.github\/pull_request_template\.md, as of the base commit/,
+  );
+  assert.match(
+    templated,
+    /keep every heading, in order, fill each section briefly, remove its <!-- --> hints, and add no other section and no attribution/,
+  );
+  assert.match(templated, /Template:\n## What changed\n\n<!-- what and why -->/);
+  assert.doesNotMatch(templated, /sets the body itself/);
+
+  const instructed = initialPrompt(
+    (snapshot) => {
+      snapshot.execution.policy.pullRequests = true;
+    },
+    { kind: 'agents', path: 'AGENTS.md', text: '## Pull requests\nLead with the risk.' },
+  );
+  assert.match(
+    instructed,
+    /agent instructions \(AGENTS\.md, as of the base commit\) say how to write a pull request\. Write the body that way, fully/,
+  );
+  assert.match(instructed, /\n## Pull requests\nLead with the risk\./);
+  assert.doesNotMatch(instructed, /sets the body itself/);
 });

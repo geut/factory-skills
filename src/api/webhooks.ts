@@ -34,6 +34,7 @@ export function pullRequestFromPayload(payload: unknown): PullRequestInfo | null
   const closed = pr['state'] === 'closed';
   return {
     author: typeof user['login'] === 'string' ? user['login'] : null,
+    body: typeof pr['body'] === 'string' ? pr['body'] : '',
     closedAt: typeof pr['closed_at'] === 'string' ? pr['closed_at'] : null,
     headBranch: typeof head['ref'] === 'string' ? head['ref'] : '',
     headSha: typeof head['sha'] === 'string' ? head['sha'] : null,

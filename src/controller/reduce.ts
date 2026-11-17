@@ -30,6 +30,7 @@ import type { ContextGaps } from '../stages/plan/context.ts';
 import { latestReviews } from '../stages/review/parse.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { pullRequestBody } from '../stages/wrapup/pr-body.ts';
+import { describePrFormat, type PrFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { roundComment } from '../stages/wrapup/round-comment.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
@@ -1158,6 +1159,8 @@ function handOff(
   ids: IdSource,
   closing: {
     checklist: IssueChecklist | null;
+    // The format the body follows; null without a pull request.
+    prFormat: PrFormatInUse | null;
     // The pull request wrap-up checked, and its head after the push.
     pullRequestHead: string | null;
     pullRequestUrl: string | null;
@@ -1240,7 +1243,12 @@ function handOff(
       });
     }
   }
-  if (pullRequestUrl !== null && snapshot.execution.policy.pullRequests && round === 0) {
+  if (
+    pullRequestUrl !== null &&
+    snapshot.execution.policy.pullRequests &&
+    round === 0 &&
+    (closing.prFormat === null || closing.prFormat.source === 'default')
+  ) {
     snapshot.actions.push({
       ...base,
       change: {
@@ -1272,6 +1280,9 @@ function handOff(
       '',
       notice,
       '',
+      ...(pullRequestUrl === null || closing.prFormat === null
+        ? []
+        : [`Pull request format: ${describePrFormat(closing.prFormat)}.`, '']),
       `Merge it yourself, then run /factory complete ${snapshot.ticket.commandRef}.`,
       ...(pullRequestUrl === null
         ? []
@@ -1384,6 +1395,7 @@ function applyOutcome(
       if (step.kind === 'handoff') {
         return handOff(snapshot, session, run, outcome.notice ?? '', ids, {
           checklist: outcome.checklist ?? null,
+          prFormat: outcome.prFormat ?? null,
           pullRequestHead: outcome.pullRequestHead ?? null,
           pullRequestUrl: outcome.pullRequestUrl ?? null,
           roundFiles: outcome.roundFiles ?? [],

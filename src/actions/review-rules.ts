@@ -168,6 +168,20 @@ function baseText(reader: BaseReader, file: string, root: string, hops = 0): str
   return baseText(reader, target, root, hops + 1);
 }
 
+// The text of each of `files` at the base commit, following symlinks there as
+// Pi follows them on disk; null for one that is not a file. Throws when the
+// base commit cannot be read.
+export function textsAtBase(input: {
+  codeRoot: string;
+  files: Array<string>;
+  sha: string;
+}): Map<string, string | null> {
+  const root = path.resolve(input.codeRoot);
+  const reader = baseReader(root, input.sha);
+  reader.load(input.files);
+  return new Map(input.files.map((file) => [file, baseText(reader, file, root)]));
+}
+
 function candidates(directory: string): Array<string> {
   return CONTEXT_FILE_NAMES.map((name) => candidatePath(directory, name));
 }

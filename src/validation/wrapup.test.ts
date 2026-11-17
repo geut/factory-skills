@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import type { WrapupBaseline } from '../domain.ts';
+import { taskId, type WrapupBaseline } from '../domain.ts';
 import { markdownChecklist } from '../ports/markdown-checklist.ts';
 import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
@@ -41,13 +41,18 @@ type Fixture = {
 };
 
 // A code root with a ticket worktree whose work is approved but uncommitted.
-function fixture(): Fixture {
+// `baseFiles` are more files in the base commit, such as a PR template.
+function fixture(baseFiles: Record<string, string> = {}): Fixture {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-wrapup-'));
   roots.push(codeRoot);
   git(codeRoot, ['init', '-b', 'main']);
   git(codeRoot, ['config', 'user.email', 'factory@example.com']);
   git(codeRoot, ['config', 'user.name', 'Factory']);
   writeFileSync(path.join(codeRoot, 'README.md'), '# demo\n');
+  for (const [file, text] of Object.entries(baseFiles)) {
+    mkdirSync(path.dirname(path.join(codeRoot, file)), { recursive: true });
+    writeFileSync(path.join(codeRoot, file), text);
+  }
   mkdirSync(path.join(codeRoot, 'src'));
   writeFileSync(path.join(codeRoot, 'src/filter.ts'), 'export const filter = 1;\n');
   git(codeRoot, ['add', '.']);
@@ -157,6 +162,8 @@ function validate(
     // The ticket's issue body, with task 01 and its approving review.
     issue?: { body: string; review: string };
     pullRequests?: boolean;
+    // A feedback round's wrap-up, started from the base commit.
+    round?: boolean;
     // The ticket and the project's title template, for the title check.
     titled?: { displayRef: string; sourceKind: string; template: string | null };
   } = {},
@@ -175,6 +182,21 @@ function validate(
         execution.worktreeBaseSha = value.baseSha;
         execution.worktreeBranch = branch;
         execution.worktreePath = value.worktree;
+        if (options.round === true) {
+          execution.roundBaseSha = value.baseSha;
+          snapshot.tasks.push({
+            blockedBy: [],
+            feedback: null,
+            ordinal: 99,
+            specHash: null,
+            stage: 'wrapup',
+            status: 'active',
+            summaries: {},
+            taskFile: 'feedback/1/task.md',
+            taskId: taskId('F1'),
+            title: 'Feedback round 1',
+          });
+        }
         if (options.titled !== undefined) {
           const { displayRef, sourceKind, template } = options.titled;
           execution.policy.pullRequestTitle =
@@ -546,6 +568,7 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   const url = 'https://github.com/geut/demo/pull/7';
   const pullRequest = {
     author: 'dpaez',
+    body: '',
     closedAt: null,
     headBranch: branch,
     headSha: git(value.worktree, ['rev-parse', 'HEAD']),
@@ -589,12 +612,71 @@ test('with pull requests on and a clean worktree, the handoff needs a real pull 
   assert.equal(broken.summary, 'gh: network unreachable');
 });
 
+test('a project PR template needs its headings in the pull request body, in order', async () => {
+  const value = fixture({
+    '.github/PULL_REQUEST_TEMPLATE.md': '## What changed\n\n<!-- what and why -->\n\n## Testing\n',
+  });
+  addRemote(value);
+  git(value.worktree, ['add', '.']);
+  git(value.worktree, ['-c', 'commit.gpgsign=false', 'commit', '-m', 'Persist the filter']);
+  const baseline = value.baseline();
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  const target = 'https://github.com/geut/demo/pull/7';
+  const withBody = (body: string) =>
+    validate(value, baseline, handoff(value, { merge: target }), {
+      findPullRequest: () => ({
+        author: 'dpaez',
+        body,
+        closedAt: null,
+        headBranch: branch,
+        headSha: git(value.worktree, ['rev-parse', 'HEAD']),
+        mergedAt: null,
+        number: 7,
+        openedAt: null,
+        state: 'open',
+        title: 'Persist the filter',
+        url: target,
+      }),
+      pullRequests: true,
+    });
+  const followed = await withBody('## What changed\n\nKeeps the filter.\n\n## Testing\n\nnpm test');
+  assert.equal(followed.status, 'passed', failures(followed));
+  assert.deepEqual(followed.status === 'passed' ? followed.detail.prFormat : null, {
+    path: '.github/PULL_REQUEST_TEMPLATE.md',
+    source: 'github',
+  });
+  assert.match(
+    failures(await withBody('## Summary\n\nPersist the filter.\n\n## Testing\n')),
+    /body does not follow \.github\/PULL_REQUEST_TEMPLATE\.md: it needs these headings, in the template's order: "What changed"\. /,
+  );
+  // A feedback round leaves the body as it is, so it does not answer for it.
+  const round = await validate(value, baseline, handoff(value, { merge: target }), {
+    findPullRequest: () => ({
+      author: 'dpaez',
+      body: '## Summary\n\nWritten before the project had a template.',
+      closedAt: null,
+      headBranch: branch,
+      headSha: git(value.worktree, ['rev-parse', 'HEAD']),
+      mergedAt: null,
+      number: 7,
+      openedAt: null,
+      state: 'open',
+      title: 'Persist the filter',
+      url: target,
+    }),
+    pullRequests: true,
+    round: true,
+  });
+  assert.doesNotMatch(failures(round), /does not follow/);
+});
+
 const url = 'https://github.com/geut/demo/pull/7';
 
 // The pull request on the code host whose branch is at `headSha`.
 function openPullRequest(headSha: string | null): PullRequestLookup {
   return () => ({
     author: 'dpaez',
+    body: '',
     closedAt: null,
     headBranch: branch,
     headSha,

@@ -31,6 +31,21 @@ const Factory = z
     }),
     factoryId: z.string(),
     name: z.string().nullable().meta({ description: 'FACTORY.json `name`, when set.' }),
+    pullRequestFormat: z
+      .object({
+        path: z.string().nullable().meta({
+          description:
+            'The file it comes from, such as `.github/pull_request_template.md`; null for `default`.',
+        }),
+        source: z.enum(['agents', 'github', 'default']).meta({
+          description:
+            "`agents`: a pull-request section of the root AGENTS.md or CLAUDE.md. `github`: a pull_request_template.md in .github/, the root, or docs/. `default`: the factory's own body.",
+        }),
+      })
+      .meta({
+        description:
+          "The format a ticket started now would give its pull request body, read at the remote's default branch as last fetched. Each ticket reads it again at its own base commit.",
+      }),
     stages: z.array(FactoryStage).meta({ description: 'Every stage, in flow order.' }),
   })
   .meta({ id: 'Factory' });
@@ -50,6 +65,7 @@ const factory = defineRoute({
         communication: read.config.communication,
         factoryId: factoryIdentity(database(context)).factoryId,
         name: read.config.name,
+        pullRequestFormat: context.pullRequestFormat?.() ?? { path: null, source: 'default' },
         stages: flowOrder.map((stage) => ({
           enabled: stageEnabled(read.config, stage),
           name: stage,

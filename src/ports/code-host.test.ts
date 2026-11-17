@@ -23,6 +23,7 @@ const config: CodeHostConfig = {
 
 const view = {
   author: { login: 'dpaez' },
+  body: '## What changed\n\nKeeps the filter.',
   closedAt: null,
   createdAt: '2026-10-15T10:00:00Z',
   headRefName: 'factory/proj-123',
@@ -54,6 +55,7 @@ test('a pull request reads by URL, and a missing one is null', () => {
   const host = createGithubCodeHost(config, gh({ 'pr view': view }));
   assert.deepEqual(host.pullRequest(view.url), {
     author: 'dpaez',
+    body: '## What changed\n\nKeeps the filter.',
     closedAt: null,
     headBranch: 'factory/proj-123',
     headSha: 'abc123',
@@ -156,6 +158,7 @@ function page<T>(nodes: Array<T>, hasPreviousPage = false) {
 
 const openPullRequest: PullRequestInfo = {
   author: 'dpaez',
+  body: '',
   closedAt: null,
   headBranch: 'factory/proj-1',
   headSha: 'abc',

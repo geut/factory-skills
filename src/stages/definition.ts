@@ -12,6 +12,7 @@ import type { StageValidationReport, ValidationCheck } from '../validation/repor
 import { childInstructions } from './prompt.ts';
 import type { Criterion } from './qa/criteria.ts';
 import type { IssueChecklist } from './wrapup/checklist.ts';
+import type { PrFormatInUse } from './wrapup/pr-format.ts';
 
 // What the driver shows a stage about the execution it runs in. Stages read
 // it and never change it.
@@ -49,6 +50,10 @@ export type Outcome =
       notice?: string;
       // For the stage that plans: the tasks to register, from its plan.
       plan?: { path: string; tasks: Array<PlannedTask> };
+      // For the closing stage: the format the pull request's body follows.
+      // The project's own is the agent's to write; the factory sets only its
+      // default.
+      prFormat?: PrFormatInUse;
       // For the closing stage: the pull request it checked, if any, and its head.
       pullRequestHead?: string;
       pullRequestUrl?: string;

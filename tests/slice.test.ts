@@ -1954,6 +1954,7 @@ function codeHostWith(
 ): CodeHost {
   const pullRequest = (branch: string): PullRequestInfo => ({
     author: 'dpaez',
+    body: '',
     closedAt: state === 'open' ? null : '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
@@ -2052,6 +2053,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
   const { branch, db, service } = await handedOff('merged');
   const ticket = service.pullRequestChanged({
     author: 'dpaez',
+    body: '',
     closedAt: '2026-10-16T09:00:00Z',
     headBranch: branch,
     headSha: null,
@@ -2067,6 +2069,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
   assert.equal(
     service.pullRequestChanged({
       author: null,
+      body: '',
       closedAt: null,
       headBranch: 'someone/else',
       headSha: null,
@@ -2224,6 +2227,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
         webhooks: null,

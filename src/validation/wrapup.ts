@@ -15,6 +15,12 @@ import { changedRules } from '../stages/review/rules.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
 import {
+  missingHeadings,
+  prFormatInUse,
+  readPrFormat,
+  type PrFormat,
+} from '../stages/wrapup/pr-format.ts';
+import {
   type PullRequestTitle,
   ticketTitle,
   titleExample,
@@ -318,6 +324,8 @@ export function validateWrapup(input: {
   findPullRequest: PullRequestLookup;
   generated: Array<string>;
   output: string;
+  // The pull request format the project asks for, at the base commit.
+  prFormat: PrFormat;
   pullRequests: boolean;
   // The commit a feedback round started from, or null for the first wrap-up.
   roundBase: string | null;
@@ -600,6 +608,17 @@ export function validateWrapup(input: {
           `${url} is titled "${found.title}", not ${wanted}; run gh pr edit ${found.number} --title ${shellQuote(wanted)} with <summary> replaced by your one-line summary.`,
         );
       }
+      // The project's own template: its headings, all of them, in order. A
+      // feedback round leaves the body as it is, so only the first wrap-up
+      // answers for it.
+      if (input.prFormat.kind === 'github' && input.roundBase === null) {
+        const missing = missingHeadings(input.prFormat.headings, found.body);
+        if (missing.length > 0) {
+          policy.push(
+            `${url}'s body does not follow ${input.prFormat.path}: it needs these headings, in the template's order: ${missing.map((heading) => `"${heading}"`).join(', ')}. Rewrite the body in the template and set it with gh api -X PATCH repos/<owner>/<repo>/pulls/${found.number} -F body=@<file>.`,
+          );
+        }
+      }
     }
   }
   checks.push(
@@ -620,6 +639,8 @@ export function validateWrapup(input: {
     .flatMap((item) => item.details.split('\n'));
   const detail = {
     checklist: checklist.result,
+    // Which format the body follows: only the default is the factory's to set.
+    prFormat: prFormatInUse(input.prFormat),
     pullRequest: policy.length === 0 ? checked : null,
     // The human sees these before merging, taken from the worktree, not the handoff.
     rules: changedRules(
@@ -736,6 +757,10 @@ export const wrapupValidator: Validator<'wrapup'> = {
         findPullRequest: deps.findPullRequest,
         generated: execution.policy.validation.wrapup.generated,
         output: outputOf(run.resultJson),
+        prFormat: readPrFormat({
+          codeRoot: execution.policy.codeRoot,
+          sha: execution.worktreeBaseSha,
+        }),
         pullRequests: execution.policy.pullRequests,
         roundBase: feedbackRounds(snapshot.tasks) === 0 ? null : execution.roundBaseSha,
         ticketDir: ticketDirOf(execution.factoryDir),

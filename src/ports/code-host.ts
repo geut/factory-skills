@@ -15,6 +15,8 @@ import {
 
 export type PullRequestInfo = {
   author: string | null;
+  // The pull request's description; empty when it has none.
+  body: string;
   closedAt: string | null;
   headBranch: string;
   // The commit the pull request's branch points at, when the host reports it.
@@ -146,7 +148,7 @@ function text(value: unknown): string | null {
 }
 
 const PR_FIELDS =
-  'number,url,title,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
+  'number,url,title,body,headRefName,headRefOid,state,author,createdAt,mergedAt,closedAt';
 
 function pullRequestFrom(value: unknown): PullRequestInfo | null {
   if (!isRecord(value) || typeof value['number'] !== 'number' || typeof value['url'] !== 'string') {
@@ -156,6 +158,7 @@ function pullRequestFrom(value: unknown): PullRequestInfo | null {
   const author = isRecord(value['author']) ? text(value['author']['login']) : null;
   return {
     author,
+    body: typeof value['body'] === 'string' ? value['body'] : '',
     closedAt: text(value['closedAt']),
     headBranch: String(value['headRefName'] ?? ''),
     headSha: text(value['headRefOid']),

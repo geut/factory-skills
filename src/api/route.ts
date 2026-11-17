@@ -8,6 +8,7 @@ import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { InventoryResult } from '../ports/trackers.ts';
 import type { EventHub } from '../server/events.ts';
+import type { PrFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { ProblemError } from './problem.ts';
 
 // What a route may ask for while it handles a request.
@@ -22,6 +23,9 @@ export type ApiContext = {
   factoryConfig: (() => ConfigResult) | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
+  // The pull request format a ticket started now would follow; null where
+  // the server has none.
+  pullRequestFormat: (() => PrFormatInUse) | null;
   // Replaces FACTORY.json's `communication` block and reads the file back;
   // null where the server has none.
   saveCommunication: ((communication: Communication) => ConfigResult) | null;
