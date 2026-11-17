@@ -17,7 +17,7 @@ type Context = { db: DatabaseSync; ids: IdSource; now: () => string };
 // pull request is a validation failure; any other code host error is an
 // infrastructure error.
 export function pullRequestLookup(codeHost: CodeHost): PullRequestLookup {
-  return (url) => codeHost.pullRequest(url) ?? { missing: true };
+  return async (url) => (await codeHost.pullRequest(url)) ?? { missing: true };
 }
 
 // The marker a handoff pane's processes carry, as FACTORY_WORKTREE.

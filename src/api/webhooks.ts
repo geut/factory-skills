@@ -48,7 +48,7 @@ export function pullRequestFromPayload(payload: unknown): PullRequestInfo | null
 }
 
 const githubWebhook = defineRoute({
-  handler: ({ context, headers, rawBody }) => {
+  handler: async ({ context, headers, rawBody }) => {
     const webhooks = context.webhooks;
     const secret = webhooks?.secret() ?? null;
     if (webhooks === null || secret === null) {
@@ -72,7 +72,7 @@ const githubWebhook = defineRoute({
       throw new ProblemError('validation_error', 'The delivery is not valid JSON.');
     }
     const pullRequest = pullRequestFromPayload(payload);
-    const ticket = pullRequest === null ? null : webhooks.pullRequestChanged(pullRequest);
+    const ticket = pullRequest === null ? null : await webhooks.pullRequestChanged(pullRequest);
     return { body: { ticket }, status: 202 };
   },
   method: 'POST',

@@ -7,6 +7,7 @@ import { factoryRootOf, ticketDirOf } from '../controller/keys.ts';
 import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
+import type { MaybePromise } from '../ports/gh.ts';
 import { shellQuote } from '../shell.ts';
 import { feedbackRounds } from '../stages/feedback.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
@@ -309,9 +310,9 @@ function commitFailures(input: {
 }
 
 // The code host's view of the pull request at a URL.
-export type PullRequestLookup = (url: string) => PullRequestInfo | { missing: true };
+export type PullRequestLookup = (url: string) => MaybePromise<PullRequestInfo | { missing: true }>;
 
-export function validateWrapup(input: {
+export async function validateWrapup(input: {
   baseBranch: string | null;
   baseline: WrapupBaseline;
   baseSha: string;
@@ -335,7 +336,7 @@ export function validateWrapup(input: {
   // The all-stage usage table, read once the checks are done.
   usage: () => string;
   worktree: string;
-}): WrapupValidationReport {
+}): Promise<WrapupValidationReport> {
   let current: Omit<WrapupBaseline, 'boxes'>;
   let dirty: boolean;
   let branchExists: boolean;
@@ -581,9 +582,9 @@ export function validateWrapup(input: {
       'The worktree is clean and codeHost.pullRequests is on, so ## Merge commands needs the pull-request URL.',
     );
   } else {
-    let found: ReturnType<PullRequestLookup>;
+    let found: Awaited<ReturnType<PullRequestLookup>>;
     try {
-      found = input.findPullRequest(url);
+      found = await input.findPullRequest(url);
       checked = 'missing' in found ? null : found;
     } catch (error: unknown) {
       return errorReport(
@@ -744,31 +745,29 @@ export const wrapupValidator: Validator<'wrapup'> = {
         errorReport(WRAPUP_VALIDATOR_VERSION, 'The wrap-up baseline or worktree is missing.'),
       );
     }
-    return Promise.resolve(
-      validateWrapup({
-        baseBranch: execution.worktreeBaseBranch,
-        baseline,
-        baseSha: execution.worktreeBaseSha,
-        branch: execution.worktreeBranch,
-        checklist: issueContext(snapshot, baseline),
+    return validateWrapup({
+      baseBranch: execution.worktreeBaseBranch,
+      baseline,
+      baseSha: execution.worktreeBaseSha,
+      branch: execution.worktreeBranch,
+      checklist: issueContext(snapshot, baseline),
+      codeRoot: execution.policy.codeRoot,
+      commands: execution.policy.validation.work.commands,
+      factoryRoot: factoryRootOf(execution.factoryDir),
+      findPullRequest: deps.findPullRequest,
+      generated: execution.policy.validation.wrapup.generated,
+      output: outputOf(run.resultJson),
+      prFormat: readPrFormat({
         codeRoot: execution.policy.codeRoot,
-        commands: execution.policy.validation.work.commands,
-        factoryRoot: factoryRootOf(execution.factoryDir),
-        findPullRequest: deps.findPullRequest,
-        generated: execution.policy.validation.wrapup.generated,
-        output: outputOf(run.resultJson),
-        prFormat: readPrFormat({
-          codeRoot: execution.policy.codeRoot,
-          sha: execution.worktreeBaseSha,
-        }),
-        pullRequests: execution.policy.pullRequests,
-        roundBase: feedbackRounds(snapshot.tasks) === 0 ? null : execution.roundBaseSha,
-        ticketDir: ticketDirOf(execution.factoryDir),
-        title: ticketTitle(snapshot),
-        usage: deps.usage,
-        worktree: execution.worktreePath,
+        sha: execution.worktreeBaseSha,
       }),
-    );
+      pullRequests: execution.policy.pullRequests,
+      roundBase: feedbackRounds(snapshot.tasks) === 0 ? null : execution.roundBaseSha,
+      ticketDir: ticketDirOf(execution.factoryDir),
+      title: ticketTitle(snapshot),
+      usage: deps.usage,
+      worktree: execution.worktreePath,
+    });
   },
   version: WRAPUP_VALIDATOR_VERSION,
 };

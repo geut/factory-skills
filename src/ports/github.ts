@@ -1,5 +1,5 @@
-import { spawnSync } from 'node:child_process';
 import type { GithubTrackerConfig } from '../config.ts';
+import { ghJson, ghRun, type MaybePromise } from './gh.ts';
 import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
 import {
   UnsupportedOperation,
@@ -39,48 +39,48 @@ export type GithubIssue = {
 
 type IssueLocator = { host: string; number: number; owner: string; repo: string };
 
-// The calls the adapter makes. Tests pass a stand-in.
+// The calls the adapter makes. Tests pass a stand-in, which may answer at
+// once; githubCliClient runs gh without blocking the server.
 export type GithubClient = {
-  addComment?: (input: Omit<IssueLocator, 'host'>, body: string) => void;
-  editBody?: (input: Omit<IssueLocator, 'host'>, body: string) => void;
-  editComment?: (input: Omit<IssueLocator, 'host'>, id: number, body: string) => void;
+  addComment?: (input: Omit<IssueLocator, 'host'>, body: string) => MaybePromise<void>;
+  editBody?: (input: Omit<IssueLocator, 'host'>, body: string) => MaybePromise<void>;
+  editComment?: (input: Omit<IssueLocator, 'host'>, id: number, body: string) => MaybePromise<void>;
   editLabels?: (
     input: Omit<IssueLocator, 'host'>,
     add: Array<string>,
     remove: Array<string>,
-  ) => void;
-  fetchIssue: (input: IssueLocator) => GithubIssue;
-  listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
-  listComments?: (input: Omit<IssueLocator, 'host'>) => Array<{ body: string; id: number }>;
+  ) => MaybePromise<void>;
+  fetchIssue: (input: IssueLocator) => MaybePromise<GithubIssue>;
+  listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => MaybePromise<Array<RelatedIssue>>;
+  listComments?: (
+    input: Omit<IssueLocator, 'host'>,
+  ) => MaybePromise<Array<{ body: string; id: number }>>;
   listIssues?: (input: {
     host: string;
     labels: Array<string>;
     milestone: string | null;
     owner: string;
     repo: string;
-  }) => Array<GithubIssue>;
-  listSubIssues: (input: Omit<IssueLocator, 'host'>) => Array<RelatedIssue>;
+  }) => MaybePromise<Array<GithubIssue>>;
+  listSubIssues: (input: Omit<IssueLocator, 'host'>) => MaybePromise<Array<RelatedIssue>>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function ghJson(args: Array<string>): unknown {
-  const result = spawnSync('gh', args, { encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
-  }
-  const parsed: unknown = JSON.parse(result.stdout);
-  return parsed;
-}
-
-function relatedIssues(path: string): Array<RelatedIssue> {
-  const result = spawnSync('gh', ['api', path], { encoding: 'utf8' });
-  if (result.status !== 0 || result.stdout.trim().length === 0) {
+// A failed read lists none, as GitHub without sub-issues or dependencies does.
+async function relatedIssues(path: string): Promise<Array<RelatedIssue>> {
+  let output: string;
+  try {
+    output = await ghRun(['api', path], '');
+  } catch {
     return [];
   }
-  const parsed: unknown = JSON.parse(result.stdout);
+  if (output.trim().length === 0) {
+    return [];
+  }
+  const parsed: unknown = JSON.parse(output);
   if (!Array.isArray(parsed)) {
     return [];
   }
@@ -100,20 +100,14 @@ function relatedIssues(path: string): Array<RelatedIssue> {
   );
 }
 
-function gh(args: Array<string>, input?: string): void {
-  const result = spawnSync('gh', args, {
-    encoding: 'utf8',
-    ...(input === undefined ? {} : { input }),
-  });
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
-  }
+async function gh(args: Array<string>, input = ''): Promise<void> {
+  await ghRun(args, input);
 }
 
 export function githubCliClient(): GithubClient {
   return {
-    addComment: (input, body) => {
-      gh(
+    addComment: async (input, body) => {
+      await gh(
         [
           'issue',
           'comment',
@@ -126,8 +120,8 @@ export function githubCliClient(): GithubClient {
         body,
       );
     },
-    editBody: (input, body) => {
-      gh(
+    editBody: async (input, body) => {
+      await gh(
         [
           'issue',
           'edit',
@@ -140,8 +134,8 @@ export function githubCliClient(): GithubClient {
         body,
       );
     },
-    editComment: (input, id, body) => {
-      gh(
+    editComment: async (input, id, body) => {
+      await gh(
         [
           'api',
           '--method',
@@ -153,8 +147,8 @@ export function githubCliClient(): GithubClient {
         body,
       );
     },
-    editLabels: (input, add, remove) => {
-      gh([
+    editLabels: async (input, add, remove) => {
+      await gh([
         'issue',
         'edit',
         String(input.number),
@@ -164,8 +158,8 @@ export function githubCliClient(): GithubClient {
         ...(remove.length === 0 ? [] : ['--remove-label', remove.join(',')]),
       ]);
     },
-    fetchIssue(input) {
-      const payload = ghJson([
+    async fetchIssue(input) {
+      const payload = await ghJson([
         'issue',
         'view',
         String(input.number),
@@ -208,8 +202,8 @@ export function githubCliClient(): GithubClient {
       relatedIssues(
         `repos/${input.owner}/${input.repo}/issues/${input.number}/dependencies/blocked_by`,
       ),
-    listComments: (input) => {
-      const payload = ghJson([
+    listComments: async (input) => {
+      const payload = await ghJson([
         'api',
         '--paginate',
         '--slurp',
@@ -222,8 +216,8 @@ export function githubCliClient(): GithubClient {
           : [],
       );
     },
-    listIssues: (input) => {
-      const payload = ghJson([
+    listIssues: async (input) => {
+      const payload = await ghJson([
         'issue',
         'list',
         '--repo',
@@ -359,7 +353,6 @@ function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
   };
 }
 
-// The client stays synchronous: `gh` runs to completion, as it always has.
 export function createGithubTracker(
   config: GithubTrackerConfig | null,
   client: GithubClient,
@@ -390,7 +383,7 @@ export function createGithubTracker(
       }
       const at = locate(issue);
       // GitHub keeps the link after the blocker closes; only an open one blocks.
-      return listBlockedBy(at)
+      return (await listBlockedBy(at))
         .filter((related) => related.state === 'open')
         .map((related) => linkOf(at.owner, at.repo, related));
     },
@@ -399,12 +392,12 @@ export function createGithubTracker(
     checklistItems: async (issue) => {
       const at = locate(issue);
       return markdownChecklist(
-        client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body,
+        (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body,
       );
     },
     children: async (issue) => {
       const at = locate(issue);
-      return client.listSubIssues(at).map((related) => linkOf(at.owner, at.repo, related));
+      return (await client.listSubIssues(at)).map((related) => linkOf(at.owner, at.repo, related));
     },
     comment: async (issue, markdown, key, mode) => {
       if (addComment === undefined || listComments === undefined) {
@@ -414,14 +407,14 @@ export function createGithubTracker(
       // A hidden marker in the comment body finds the comment of a key again.
       const marker = `<!-- factory:${key} -->`;
       const body = `${markdown}\n\n${marker}`;
-      const posted = listComments(at).find((item) => item.body.includes(marker));
+      const posted = (await listComments(at)).find((item) => item.body.includes(marker));
       if (posted === undefined) {
-        addComment(at, body);
+        await addComment(at, body);
       } else if (mode === 'replace' && posted.body !== body) {
         if (editComment === undefined) {
           throw new UnsupportedOperation('github', 'editing comments');
         }
-        editComment(at, posted.id, body);
+        await editComment(at, posted.id, body);
       }
     },
     kind: 'github',
@@ -432,12 +425,14 @@ export function createGithubTracker(
           'a backlog without tracker.owner and tracker.repo',
         );
       }
-      return listIssues({
-        ...config.backlog,
-        host: config.host,
-        owner: config.owner,
-        repo: config.repo,
-      }).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
+      return (
+        await listIssues({
+          ...config.backlog,
+          host: config.host,
+          owner: config.owner,
+          repo: config.repo,
+        })
+      ).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
     },
     refHint: 'a GitHub URL, owner/repo#number, or #number',
     resolve: async (ref): Promise<Resolved | null> => {
@@ -450,7 +445,7 @@ export function createGithubTracker(
       }
       let issue: GithubIssue;
       try {
-        issue = client.fetchIssue(target);
+        issue = await client.fetchIssue(target);
       } catch (error: unknown) {
         return { kind: 'error', message: messageOf(error), reason: 'tracker_unavailable' };
       }
@@ -467,7 +462,7 @@ export function createGithubTracker(
       if (add === undefined && (status !== 'clear' || remove.length === 0)) {
         return null;
       }
-      editLabels(locate(issue), add === undefined ? [] : [add], remove);
+      await editLabels(locate(issue), add === undefined ? [] : [add], remove);
       return null;
     },
     tickBoxes: async (issue, keys) => {
@@ -476,10 +471,10 @@ export function createGithubTracker(
       }
       const at = locate(issue);
       // The body as it is now: people may have edited it since it was read.
-      const current = client.fetchIssue({ ...at, host: config?.host ?? 'github.com' }).body;
+      const current = (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body;
       const ticked = tickMarkdown(current, keys);
       if (ticked.body !== current) {
-        editBody(at, ticked.body);
+        await editBody(at, ticked.body);
       }
       return { conflicts: ticked.conflicts };
     },

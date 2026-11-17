@@ -2051,7 +2051,7 @@ test('sync leaves an open pull request waiting at handoff', async () => {
 
 test('a webhook about a ticket pull request completes it like a sync would', async () => {
   const { branch, db, service } = await handedOff('merged');
-  const ticket = service.pullRequestChanged({
+  const ticket = await service.pullRequestChanged({
     author: 'dpaez',
     body: '',
     closedAt: '2026-10-16T09:00:00Z',
@@ -2067,7 +2067,7 @@ test('a webhook about a ticket pull request completes it like a sync would', asy
   assert.match(ticket ?? '', /^proj-123-[0-9a-f]{8}$/);
   await waitFor(() => service.status('proj-123').includes('complete'));
   assert.equal(
-    service.pullRequestChanged({
+    await service.pullRequestChanged({
       author: null,
       body: '',
       closedAt: null,
@@ -2850,10 +2850,10 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
     .at(-1);
   const options = { actor: null, idempotencyKey: 'retry-me' };
   const request = { note: null, only: null, skip: [] };
-  const first = service.commands.feedback(key ?? '', request, options);
+  const first = await service.commands.feedback(key ?? '', request, options);
   assert.equal(first.kind, 'accepted');
   // The response was lost; the client sends the same request again.
-  const again = service.commands.feedback(key ?? '', request, options);
+  const again = await service.commands.feedback(key ?? '', request, options);
   assert.equal(again.kind, 'accepted', again.kind === 'refused' ? again.message : '');
   assert.equal(
     again.kind === 'accepted' && first.kind === 'accepted' ? again.revision : null,
@@ -2864,7 +2864,7 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
     1,
   );
   // Another key is a new request, refused while the round runs.
-  const other = service.commands.feedback(key ?? '', request, {
+  const other = await service.commands.feedback(key ?? '', request, {
     ...options,
     idempotencyKey: 'other',
   });
