@@ -1,6 +1,6 @@
-import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { CodeHostConfig } from '../config.ts';
+import { ghJson, ghRun, type GhRun, type MaybePromise } from './gh.ts';
 import {
   FACTORY_MARKER,
   FEEDBACK_QUERY,
@@ -51,17 +51,17 @@ export type CodeHost = {
   // reached.
   commentOnPullRequest: (url: string, key: string, markdown: string) => Promise<void>;
   // The open, merged, or closed pull request whose head is `branch`.
-  findPullRequest: (branch: string) => PullRequestInfo | null;
+  findPullRequest: (branch: string) => MaybePromise<PullRequestInfo | null>;
   kind: string;
-  // Null when no pull request exists at `url`. Throws on infrastructure errors.
-  pullRequest: (url: string) => PullRequestInfo | null;
+  // Null when no pull request exists at `url`. Rejects on infrastructure errors.
+  pullRequest: (url: string) => MaybePromise<PullRequestInfo | null>;
   // The feedback on `pullRequest` that is still pending: not in `seen`, the
   // comment ids earlier rounds took or the operator dismissed.
   pullRequestFeedback: (
     pullRequest: PullRequestInfo,
     seen: ReadonlySet<string>,
-  ) => PullRequestFeedback;
-  pullRequestOutcome: (pullRequest: PullRequestInfo) => PullRequestOutcome;
+  ) => MaybePromise<PullRequestFeedback>;
+  pullRequestOutcome: (pullRequest: PullRequestInfo) => MaybePromise<PullRequestOutcome>;
   // Replaces the body of the pull request at `url`. Rejects when the host
   // refuses or cannot be reached.
   setPullRequestBody: (url: string, body: string) => Promise<void>;
@@ -78,66 +78,9 @@ export function codeHostRepo(config: Pick<CodeHostConfig, 'owner' | 'repo'>): st
   return `${config.owner}/${config.repo}`;
 }
 
-// Runs gh and parses its JSON output. Tests pass a stand-in.
-export type GhJson = (args: Array<string>) => unknown;
-
-export const ghJson: GhJson = (args) => {
-  // A pull request's feedback can run past spawnSync's 1 MiB default.
-  const result = spawnSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || 'gh failed').trim());
-  }
-  return JSON.parse(result.stdout) as unknown;
-};
-
-// Runs a gh command the outbox awaits, with `input` on its stdin, and gives
-// back its output. It runs as a child process, so a slow GitHub never blocks
-// the event loop; the timeout only ends a gh that is stuck.
-export type GhRun = (args: Array<string>, input: string) => Promise<string>;
-
-export const GH_WRITE_TIMEOUT_MS = 5 * 60 * 1000;
-
-export function runCommand(input: {
-  args: Array<string>;
-  command: string;
-  stdin: string;
-  timeoutMs: number;
-}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(input.command, input.args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: input.timeoutMs,
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', reject);
-    child.on('close', (code, signal) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(
-        new Error(
-          signal === null
-            ? (stderr || stdout).trim() || `${input.command} exited with code ${code ?? 'unknown'}`
-            : `${input.command} was stopped by ${signal} after ${input.timeoutMs} ms`,
-        ),
-      );
-    });
-    // A command that exits before reading stdin must not crash the server.
-    child.stdin.on('error', () => undefined);
-    child.stdin.end(input.stdin);
-  });
-}
-
-export const ghRun: GhRun = (args, stdin) =>
-  runCommand({ args, command: 'gh', stdin, timeoutMs: GH_WRITE_TIMEOUT_MS });
+// Runs gh and parses its JSON output: ghJson, or a test's stand-in, which may
+// answer at once.
+export type GhRead = (args: Array<string>) => MaybePromise<unknown>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -252,7 +195,7 @@ export function verifyGithubSignature(
 
 export function createGithubCodeHost(
   config: CodeHostConfig | null,
-  gh: GhJson = ghJson,
+  gh: GhRead = ghJson,
   write: GhRun = ghRun,
 ): CodeHost {
   const repo = config === null ? null : codeHostRepo(config);
@@ -260,11 +203,11 @@ export function createGithubCodeHost(
     return pullRequestPath(url)?.repo ?? repo ?? '';
   }
   return {
-    findPullRequest: (branch) => {
+    findPullRequest: async (branch) => {
       if (repo === null) {
         return null;
       }
-      const found = gh([
+      const found = await gh([
         'pr',
         'list',
         '--repo',
@@ -281,9 +224,9 @@ export function createGithubCodeHost(
       return Array.isArray(found) ? pullRequestFrom(found[0]) : null;
     },
     kind: 'github',
-    pullRequest: (url) => {
+    pullRequest: async (url) => {
       try {
-        return pullRequestFrom(gh(['pr', 'view', url, '--json', PR_FIELDS]));
+        return pullRequestFrom(await gh(['pr', 'view', url, '--json', PR_FIELDS]));
       } catch (error: unknown) {
         if (notFound(error)) {
           return null;
@@ -291,9 +234,9 @@ export function createGithubCodeHost(
         throw error;
       }
     },
-    pullRequestFeedback: (pullRequest, seen) => {
+    pullRequestFeedback: async (pullRequest, seen) => {
       const [owner, name] = repoOf(pullRequest.url).split('/');
-      const payload = gh([
+      const payload = await gh([
         'api',
         'graphql',
         '-f',
@@ -308,13 +251,15 @@ export function createGithubCodeHost(
       ]);
       return feedbackFrom(payload, { authors: config?.feedbackAuthors ?? [], seen });
     },
-    // The body goes through stdin, so no shell or argument length limit
-    // touches it.
-    pullRequestOutcome: (pullRequest) => {
+    pullRequestOutcome: async (pullRequest) => {
       const base = `repos/${repoOf(pullRequest.url)}/pulls/${pullRequest.number}`;
-      const fresh = gh(['pr', 'view', pullRequest.url, '--json', PR_FIELDS]);
-      const reviews = pages(gh(['api', '--paginate', '--slurp', `${base}/reviews`]));
-      const commits = pages(gh(['api', '--paginate', '--slurp', `${base}/commits`]));
+      const [fresh, reviewPages, commitPages] = await Promise.all([
+        gh(['pr', 'view', pullRequest.url, '--json', PR_FIELDS]),
+        gh(['api', '--paginate', '--slurp', `${base}/reviews`]),
+        gh(['api', '--paginate', '--slurp', `${base}/commits`]),
+      ]);
+      const reviews = pages(reviewPages);
+      const commits = pages(commitPages);
       return {
         commits: commits.flatMap((item) => {
           const commit = commitFrom(item);

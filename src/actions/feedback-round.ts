@@ -48,13 +48,13 @@ function headOf(worktree: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-function readFeedback(codeHost: CodeHost, url: string, seen: ReadonlySet<string>) {
+async function readFeedback(codeHost: CodeHost, url: string, seen: ReadonlySet<string>) {
   try {
-    const pullRequest = codeHost.pullRequest(url);
+    const pullRequest = await codeHost.pullRequest(url);
     if (pullRequest === null || pullRequest.state !== 'open') {
       return refuse(`${url} is ${pullRequest?.state ?? 'gone'}, not open.`);
     }
-    return { feedback: codeHost.pullRequestFeedback(pullRequest, seen), pullRequest };
+    return { feedback: await codeHost.pullRequestFeedback(pullRequest, seen), pullRequest };
   } catch (error: unknown) {
     const failed: FeedbackRefusal = {
       message: `Cannot read ${url}: ${error instanceof Error ? error.message : String(error)}`,
@@ -83,22 +83,23 @@ function noneLeft(url: string, feedback: PullRequestFeedback): string {
 
 // The pull request's pending feedback, for the operator to pick from: what
 // `/factory feedback --list` and the API's feedback read show. Nothing changes.
-export function listFeedback(input: {
+export async function listFeedback(input: {
   codeHost: CodeHost;
   pullRequestUrl: string | null;
   snapshot: FactorySnapshot;
-}):
+}): Promise<
   | {
       candidates: Array<FeedbackCandidate>;
       pullRequestUrl: string;
       skipped: PullRequestFeedback['skipped'];
       truncated: boolean;
     }
-  | FeedbackRefusal {
+  | FeedbackRefusal
+> {
   if (input.pullRequestUrl === null) {
     return refuse(`${input.snapshot.ticket.displayRef} has no pull request to take feedback from.`);
   }
-  const read = readFeedback(
+  const read = await readFeedback(
     input.codeHost,
     input.pullRequestUrl,
     seenComments(input.snapshot.tasks),
@@ -114,14 +115,14 @@ export function listFeedback(input: {
   };
 }
 
-export function prepareFeedbackRound(input: {
+export async function prepareFeedbackRound(input: {
   choice?: FeedbackChoice;
   codeHost: CodeHost;
   note: string | null;
   // The pull request recorded for the ticket, if any.
   pullRequestUrl: string | null;
   snapshot: FactorySnapshot;
-}): PreparedRound | FeedbackRefusal {
+}): Promise<PreparedRound | FeedbackRefusal> {
   const { execution, ticket } = input.snapshot;
   const refusal = feedbackRoundRefusal(input.snapshot);
   if (refusal !== null) {
@@ -135,7 +136,7 @@ export function prepareFeedbackRound(input: {
   if (worktree === null || head === null) {
     return refuse(`${ticket.displayRef} has no worktree to work in.`);
   }
-  const read = readFeedback(
+  const read = await readFeedback(
     input.codeHost,
     input.pullRequestUrl,
     seenComments(input.snapshot.tasks),

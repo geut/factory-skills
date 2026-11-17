@@ -125,10 +125,14 @@ export type FactoryCommands = {
   // Takes the open pull request's pending feedback, or the part `request`
   // picks, back through work, review, and wrap-up on the same branch, as task
   // F<n>.
-  feedback: (key: string, request: FeedbackRequest, options: CommandOptions) => CommandOutcome;
+  feedback: (
+    key: string,
+    request: FeedbackRequest,
+    options: CommandOptions,
+  ) => Promise<CommandOutcome>;
   // The pull request's pending feedback, for picking a round's comments.
   // Reads GitHub; changes nothing.
-  pendingFeedback: (key: string) => PendingFeedbackOutcome;
+  pendingFeedback: (key: string) => Promise<PendingFeedbackOutcome>;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
@@ -142,7 +146,10 @@ export type FactoryCommands = {
 export type FeedbackRequest = FeedbackChoice & { note: string | null };
 
 export type PendingFeedbackOutcome =
-  | ({ kind: 'listed'; ticket: string } & Exclude<ReturnType<typeof listFeedback>, FeedbackRefusal>)
+  | ({ kind: 'listed'; ticket: string } & Exclude<
+      Awaited<ReturnType<typeof listFeedback>>,
+      FeedbackRefusal
+    >)
   | { kind: 'refused'; message: string; reason: CommandRefusal };
 
 const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
@@ -204,7 +211,7 @@ export type FactoryService = {
   progress: () => Array<TicketProgress>;
   // The code host reported a pull request changed: refresh the ticket that
   // has it and return the ticket's key, or null when none does.
-  pullRequestChanged: (pullRequest: PullRequestInfo) => string | null;
+  pullRequestChanged: (pullRequest: PullRequestInfo) => Promise<string | null>;
   // Records what the code host says about a ticket's pull request, then
   // finishes the ticket on a merge or a close.
   recordPullRequestOutcome: (executionId: string, outcome: PullRequestOutcome) => void;
@@ -363,7 +370,7 @@ export function createFactoryService(input: {
     }
   }
 
-  function pullRequestChanged(pullRequest: PullRequestInfo): string | null {
+  async function pullRequestChanged(pullRequest: PullRequestInfo): Promise<string | null> {
     const found = db
       .prepare(
         `SELECT e.id, e.factory_dir
@@ -376,7 +383,7 @@ export function createFactoryService(input: {
     if (found === undefined) {
       return null;
     }
-    recordPullRequestOutcome(String(found['id']), codeHost().pullRequestOutcome(pullRequest));
+    recordPullRequestOutcome(String(found['id']), await codeHost().pullRequestOutcome(pullRequest));
     void drain();
     return keyOfFactoryDir(String(found['factory_dir']));
   }
@@ -456,14 +463,14 @@ export function createFactoryService(input: {
         const branch = item['worktree_branch'] == null ? null : String(item['worktree_branch']);
         const pullRequest =
           recorded !== null
-            ? host.pullRequest(recorded)
+            ? await host.pullRequest(recorded)
             : branch !== null
-              ? host.findPullRequest(branch)
+              ? await host.findPullRequest(branch)
               : null;
         if (pullRequest === null) {
           continue;
         }
-        recordPullRequestOutcome(executionId, host.pullRequestOutcome(pullRequest));
+        recordPullRequestOutcome(executionId, await host.pullRequestOutcome(pullRequest));
         synced += 1;
       } catch (error: unknown) {
         errors.push(`${executionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -725,11 +732,11 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
-  function feedbackCommitted(
+  async function feedbackCommitted(
     snapshot: FactorySnapshot,
     request: FeedbackRequest,
     options: CommandOptions,
-  ): Committed {
+  ): Promise<Committed> {
     // A client retrying with the same Idempotency-Key gets the round it started,
     // before the ticket's new state or GitHub could refuse it.
     if (options.idempotencyKey !== null) {
@@ -742,7 +749,7 @@ export function createFactoryService(input: {
         };
       }
     }
-    const prepared = prepareFeedbackRound({
+    const prepared = await prepareFeedbackRound({
       choice: { only: request.only, skip: request.skip },
       codeHost: codeHost(),
       note: request.note,
@@ -783,8 +790,8 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
-  function pendingFeedbackOf(snapshot: FactorySnapshot): PendingFeedbackOutcome {
-    const listed = listFeedback({
+  async function pendingFeedbackOf(snapshot: FactorySnapshot): Promise<PendingFeedbackOutcome> {
+    const listed = await listFeedback({
       codeHost: codeHost(),
       pullRequestUrl: pullRequestUrlOf(db, snapshot.execution.id),
       snapshot,
@@ -800,10 +807,10 @@ export function createFactoryService(input: {
       return snapshot;
     }
     if (parsed.list) {
-      const listed = pendingFeedbackOf(snapshot);
+      const listed = await pendingFeedbackOf(snapshot);
       return listed.kind === 'refused' ? listed.message : pendingFeedbackCard(snapshot, listed);
     }
-    const result = feedbackCommitted(snapshot, parsed, piCommand);
+    const result = await feedbackCommitted(snapshot, parsed, piCommand);
     if (result.kind === 'refused') {
       return result.message;
     }
@@ -1055,9 +1062,14 @@ export function createFactoryService(input: {
     cancel: (key, reason, options) =>
       byKey(key, (snapshot) => cancelCommitted(snapshot, reason, options)),
     complete: (key, options) => byKey(key, (snapshot) => completeCommitted(snapshot, options)),
-    feedback: (key, request, options) =>
-      byKey(key, (snapshot) => feedbackCommitted(snapshot, request, options)),
-    pendingFeedback: (key) => {
+    feedback: async (key, request, options) => {
+      const snapshot = loadCurrentByFactoryKey(db, key);
+      if (snapshot === null) {
+        return { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' };
+      }
+      return accepted(await feedbackCommitted(snapshot, request, options));
+    },
+    pendingFeedback: async (key) => {
       const snapshot = loadCurrentByFactoryKey(db, key);
       return snapshot === null
         ? { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' }

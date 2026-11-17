@@ -6,6 +6,7 @@ import type { ConfigResult } from '../config.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
+import type { MaybePromise } from '../ports/gh.ts';
 import type { InventoryResult } from '../ports/trackers.ts';
 import type { EventHub } from '../server/events.ts';
 import type { PrFormatInUse } from '../stages/wrapup/pr-format.ts';
@@ -47,7 +48,7 @@ export function database(context: ApiContext): DatabaseSync {
 export type Webhooks = {
   // Updates the ticket of a pull request the code host reported changed, and
   // returns its key, or null when no ticket has that pull request.
-  pullRequestChanged: (pullRequest: PullRequestInfo) => string | null;
+  pullRequestChanged: (pullRequest: PullRequestInfo) => MaybePromise<string | null>;
   // The configured webhook secret, or null when webhooks are off.
   secret: () => string | null;
   verify: (headers: Record<string, string | undefined>, rawBody: Buffer, secret: string) => boolean;

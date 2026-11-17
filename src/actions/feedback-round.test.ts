@@ -104,9 +104,9 @@ const none: PullRequestFeedback = {
   truncated: false,
 };
 
-test('a round renders its task file from the worktree head, and the file is written once', () => {
+test('a round renders its task file from the worktree head, and the file is written once', async () => {
   const { head, snapshot } = handedOff();
-  const prepared = prepareFeedbackRound({
+  const prepared = await prepareFeedbackRound({
     codeHost: host({ headSha: head }, some),
     note: null,
     pullRequestUrl: url,
@@ -157,14 +157,14 @@ test('a round renders its task file from the worktree head, and the file is writ
   assert.notEqual(readFileSync(file, 'utf8'), 'other');
 });
 
-test('a round is refused without an open pull request, new feedback, or a matching head', () => {
+test('a round is refused without an open pull request, new feedback, or a matching head', async () => {
   const { snapshot } = handedOff();
-  const refused = (
+  const refused = async (
     codeHost: CodeHost,
     pullRequestUrl: string | null = url,
     note: string | null = null,
   ) => {
-    const result = prepareFeedbackRound({
+    const result = await prepareFeedbackRound({
       codeHost,
       note,
       pullRequestUrl,
@@ -172,35 +172,35 @@ test('a round is refused without an open pull request, new feedback, or a matchi
     });
     return 'reason' in result ? `${result.reason}: ${result.message}` : 'started';
   };
-  assert.match(refused(host({}, some), null), /invalid_state: proj-1 has no pull request/);
-  assert.match(refused(host({ state: 'merged' }, some)), /pull\/7 is merged, not open/);
-  assert.match(refused(host(null, some)), /pull\/7 is gone, not open/);
+  assert.match(await refused(host({}, some), null), /invalid_state: proj-1 has no pull request/);
+  assert.match(await refused(host({ state: 'merged' }, some)), /pull\/7 is merged, not open/);
+  assert.match(await refused(host(null, some)), /pull\/7 is gone, not open/);
   assert.match(
-    refused(host({}, none)),
+    await refused(host({}, none)),
     /No pending feedback on .*pull\/7 \(1 skipped: not from collaborators or codeHost\.feedback\.authors\)/,
   );
   assert.match(
-    refused(host({}, { ...none, truncated: true })),
+    await refused(host({}, { ...none, truncated: true })),
     /only the newest 100 of each list were read/,
   );
   // A note alone is enough.
-  assert.equal(refused(host({}, none), url, 'Rename the flag.'), 'started');
+  assert.equal(await refused(host({}, none), url, 'Rename the flag.'), 'started');
   assert.match(
-    refused(host({ headSha: 'f'.repeat(40) }, some)),
+    await refused(host({ headSha: 'f'.repeat(40) }, some)),
     /pull\/7 is at fffffff, the worktree at/,
   );
   const failing = host({}, some);
   failing.pullRequestFeedback = () => {
     throw new Error('HTTP 502');
   };
-  assert.match(refused(failing), /code_host_unavailable: Cannot read .*pull\/7: HTTP 502/);
+  assert.match(await refused(failing), /code_host_unavailable: Cannot read .*pull\/7: HTTP 502/);
   snapshot.execution.policy.pullRequests = false;
-  assert.match(refused(host({}, some)), /codeHost\.pullRequests is off/);
+  assert.match(await refused(host({}, some)), /codeHost\.pullRequests is off/);
   snapshot.execution.status = 'active';
-  assert.match(refused(host({}, some)), /proj-1 is wrapup\/active, not ready for handoff/);
+  assert.match(await refused(host({}, some)), /proj-1 is wrapup\/active, not ready for handoff/);
 });
 
-test('--only takes some pending comments, --skip dismisses some, and an unknown ref is refused', () => {
+test('--only takes some pending comments, --skip dismisses some, and an unknown ref is refused', async () => {
   const { head, snapshot } = handedOff();
   const prepare = (choice: FeedbackChoice) =>
     prepareFeedbackRound({
@@ -210,7 +210,7 @@ test('--only takes some pending comments, --skip dismisses some, and an unknown 
       pullRequestUrl: url,
       snapshot,
     });
-  const only = prepare({ only: ['c22'], skip: [] });
+  const only = await prepare({ only: ['c22'], skip: [] });
   assert.deepEqual('feedback' in only ? only.feedback.items.map((item) => item.ref) : only, [
     'c22',
   ]);
@@ -219,19 +219,19 @@ test('--only takes some pending comments, --skip dismisses some, and an unknown 
     ['22'],
     [],
   ]);
-  const skip = prepare({ only: null, skip: ['r11'] });
+  const skip = await prepare({ only: null, skip: ['r11'] });
   assert.deepEqual('feedback' in skip ? [skip.feedback.taken, skip.feedback.dismissed] : skip, [
     ['22'],
     ['11'],
   ]);
-  const unknown = prepare({ only: ['c99'], skip: [] });
+  const unknown = await prepare({ only: ['c99'], skip: [] });
   assert.match(
     'message' in unknown ? unknown.message : '',
     /c99 is not pending feedback on .*pull\/7\. Pending: r11, c22\./,
   );
 });
 
-test('the pending list shows each comment by its ref, and reads past what earlier rounds saw', () => {
+test('the pending list shows each comment by its ref, and reads past what earlier rounds saw', async () => {
   const { snapshot } = handedOff();
   let seenByHost: ReadonlySet<string> = new Set();
   const codeHost = host({}, two);
@@ -258,17 +258,12 @@ test('the pending list shows each comment by its ref, and reads past what earlie
     taskId: taskId('F1'),
     title: 'Feedback round 1',
   });
-  const listed = listFeedback({ codeHost, pullRequestUrl: url, snapshot });
+  const listed = await listFeedback({ codeHost, pullRequestUrl: url, snapshot });
   assert.deepEqual([...seenByHost], ['33', '44']);
   assert.deepEqual(
     'candidates' in listed ? listed.candidates.map((item) => `${item.ref} ${item.author}`) : listed,
     ['r11 alice', 'c22 bob'],
   );
-  assert.match(
-    (() => {
-      const refused = listFeedback({ codeHost, pullRequestUrl: null, snapshot });
-      return 'message' in refused ? refused.message : '';
-    })(),
-    /has no pull request/,
-  );
+  const refused = await listFeedback({ codeHost, pullRequestUrl: null, snapshot });
+  assert.match('message' in refused ? refused.message : '', /has no pull request/);
 });

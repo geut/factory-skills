@@ -177,9 +177,9 @@ const FeedbackRefs = z
   .meta({ description: 'Refs of pending comments, such as r2841017733 or c6799058255.' });
 
 const startFeedbackRound = defineRoute({
-  handler: ({ actor, body, context, headers, params }) =>
+  handler: async ({ actor, body, context, headers, params }) =>
     answer(
-      context.commands.feedback(
+      await context.commands.feedback(
         params.key,
         { note: body?.note ?? null, only: body?.only ?? null, skip: body?.skip ?? [] },
         options(actor, headers),
@@ -252,8 +252,8 @@ export const PendingFeedback = z
   .meta({ id: 'PendingFeedback' });
 
 const listPendingFeedback = defineRoute({
-  handler: ({ context, params }) => {
-    const listed = context.commands.pendingFeedback(params.key);
+  handler: async ({ context, params }) => {
+    const listed = await context.commands.pendingFeedback(params.key);
     if (listed.kind === 'refused') {
       throw new ProblemError(refusals[listed.reason], listed.message);
     }

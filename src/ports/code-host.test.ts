@@ -2,12 +2,8 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
 import type { CodeHostConfig } from '../config.ts';
-import {
-  createGithubCodeHost,
-  runCommand,
-  type GhJson,
-  type PullRequestInfo,
-} from './code-host.ts';
+import { createGithubCodeHost, type GhRead, type PullRequestInfo } from './code-host.ts';
+import { runCommand } from './gh.ts';
 
 const config: CodeHostConfig = {
   feedbackAuthors: [],
@@ -35,7 +31,7 @@ const view = {
   url: 'https://github.com/geut/factory-skills/pull/7',
 };
 
-function gh(answers: Record<string, unknown>, calls: Array<string> = []): GhJson {
+function gh(answers: Record<string, unknown>, calls: Array<string> = []): GhRead {
   return (args) => {
     const key = args.join(' ');
     calls.push(key);
@@ -51,9 +47,9 @@ function gh(answers: Record<string, unknown>, calls: Array<string> = []): GhJson
   };
 }
 
-test('a pull request reads by URL, and a missing one is null', () => {
+test('a pull request reads by URL, and a missing one is null', async () => {
   const host = createGithubCodeHost(config, gh({ 'pr view': view }));
-  assert.deepEqual(host.pullRequest(view.url), {
+  assert.deepEqual(await host.pullRequest(view.url), {
     author: 'dpaez',
     body: '## What changed\n\nKeeps the filter.',
     closedAt: null,
@@ -70,23 +66,26 @@ test('a pull request reads by URL, and a missing one is null', () => {
     config,
     gh({ 'pr view': new Error('no pull requests found for branch') }),
   );
-  assert.equal(missing.pullRequest(view.url), null);
+  assert.equal(await missing.pullRequest(view.url), null);
   const down = createGithubCodeHost(config, gh({ 'pr view': new Error('gh: connection refused') }));
-  assert.throws(() => down.pullRequest(view.url), /connection refused/);
+  await assert.rejects(async () => down.pullRequest(view.url), /connection refused/);
 });
 
-test('a pull request opened by hand is found by its branch', () => {
+test('a pull request opened by hand is found by its branch', async () => {
   const calls: Array<string> = [];
   const host = createGithubCodeHost(
     config,
     gh({ 'pr list': [{ ...view, state: 'MERGED' }] }, calls),
   );
-  assert.equal(host.findPullRequest('factory/proj-123')?.state, 'merged');
+  assert.equal((await host.findPullRequest('factory/proj-123'))?.state, 'merged');
   assert.match(calls[0] ?? '', /--repo geut\/factory-skills --head factory\/proj-123 --state all/);
-  assert.equal(createGithubCodeHost(config, gh({ 'pr list': [] })).findPullRequest('x'), null);
+  assert.equal(
+    await createGithubCodeHost(config, gh({ 'pr list': [] })).findPullRequest('x'),
+    null,
+  );
 });
 
-test('an outcome carries reviews, with bots told apart, and commits', () => {
+test('an outcome carries reviews, with bots told apart, and commits', async () => {
   const host = createGithubCodeHost(
     config,
     gh({
@@ -115,11 +114,11 @@ test('an outcome carries reviews, with bots told apart, and commits', () => {
       'pr view': { ...view, mergedAt: '2026-10-16T09:00:00Z', state: 'MERGED' },
     }),
   );
-  const pullRequest = host.pullRequest(view.url);
+  const pullRequest = await host.pullRequest(view.url);
   if (pullRequest === null) {
     throw new Error('missing pull request');
   }
-  const outcome = host.pullRequestOutcome(pullRequest);
+  const outcome = await host.pullRequestOutcome(pullRequest);
   assert.equal(outcome.pullRequest.state, 'merged');
   assert.deepEqual(
     outcome.reviews.map((review) => [review.id, review.state, review.authorType, review.hasBody]),
@@ -246,10 +245,10 @@ const feedbackPayload = {
   },
 };
 
-test('pending feedback: unresolved threads, review bodies and comments from collaborators that no round took', () => {
+test('pending feedback: unresolved threads, review bodies and comments from collaborators that no round took', async () => {
   const calls: Array<string> = [];
   const host = createGithubCodeHost(config, gh({ 'api graphql': feedbackPayload }, calls));
-  const feedback = host.pullRequestFeedback(openPullRequest, seen);
+  const feedback = await host.pullRequestFeedback(openPullRequest, seen);
   // Names stay strings (-f); the number is typed (-F).
   assert.match(calls[0] ?? '', /-f owner=geut -f repo=factory-skills -F number=7$/);
   assert.match(calls[0] ?? '', /reviewThreads\(last: 100\)/);
@@ -281,20 +280,20 @@ test('pending feedback: unresolved threads, review bodies and comments from coll
   );
   assert.equal(feedback.truncated, false);
   // Nothing seen yet: thread 301 and comment 101 are pending too.
-  const first = host.pullRequestFeedback(openPullRequest, new Set());
+  const first = await host.pullRequestFeedback(openPullRequest, new Set());
   assert.deepEqual(
     first.items.map((item) => item.ref),
     ['r201', 'r301', 'p401', 'c102', 'c101'],
   );
 });
 
-test('a listed bot counts, whichever way its login is spelled', () => {
+test('a listed bot counts, whichever way its login is spelled', async () => {
   for (const listed of ['coderabbitai', 'coderabbitai[bot]', 'CodeRabbitAI']) {
     const host = createGithubCodeHost(
       { ...config, feedbackAuthors: [listed] },
       gh({ 'api graphql': feedbackPayload }),
     );
-    const feedback = host.pullRequestFeedback(openPullRequest, seen);
+    const feedback = await host.pullRequestFeedback(openPullRequest, seen);
     assert.deepEqual(
       feedback.skipped.map((item) => item.author),
       ['outsider', 'passerby'],
@@ -304,14 +303,14 @@ test('a listed bot counts, whichever way its login is spelled', () => {
   }
 });
 
-test('a feedback list longer than one page is flagged, and an unexpected payload fails', () => {
+test('a feedback list longer than one page is flagged, and an unexpected payload fails', async () => {
   const long = structuredClone(feedbackPayload);
   long.data.repository.pullRequest.comments.pageInfo.hasPreviousPage = true;
   const host = createGithubCodeHost(config, gh({ 'api graphql': long }));
-  assert.equal(host.pullRequestFeedback(openPullRequest, seen).truncated, true);
+  assert.equal((await host.pullRequestFeedback(openPullRequest, seen)).truncated, true);
   const broken = createGithubCodeHost(config, gh({ 'api graphql': { data: null } }));
-  assert.throws(
-    () => broken.pullRequestFeedback(openPullRequest, seen),
+  await assert.rejects(
+    async () => broken.pullRequestFeedback(openPullRequest, seen),
     /Unexpected pull request feedback from GitHub/,
   );
 });
