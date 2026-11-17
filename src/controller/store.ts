@@ -23,6 +23,7 @@ import {
   type FactorySnapshot,
   type IdSource,
   type Policy,
+  type PullRequestChange,
   type ReplyRecord,
   type RunId,
   type RunRecord,
@@ -206,6 +207,23 @@ function parsePolicy(raw: string): Policy {
     // Executions started before worktree setup existed have none.
     worktreeSetup: parseCommands(value['worktreeSetup'] ?? []),
   };
+}
+
+// A pull request write's change: a body, as schema 8 first stored it, or a
+// comment under its key.
+function pullRequestChange(payload: Record<string, unknown>): PullRequestChange | null {
+  if (typeof payload['body'] === 'string') {
+    return { body: payload['body'], kind: 'body' };
+  }
+  const comment = payload['comment'];
+  if (
+    isRecord(comment) &&
+    typeof comment['key'] === 'string' &&
+    typeof comment['markdown'] === 'string'
+  ) {
+    return { key: comment['key'], kind: 'comment', markdown: comment['markdown'] };
+  }
+  return null;
 }
 
 // Executions started before title templates have none. A template the
@@ -945,18 +963,20 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
   if (
     kind === 'update_pull_request' &&
     run !== null &&
-    typeof payload['body'] === 'string' &&
     typeof payload['pullRequestUrl'] === 'string'
   ) {
-    return {
-      ...base,
-      attentionReplyId: null,
-      attentionRequestId: null,
-      body: payload['body'],
-      kind,
-      pullRequestUrl: payload['pullRequestUrl'],
-      runId: runId(run),
-    };
+    const change = pullRequestChange(payload);
+    if (change !== null) {
+      return {
+        ...base,
+        attentionReplyId: null,
+        attentionRequestId: null,
+        change,
+        kind,
+        pullRequestUrl: payload['pullRequestUrl'],
+        runId: runId(run),
+      };
+    }
   }
   if (kind === 'prepare_worktree' && typeof payload['slug'] === 'string') {
     return {
@@ -1031,7 +1051,14 @@ function payloadJson(action: ActionRecord): string {
     case 'open_diff':
       return jsonText({ cwd: action.cwd, name: action.name });
     case 'update_pull_request':
-      return jsonText({ body: action.body, pullRequestUrl: action.pullRequestUrl });
+      return jsonText(
+        action.change.kind === 'body'
+          ? { body: action.change.body, pullRequestUrl: action.pullRequestUrl }
+          : {
+              comment: { key: action.change.key, markdown: action.change.markdown },
+              pullRequestUrl: action.pullRequestUrl,
+            },
+      );
     case 'prepare_worktree':
       return jsonText({ slug: action.slug });
     case 'notify_attention':

@@ -8,6 +8,7 @@ import type { FactorySnapshot, WrapupBaseline, WrapupValidationReport } from '..
 import { isOsMetadata } from '../os-metadata.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import { shellQuote } from '../shell.ts';
+import { feedbackRounds } from '../stages/feedback.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
 import { citations, latestReviews } from '../stages/review/parse.ts';
 import { changedRules } from '../stages/review/rules.ts';
@@ -318,6 +319,8 @@ export function validateWrapup(input: {
   generated: Array<string>;
   output: string;
   pullRequests: boolean;
+  // The commit a feedback round started from, or null for the first wrap-up.
+  roundBase: string | null;
   ticketDir: string;
   // The title the pull request must have, with wrap-up's summary in it.
   title: PullRequestTitle;
@@ -623,11 +626,24 @@ export function validateWrapup(input: {
       { codeRoot: input.codeRoot, worktree: input.worktree },
       Object.keys(current.worktree),
     ),
+    // What the round changed, for its comment on the pull request.
+    roundFiles: input.roundBase === null ? [] : roundFiles(input.worktree, input.roundBase),
     usage: input.usage(),
   };
   return failures.length === 0
     ? passedReport(WRAPUP_VALIDATOR_VERSION, checks, detail)
     : failedReport(WRAPUP_VALIDATOR_VERSION, checks, failures, detail);
+}
+
+// The paths a feedback round's commits changed; none when git cannot say.
+function roundFiles(worktree: string, roundBase: string): Array<string> {
+  const changed = git(worktree, ['diff', '--name-only', roundBase, 'HEAD']);
+  return changed.code === 0
+    ? changed.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+    : [];
 }
 
 function outputOf(resultJson: string | null): string {
@@ -721,6 +737,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         generated: execution.policy.validation.wrapup.generated,
         output: outputOf(run.resultJson),
         pullRequests: execution.policy.pullRequests,
+        roundBase: feedbackRounds(snapshot.tasks) === 0 ? null : execution.roundBaseSha,
         ticketDir: ticketDirOf(execution.factoryDir),
         title: ticketTitle(snapshot),
         usage: deps.usage,

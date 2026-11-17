@@ -49,8 +49,11 @@ export type Outcome =
       notice?: string;
       // For the stage that plans: the tasks to register, from its plan.
       plan?: { path: string; tasks: Array<PlannedTask> };
-      // For the closing stage: the pull request it checked, if any.
+      // For the closing stage: the pull request it checked, if any, and its head.
+      pullRequestHead?: string;
       pullRequestUrl?: string;
+      // For a feedback round's closing stage: the paths the round changed.
+      roundFiles?: Array<string>;
       // For the closing stage: the project rule files the ticket changes.
       rules?: Array<string>;
       summary?: TaskSummary;

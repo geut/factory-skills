@@ -1,7 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { CodeHostConfig } from '../config.ts';
-import { FEEDBACK_QUERY, feedbackFrom, type PullRequestFeedback } from './pull-request-feedback.ts';
+import {
+  FACTORY_MARKER,
+  FEEDBACK_QUERY,
+  feedbackFrom,
+  type PullRequestFeedback,
+} from './pull-request-feedback.ts';
 
 // The code host port: how the factory reads pull requests, their feedback, and
 // checks webhook deliveries. It only reads; the wrap-up agent opens the pull
@@ -39,6 +44,10 @@ export type PullRequestOutcome = {
 };
 
 export type CodeHost = {
+  // Posts `markdown` on the pull request at `url`, or replaces the comment
+  // posted before under `key`. Rejects when the host refuses or cannot be
+  // reached.
+  commentOnPullRequest: (url: string, key: string, markdown: string) => Promise<void>;
   // The open, merged, or closed pull request whose head is `branch`.
   findPullRequest: (branch: string) => PullRequestInfo | null;
   kind: string;
@@ -79,10 +88,10 @@ export const ghJson: GhJson = (args) => {
   return JSON.parse(result.stdout) as unknown;
 };
 
-// Runs a gh command that writes, with `input` on its stdin. It runs as a
-// child process the server awaits, so a slow GitHub never blocks the event
-// loop; the timeout only ends a gh that is stuck.
-export type GhRun = (args: Array<string>, input: string) => Promise<void>;
+// Runs a gh command the outbox awaits, with `input` on its stdin, and gives
+// back its output. It runs as a child process, so a slow GitHub never blocks
+// the event loop; the timeout only ends a gh that is stuck.
+export type GhRun = (args: Array<string>, input: string) => Promise<string>;
 
 export const GH_WRITE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -91,29 +100,30 @@ export function runCommand(input: {
   command: string;
   stdin: string;
   timeoutMs: number;
-}): Promise<void> {
+}): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(input.command, input.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: input.timeoutMs,
     });
-    let output = '';
+    let stdout = '';
+    let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
+      stdout += chunk.toString();
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
+      stderr += chunk.toString();
     });
     child.on('error', reject);
     child.on('close', (code, signal) => {
       if (code === 0) {
-        resolve();
+        resolve(stdout);
         return;
       }
       reject(
         new Error(
           signal === null
-            ? output.trim() || `${input.command} exited with code ${code ?? 'unknown'}`
+            ? (stderr || stdout).trim() || `${input.command} exited with code ${code ?? 'unknown'}`
             : `${input.command} was stopped by ${signal} after ${input.timeoutMs} ms`,
         ),
       );
@@ -199,6 +209,24 @@ function notFound(error: unknown): boolean {
   );
 }
 
+// The repository and number of a pull request URL, or null for another URL.
+function pullRequestPath(url: string): { number: string; repo: string } | null {
+  const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  const [, owner, name, number] = match ?? [];
+  return owner === undefined || name === undefined || number === undefined
+    ? null
+    : { number, repo: `${owner}/${name}` };
+}
+
+// A write needs a pull request URL; anything else is refused before gh runs.
+function writablePullRequest(url: string): { number: string; repo: string } {
+  const found = pullRequestPath(url);
+  if (found === null) {
+    throw new Error(`${url} is not a pull request URL.`);
+  }
+  return found;
+}
+
 // `gh api --paginate` prints one JSON array per page; --slurp joins them.
 function pages(value: unknown): Array<unknown> {
   if (!Array.isArray(value)) {
@@ -226,8 +254,7 @@ export function createGithubCodeHost(
 ): CodeHost {
   const repo = config === null ? null : codeHostRepo(config);
   function repoOf(url: string): string {
-    const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
-    return match?.[1] && match[2] ? `${match[1]}/${match[2]}` : (repo ?? '');
+    return pullRequestPath(url)?.repo ?? repo ?? '';
   }
   return {
     findPullRequest: (branch) => {
@@ -301,12 +328,41 @@ export function createGithubCodeHost(
     // gh versions over Projects (classic). The body goes through stdin, so no
     // shell or argument length limit touches it.
     setPullRequestBody: async (url, body) => {
-      const match = /^https?:\/\/[^/]+\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
-      if (match === null) {
-        throw new Error(`${url} is not a pull request URL.`);
-      }
+      const { number, repo: target } = writablePullRequest(url);
+      await write(['api', '-X', 'PATCH', `repos/${target}/pulls/${number}`, '-F', 'body=@-'], body);
+    },
+    // The hidden marker finds the comment again, and tells the feedback reader
+    // it is the factory's own.
+    commentOnPullRequest: async (url, key, markdown) => {
+      const { number, repo: target } = writablePullRequest(url);
+      const marker = `${FACTORY_MARKER}${key} -->`;
+      const listed = pages(
+        JSON.parse(
+          await write(
+            ['api', '--paginate', '--slurp', `repos/${target}/issues/${number}/comments`],
+            '',
+          ),
+        ),
+      );
+      const existing = listed.find(
+        (comment) =>
+          isRecord(comment) &&
+          typeof comment['body'] === 'string' &&
+          comment['body'].includes(marker) &&
+          typeof comment['id'] === 'number',
+      );
+      const body = `${markdown}\n\n${marker}`;
       await write(
-        ['api', '-X', 'PATCH', `repos/${match[1]}/${match[2]}/pulls/${match[3]}`, '-F', 'body=@-'],
+        isRecord(existing)
+          ? [
+              'api',
+              '-X',
+              'PATCH',
+              `repos/${target}/issues/comments/${String(existing['id'])}`,
+              '-F',
+              'body=@-',
+            ]
+          : ['api', '-X', 'POST', `repos/${target}/issues/${number}/comments`, '-F', 'body=@-'],
         body,
       );
     },
