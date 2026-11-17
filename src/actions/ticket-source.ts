@@ -52,7 +52,7 @@ export async function applyTicketUpdate(
       failed = error;
     }
   }
-  if (updates.comments && tracker.capabilities.has('comment')) {
+  if (update.comment !== null && updates.comments && tracker.capabilities.has('comment')) {
     // The met items go in the comment when they were not ticked on the issue:
     // ticking is off, or it failed.
     const metHeading =
