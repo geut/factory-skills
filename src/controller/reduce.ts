@@ -29,6 +29,15 @@ import type { ContextGaps } from '../stages/plan/context.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
+import {
+  cancelledComment,
+  feedbackRoundComment,
+  handoffChecklist,
+  handoffComment,
+  pausedComment,
+  ruleChangesLine,
+  startedComment,
+} from './tracker-comments.ts';
 
 function reject(snapshot: FactorySnapshot | null, message: string): Reduction {
   return {
@@ -248,7 +257,10 @@ function pauseWithNotice(
   }
   const once = kept === null ? attention.id : `${attention.id}:${input.ids.action()}`;
   trackerUpdate(snapshot, input.ids, {
-    comment: pausedComment(snapshot, input.question),
+    comment: pausedComment(snapshot.execution.policy.communication, {
+      commandRef: snapshot.ticket.commandRef,
+      question: input.question,
+    }),
     issueStatus: null,
     key: `paused:${once}`,
     update: 'paused',
@@ -276,7 +288,8 @@ export function trackerUpdate(
   ids: IdSource,
   input: {
     checklist?: Array<{ key: string; text: string }>;
-    comment: string;
+    // Null when the ticket's verbosity leaves the comment out.
+    comment: string | null;
     commentKey?: string;
     issueStatus: 'clear' | 'in_progress' | 'in_review' | null;
     key: string;
@@ -286,11 +299,15 @@ export function trackerUpdate(
   if (snapshot.ticket.sourceKind === 'file' || snapshot.ticket.sourceKind === 'text') {
     return;
   }
+  const checklist = input.checklist ?? [];
+  if (input.comment === null && checklist.length === 0 && input.issueStatus === null) {
+    return;
+  }
   snapshot.actions.push({
     attempts: 0,
     attentionReplyId: null,
     attentionRequestId: null,
-    checklist: input.checklist ?? [],
+    checklist,
     comment: input.comment,
     commentKey: input.commentKey ?? null,
     id: ids.action(),
@@ -304,20 +321,6 @@ export function trackerUpdate(
     status: 'pending',
     update: input.update,
   });
-}
-
-// The comment a pause that needs a person leaves on the issue.
-function pausedComment(snapshot: FactorySnapshot, question: string): string {
-  return [
-    'The factory paused this ticket and needs a person:',
-    '',
-    question
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n'),
-    '',
-    `Answer from the dashboard, or in Pi with \`/factory reply ${snapshot.ticket.commandRef} "answer"\`.`,
-  ].join('\n');
 }
 
 // A prepared session for one stage, launched with that stage's model and thinking.
@@ -696,7 +699,10 @@ function applyTerminal(
       snapshot.execution.retry = null;
       if (attention !== undefined) {
         trackerUpdate(snapshot, ids, {
-          comment: pausedComment(snapshot, terminal.question),
+          comment: pausedComment(snapshot.execution.policy.communication, {
+            commandRef: snapshot.ticket.commandRef,
+            question: terminal.question,
+          }),
           issueStatus: null,
           key: `paused:${attention.id}`,
           update: 'paused',
@@ -802,7 +808,7 @@ function reduceStart(
   // Plan reads the code the tasks will change, so the worktree comes first.
   enqueueWorktree(created, ids);
   trackerUpdate(created, ids, {
-    comment: 'The factory started working on this issue.',
+    comment: startedComment(created.execution.policy.communication),
     issueStatus: 'in_progress',
     key: 'started',
     update: 'started',
@@ -1150,14 +1156,8 @@ function handOff(
   checklist: IssueChecklist | null,
   rules: Array<string>,
 ): Reduction {
-  // A change to the project's rules is named before anyone merges it.
-  const ruleChanges =
-    rules.length === 0
-      ? []
-      : [
-          '',
-          `This ticket changes project rules: ${rules.join(', ')}. The reviewer judged the work by the base branch's rules and each change by the task's scope; check them before merging.`,
-        ];
+  // Pi always gets the factory's own wording: it is not outward.
+  const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine('factory', rules)];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
   snapshot.execution.status = 'ready_for_handoff';
@@ -1192,20 +1192,10 @@ function handOff(
       name: `🔀 ${ref}`,
     },
   );
+  const { communication } = snapshot.execution.policy;
   trackerUpdate(snapshot, ids, {
-    checklist: checklist?.met.map(({ key, text }) => ({ key, text })) ?? [],
-    comment: [
-      pullRequestUrl === null
-        ? 'The factory finished this ticket. Its handoff has the merge commands.'
-        : `The factory finished this ticket and opened ${pullRequestUrl} for review.`,
-      ...ruleChanges,
-      ...(checklist === null || checklist.decisions.length === 0
-        ? []
-        : ['', 'Decisions:', ...checklist.decisions.map((decision) => `- ${decision}`)]),
-      ...(checklist === null || checklist.open.length === 0
-        ? []
-        : ['', 'Left open:', ...checklist.open.map((box) => `- [ ] ${box.text} — ${box.reason}`)]),
-    ].join('\n'),
+    checklist: handoffChecklist(communication, checklist),
+    comment: handoffComment(communication, { checklist, pullRequestUrl, rules }),
     // One handoff comment per ticket: a rerun's replaces it.
     commentKey: `handoff:${snapshot.ticket.id}`,
     issueStatus: 'in_review',
@@ -1647,7 +1637,7 @@ export function reduce(input: {
       });
       snapshot.execution.roundBaseSha = event.startHead;
       trackerUpdate(snapshot, ids, {
-        comment: `The factory started feedback round ${event.round} on the pull request.`,
+        comment: feedbackRoundComment(snapshot.execution.policy.communication, event.round),
         issueStatus: 'in_progress',
         key: `feedback:${event.round}`,
         update: 'started',
@@ -1728,10 +1718,7 @@ export function reduce(input: {
       snapshot.execution.statusReasonCode = 'cancelled_by_actor';
       snapshot.execution.statusReason = event.reason ?? 'Cancelled by a person.';
       trackerUpdate(snapshot, ids, {
-        comment: [
-          `The factory stopped working on this issue: cancelled${event.by === null ? '' : ` by ${event.by}`}.`,
-          ...(event.reason === null ? [] : ['', `> ${event.reason}`]),
-        ].join('\n'),
+        comment: cancelledComment(snapshot.execution.policy.communication, event),
         issueStatus: 'clear',
         key: 'cancelled',
         update: 'cancelled',

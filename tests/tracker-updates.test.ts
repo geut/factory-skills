@@ -44,7 +44,10 @@ type Tracked = {
   labels: Array<{ add: Array<string>; remove: Array<string> }>;
 };
 
-function repository(tracker: Record<string, unknown> = {}): string {
+function repository(
+  tracker: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {},
+): string {
   const codeRoot = mkdtempSync(path.join(tmpdir(), 'factory-updates-'));
   roots.push(codeRoot);
   initRepo(codeRoot);
@@ -63,6 +66,7 @@ function repository(tracker: Record<string, unknown> = {}): string {
         },
         ...tracker,
       },
+      ...extra,
     }),
   );
   const pi = path.join(codeRoot, 'pi');
@@ -182,6 +186,30 @@ test('a question comments on the issue with how to answer it', async () => {
   await until(() => tracked.comments.length === 2);
   assert.match(tracked.comments[1] ?? '', /> Which API\?/);
   assert.match(tracked.comments[1] ?? '', /\/factory reply geut\/factory-skills#7 "answer"/);
+});
+
+test('at minimal, in the developer voice, only statuses and the pause question reach the issue', async () => {
+  const codeRoot = repository({}, { communication: { verbosity: 'minimal', voice: 'developer' } });
+  const tracked: Tracked = { comments: [], labels: [] };
+  const runtime = new FakeRuntime();
+  const { base, token } = await start(codeRoot, client(tracked), runtime);
+  await startTicket(base, token);
+  await until(() => runtime.launches.length === 1 && action(codeRoot)['status'] === 'succeeded');
+  // Started: the status moves, with no comment.
+  assert.deepEqual(tracked.comments, []);
+  assert.deepEqual(tracked.labels, [
+    { add: ['factory:in-progress'], remove: ['factory:in-review'] },
+  ]);
+  const run = runtime.launches[0]?.runId;
+  if (run === undefined) {
+    throw new Error('missing run');
+  }
+  runtime.emit(run, { kind: 'caller_ping', question: 'Which API?', usage: sampleUsage() });
+  await until(() => tracked.comments.length === 1);
+  const [visible, marker] = (tracked.comments[0] ?? '').split('<!--');
+  assert.equal(visible?.trim(), 'Blocked, need input:\n\n> Which API?');
+  // The hidden marker stays, so a retry finds the comment.
+  assert.match(marker ?? '', /^ factory:tracker:.*:paused:/);
 });
 
 test('an unreachable tracker is a warning on the ticket, never a pause', async () => {

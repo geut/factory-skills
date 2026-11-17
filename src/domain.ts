@@ -704,8 +704,9 @@ export type ActionRecord =
       attentionRequestId: null;
       // The issue's checklist items to tick; empty for most updates.
       checklist: Array<{ key: string; text: string }>;
-      // Markdown for the comment.
-      comment: string;
+      // Markdown for the comment; null posts none, when the ticket's
+      // verbosity leaves it out.
+      comment: string | null;
       // A key the comment keeps across executions: a rerun's comment replaces
       // the one of that key. Null posts one comment per update.
       commentKey: string | null;

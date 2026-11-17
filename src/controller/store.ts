@@ -962,7 +962,10 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
       runId: null,
     };
   }
-  if (kind === 'update_ticket_source' && typeof payload['comment'] === 'string') {
+  if (
+    kind === 'update_ticket_source' &&
+    (typeof payload['comment'] === 'string' || payload['comment'] === null)
+  ) {
     const issueStatus = payload['issueStatus'];
     const update = payload['update'];
     return {
@@ -976,7 +979,7 @@ function actionFromRow(record: Record<string, unknown>): ActionRecord {
               : [],
           )
         : [],
-      comment: payload['comment'],
+      comment: typeof payload['comment'] === 'string' ? payload['comment'] : null,
       commentKey: typeof payload['commentKey'] === 'string' ? payload['commentKey'] : null,
       issueStatus:
         issueStatus === 'clear' || issueStatus === 'in_progress' || issueStatus === 'in_review'

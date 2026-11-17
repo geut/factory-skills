@@ -192,6 +192,48 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
   );
 });
 
+// The handoff update an accepted wrap-up queues, for the ticket's settings.
+function handoffUpdate(communication: FactorySnapshot['execution']['policy']['communication']) {
+  const { runId, snapshot } = finishedWrapup();
+  snapshot.execution.policy.communication = communication;
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: {
+          decisions: ['Stored the filter in the URL.'],
+          met: [{ id: 'B1', key: '1:Reload keeps it.', text: 'Reload keeps it.' }],
+          open: [],
+        },
+        pullRequest: null,
+        rules: [],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  return (passed.snapshot ?? snapshot).actions.find(
+    (item): item is Extract<ActionRecord, { kind: 'update_ticket_source' }> =>
+      item.kind === 'update_ticket_source' && item.update === 'handoff',
+  );
+}
+
+test('at minimal the handoff only moves the status; at standard it ticks and comments briefly', () => {
+  const minimal = handoffUpdate({ tone: 't', verbosity: 'minimal', voice: 'factory' });
+  assert.deepEqual(
+    [minimal?.comment, minimal?.checklist, minimal?.issueStatus],
+    [null, [], 'in_review'],
+  );
+  const standard = handoffUpdate({ tone: 't', verbosity: 'standard', voice: 'developer' });
+  assert.equal(standard?.comment, 'Done, ready to merge.');
+  assert.deepEqual(standard?.checklist, [{ key: '1:Reload keeps it.', text: 'Reload keeps it.' }]);
+});
+
 test('an accepted wrap-up names the project rule files the ticket changes', () => {
   const { runId, snapshot } = finishedWrapup();
   const passed = reduce({
