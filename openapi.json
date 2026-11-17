@@ -146,6 +146,54 @@
         }
       }
     },
+    "/v1/factory/communication": {
+      "put": {
+        "operationId": "putCommunication",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Set how much new tickets write outside, and in whose voice",
+        "tags": [
+          "meta"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Communication"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "FACTORY.json now has these settings; tickets started from now on use them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Communication"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "operationId": "listTickets",
@@ -1806,6 +1854,40 @@
   },
   "components": {
     "schemas": {
+      "Communication": {
+        "type": "object",
+        "properties": {
+          "tone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "How the `developer` voice should sound, in the owner’s words."
+          },
+          "verbosity": {
+            "type": "string",
+            "enum": [
+              "minimal",
+              "standard",
+              "full"
+            ],
+            "description": "How much the factory writes outside: `minimal` only the pull request, `standard` adds a short handoff comment and checklist ticks, `full` everything, as before."
+          },
+          "voice": {
+            "type": "string",
+            "enum": [
+              "factory",
+              "developer"
+            ],
+            "description": "`factory` speaks of itself in the third person; `developer` reads as the factory’s owner, in the first person."
+          }
+        },
+        "required": [
+          "tone",
+          "verbosity",
+          "voice"
+        ],
+        "additionalProperties": false
+      },
       "StartTicket": {
         "anyOf": [
           {
@@ -2027,6 +2109,10 @@
       "Factory": {
         "type": "object",
         "properties": {
+          "communication": {
+            "description": "How much new tickets write outside, and in whose voice: FACTORY.json `communication`, with defaults. A ticket keeps the settings it started with.",
+            "$ref": "#/components/schemas/Communication"
+          },
           "factoryId": {
             "type": "string"
           },
@@ -2046,6 +2132,7 @@
           }
         },
         "required": [
+          "communication",
           "factoryId",
           "name",
           "stages"

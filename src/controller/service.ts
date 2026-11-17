@@ -606,6 +606,7 @@ export function createFactoryService(input: {
     return {
       codeHostRepo: config.config.codeHost === null ? null : codeHostRepo(config.config.codeHost),
       codeRoot: input.codeRoot,
+      communication: config.config.communication,
       labels: config.config.labels,
       limits: config.config.limits,
       models: config.config.models,

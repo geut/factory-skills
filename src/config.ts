@@ -1,5 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
+import { Communication, readCommunication, withCommunication } from './communication.ts';
 import type { StageSettings } from './stages/definition.ts';
 import { stageLimits, stages } from './stages/index.ts';
 import {
@@ -125,6 +128,8 @@ export const DEFAULT_SYNC_MINUTES = 10;
 
 export type FactoryConfig = {
   codeHost: CodeHostConfig | null;
+  // How much the factory writes outside, and in whose voice (ADR-004).
+  communication: Communication;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };
@@ -403,9 +408,15 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     return settings;
   }
 
+  const communication = readCommunication(value['communication']);
+  if (typeof communication === 'string') {
+    return { kind: 'error', message: communication };
+  }
+
   return {
     config: {
       codeHost,
+      communication,
       labels,
       limits,
       models: { plan, review, work },
@@ -694,22 +705,77 @@ export function readStageSettings(
   return { kind: 'ok', stages: read };
 }
 
-export function readFactoryConfig(factoryRoot: string): ConfigResult {
-  const file = path.join(factoryRoot, 'FACTORY.json');
+function readFactoryJson(file: string): { text: string; value: unknown } | { message: string } {
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
   } catch {
     return {
-      kind: 'error',
       message: `Missing ${file}. Create FACTORY.json with models.work and models.review before /factory start.`,
     };
   }
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    return { text, value: JSON.parse(text) };
   } catch {
-    return { kind: 'error', message: `${file} is not valid JSON.` };
+    return { message: `${file} is not valid JSON.` };
   }
-  return parseFactoryConfig(parsed);
+}
+
+export function readFactoryConfig(factoryRoot: string): ConfigResult {
+  const read = readFactoryJson(path.join(factoryRoot, 'FACTORY.json'));
+  return 'message' in read
+    ? { kind: 'error', message: read.message }
+    : parseFactoryConfig(read.value);
+}
+
+// FACTORY.json around a rewrite: any object before, and one whose block is
+// complete after.
+const FactoryJsonBefore = z.looseObject({ communication: z.unknown().optional() });
+const FactoryJsonAfter = z.looseObject({ communication: Communication });
+
+// Replaces FACTORY.json's `communication` block and leaves every other byte as
+// it was. The file stays the only source of the settings (ADR-004). A request
+// the rules refuse, or a FACTORY.json that would not parse afterwards, changes
+// nothing. The new text goes to a file beside FACTORY.json that is renamed over
+// it, so a reader never sees half a file; a write that fails removes that file
+// and throws, and FACTORY.json stays as it was.
+export function writeCommunication(factoryRoot: string, input: unknown): ConfigResult {
+  const communication = Communication.safeParse(input);
+  if (!communication.success) {
+    return {
+      kind: 'error',
+      message: `Invalid communication settings: ${z.prettifyError(communication.error)}`,
+    };
+  }
+  const file = path.join(factoryRoot, 'FACTORY.json');
+  const read = readFactoryJson(file);
+  if ('message' in read) {
+    return { kind: 'error', message: read.message };
+  }
+  const before = FactoryJsonBefore.safeParse(read.value);
+  if (!before.success) {
+    return { kind: 'error', message: 'FACTORY.json must be an object.' };
+  }
+  const text = withCommunication(read.text, communication.data);
+  // The edit must change exactly the block: anything else is a bug here, and
+  // the file is left alone.
+  const after = FactoryJsonAfter.parse(JSON.parse(text));
+  const { communication: written, ...rest } = after;
+  const { communication: _replaced, ...kept } = before.data;
+  if (!isDeepStrictEqual(written, communication.data) || !isDeepStrictEqual(rest, kept)) {
+    throw new Error('Rewriting FACTORY.json communication changed more than the block.');
+  }
+  const checked = parseFactoryConfig(after);
+  if (checked.kind === 'error') {
+    return checked;
+  }
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, text);
+    renameSync(temporary, file);
+  } catch (error: unknown) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+  return checked;
 }

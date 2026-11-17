@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Communication } from './communication.ts';
 import type { InternalLabel, Limits, Validation, WorkCommand } from './config.ts';
 import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
@@ -180,6 +181,8 @@ export type Policy = {
   // `codeHost` as `owner/repo`: a GitHub issue there is `#42` in a title.
   codeHostRepo: string | null;
   codeRoot: string;
+  // `communication`: how much the ticket writes outside, and in whose voice.
+  communication: Communication;
   labels: { map: Record<string, InternalLabel> };
   limits: Limits;
   models: { plan: string; review: string; work: string };

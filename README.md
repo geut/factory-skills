@@ -197,7 +197,8 @@ dist/factory token revoke dashboard
 - To rotate without downtime, create a client with a new name, switch the client over, then revoke the old one.
 - The server writes a `local` act token to `.factory/local.token` (mode `0600`) for Pi on the same machine. It replaces the token when the file is missing or the client was revoked.
 - `GET /v1/me` returns the client a token belongs to and its scope (`read` or `act`), to check a token and know up front whether commands are allowed.
-- `GET /v1/factory` returns the factory's `factoryId`, its FACTORY.json `name`, and every stage in flow order, with whether it is optional, enabled, and per task. It reads FACTORY.json when asked; a running ticket keeps the settings it started with.
+- `GET /v1/factory` returns the factory's `factoryId`, its FACTORY.json `name`, its `communication` settings, and every stage in flow order, with whether it is optional, enabled, and per task. It reads FACTORY.json when asked; a running ticket keeps the settings it started with.
+- `PUT /v1/factory/communication` (`act`) takes the whole `communication` block (`verbosity`, `voice`, `tone`), checks it by the same rules as the file, and rewrites that block in FACTORY.json, leaving every other key as it was. It answers with the saved block. A value that breaks the rules is `400 validation_error` and changes nothing. FACTORY.json stays the only source: editing it by hand works too, and either way the change applies to tickets started after it.
 - Commands record the client that sent them. A client can add `X-Factory-On-Behalf-Of: <who>`, such as a dashboard user's name. The server stores it as given and never uses it for access.
 - An unknown or revoked token gets `401 unauthorized`; a `read` token on an `act` route gets `403 insufficient_scope`.
 - Keep tokens off browsers: a web client calls the API from its server.
@@ -271,6 +272,20 @@ Each ticket works in its own git worktree, which starts without installed depend
 - A command that fails, times out, or cannot start stops the ticket with its output, as a failed worktree step. `/factory retry` runs the setup again in the same worktree.
 - An execution keeps the setup it started with; a change to `FACTORY.json` applies to tickets started after it.
 
+## Communication
+
+What the factory writes where people other than its owner read it (tracker comments, checklist ticks, the pull request, and commit messages) follows the `communication` block in FACTORY.json. Pi, the API, and the dashboard always show everything. The design is in [ADR-004](docs/adr/0004-the-factory-writes-outward-communication.md), and the terms are in [GLOSSARY.md](GLOSSARY.md).
+
+```json
+"communication": { "verbosity": "standard", "voice": "developer", "tone": "terse, lowercase, no emoji" }
+```
+
+- `verbosity`: `minimal` (the pull request only, succinct), `standard`, or `full` (the default, everything the factory has always written). Each level writes everything the level below does.
+- `voice`: `factory` (the default) speaks of itself in the third person. `developer` reads as the factory's owner writing in the first person.
+- `tone`: how the `developer` voice should sound, in your words; at most 500 characters. It defaults to "succinct, technical, to the point".
+
+Every field can be left out and takes its default. Any other key, or a value outside these, stops the server at startup with a message naming the field. A ticket keeps the settings it started with, including in its feedback rounds. `PUT /v1/factory/communication` changes them through the API.
+
 ## Tracker and code host
 
 The factory reads issues through a **tracker** and pull requests through a **code host**, configured in `FACTORY.json` as `tracker` and `codeHost`. Each is an adapter behind a fixed interface. GitHub is both, through the `gh` CLI; Linear is a tracker, through its SDK (see [Linear](#linear)), with GitHub as the code host. An operation an adapter cannot do fails with "not supported", and asking for one in `FACTORY.json` stops the server at startup. The old `github` and `keys` blocks are refused with a message saying what replaced them.
@@ -341,6 +356,7 @@ The server refuses to start without the key, or when a team, label, project, or 
     "backlog": { "labels": ["factory"] }
   },
   "codeHost": { "kind": "github", "owner": "geut", "repo": "factory-skills", "pullRequests": true },
+  "communication": { "verbosity": "full", "voice": "factory" },
   "server": { "host": "127.0.0.1", "port": 7731 },
   "limits": { "workCorrections": 3, "reviewRounds": 3, "reviewCorrections": 3 },
   "stages": {

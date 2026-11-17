@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
+import type { Communication } from '../communication.ts';
 import type { ConfigResult } from '../config.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
@@ -21,6 +22,9 @@ export type ApiContext = {
   factoryConfig: (() => ConfigResult) | null;
   instanceId: string;
   openapi: () => Record<string, unknown>;
+  // Replaces FACTORY.json's `communication` block and reads the file back;
+  // null where the server has none.
+  saveCommunication: ((communication: Communication) => ConfigResult) | null;
   // What the Linear workspace has, or null when the tracker is not Linear;
   // null where the server has none.
   trackerInventory: (() => Promise<InventoryResult | null>) | null;
