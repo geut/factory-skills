@@ -172,7 +172,7 @@ test('wrap-up learns which sections make the pull request body, and the tone onl
 test('wrap-up writes the body in the project’s own format, which the controller leaves to it', () => {
   const template: PrFormat = {
     headings: ['What changed', 'Checklist'],
-    kind: 'template',
+    kind: 'github',
     path: '.github/pull_request_template.md',
     text: '## What changed\n\n<!-- what and why -->\n\n## Checklist\n\n- [ ] Tests added\n',
   };
@@ -195,7 +195,7 @@ test('wrap-up writes the body in the project’s own format, which the controlle
     (snapshot) => {
       snapshot.execution.policy.pullRequests = true;
     },
-    { kind: 'instructions', path: 'AGENTS.md', text: '## Pull requests\nLead with the risk.' },
+    { kind: 'agents', path: 'AGENTS.md', text: '## Pull requests\nLead with the risk.' },
   );
   assert.match(
     instructed,

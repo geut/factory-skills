@@ -14,7 +14,12 @@ import { citations, latestReviews } from '../stages/review/parse.ts';
 import { changedRules } from '../stages/review/rules.ts';
 import { checkIssueChecklist, type ChecklistContext } from '../stages/wrapup/checklist.ts';
 import { handoffSections, listedPaths, WRAPUP_HEADINGS } from '../stages/wrapup/handoff.ts';
-import { missingHeadings, readPrFormat, type PrFormat } from '../stages/wrapup/pr-format.ts';
+import {
+  missingHeadings,
+  prFormatInUse,
+  readPrFormat,
+  type PrFormat,
+} from '../stages/wrapup/pr-format.ts';
 import {
   type PullRequestTitle,
   ticketTitle,
@@ -606,7 +611,7 @@ export function validateWrapup(input: {
       // The project's own template: its headings, all of them, in order. A
       // feedback round leaves the body as it is, so only the first wrap-up
       // answers for it.
-      if (input.prFormat.kind === 'template' && input.roundBase === null) {
+      if (input.prFormat.kind === 'github' && input.roundBase === null) {
         const missing = missingHeadings(input.prFormat.headings, found.body);
         if (missing.length > 0) {
           policy.push(
@@ -635,7 +640,7 @@ export function validateWrapup(input: {
   const detail = {
     checklist: checklist.result,
     // Which format the body follows: only the default is the factory's to set.
-    prFormat: input.prFormat.kind,
+    prFormat: prFormatInUse(input.prFormat),
     pullRequest: policy.length === 0 ? checked : null,
     // The human sees these before merging, taken from the worktree, not the handoff.
     rules: changedRules(

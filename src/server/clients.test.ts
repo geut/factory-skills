@@ -129,6 +129,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
         webhooks: null,

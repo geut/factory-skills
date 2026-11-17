@@ -39,6 +39,7 @@ async function serveWith(
         factoryConfig: typeof config === 'function' ? config : () => config,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        pullRequestFormat: () => ({ path: '.github/pull_request_template.md', source: 'github' }),
         saveCommunication,
         trackerInventory: null,
         webhooks: null,
@@ -74,6 +75,7 @@ test('the factory route lists every stage in flow order, and which are on', asyn
     },
     factoryId,
     name: 'catalog',
+    pullRequestFormat: { path: '.github/pull_request_template.md', source: 'github' },
     stages: [
       { enabled: true, name: 'plan', optional: false, perTask: false },
       { enabled: true, name: 'work', optional: false, perTask: true },

@@ -641,7 +641,10 @@ test('a project PR template needs its headings in the pull request body, in orde
     });
   const followed = await withBody('## What changed\n\nKeeps the filter.\n\n## Testing\n\nnpm test');
   assert.equal(followed.status, 'passed', failures(followed));
-  assert.equal(followed.status === 'passed' ? followed.detail.prFormat : null, 'template');
+  assert.deepEqual(followed.status === 'passed' ? followed.detail.prFormat : null, {
+    path: '.github/PULL_REQUEST_TEMPLATE.md',
+    source: 'github',
+  });
   assert.match(
     failures(await withBody('## Summary\n\nPersist the filter.\n\n## Testing\n')),
     /body does not follow \.github\/PULL_REQUEST_TEMPLATE\.md: it needs these headings, in the template's order: "What changed"\. /,

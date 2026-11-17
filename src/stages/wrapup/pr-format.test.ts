@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { git, initRepo } from '../../../tests/git-repo.ts';
-import { missingHeadings, prInstructions, readPrFormat, templateHeadings } from './pr-format.ts';
+import {
+  currentPrFormat,
+  describePrFormat,
+  missingHeadings,
+  prFormatInUse,
+  prInstructions,
+  readPrFormat,
+  templateHeadings,
+} from './pr-format.ts';
 
 const roots: Array<string> = [];
 afterEach(() => {
@@ -92,7 +100,7 @@ test('the format comes from the agent instructions, then a template, then the de
     'AGENTS.md': '## Pull requests\nUse the template, plus a Risk line.\n',
   });
   assert.deepEqual(readPrFormat(both), {
-    kind: 'instructions',
+    kind: 'agents',
     path: 'AGENTS.md',
     text: '## Pull requests\nUse the template, plus a Risk line.',
   });
@@ -100,7 +108,7 @@ test('the format comes from the agent instructions, then a template, then the de
   const templated = repo({ 'AGENTS.md': '# Rules\n', 'docs/pull_request_template.md': template });
   assert.deepEqual(readPrFormat(templated), {
     headings: ['What changed', 'How it was tested', 'Checklist'],
-    kind: 'template',
+    kind: 'github',
     path: 'docs/pull_request_template.md',
     text: template,
   });
@@ -134,7 +142,7 @@ test('symlinked instructions and templates are read through their links', () => 
   git(linked.codeRoot, ['commit', '-m', 'links']);
   const sha = git(linked.codeRoot, ['rev-parse', 'HEAD']);
   assert.deepEqual(readPrFormat({ codeRoot: linked.codeRoot, sha }), {
-    kind: 'instructions',
+    kind: 'agents',
     path: 'AGENTS.md',
     text: '## Pull requests\nLead with the risk.',
   });
@@ -144,8 +152,20 @@ test('symlinked instructions and templates are read through their links', () => 
   const next = git(linked.codeRoot, ['rev-parse', 'HEAD']);
   assert.deepEqual(readPrFormat({ codeRoot: linked.codeRoot, sha: next }), {
     headings: ['What changed'],
-    kind: 'template',
+    kind: 'github',
     path: '.github/pull_request_template.md',
     text: '## What changed\n',
   });
+});
+
+test('the format in use names its source and file, and a ticket started now reads it at HEAD', () => {
+  const templated = repo({ '.github/pull_request_template.md': template });
+  const used = prFormatInUse(currentPrFormat(templated.codeRoot));
+  assert.deepEqual(used, { path: '.github/pull_request_template.md', source: 'github' });
+  assert.equal(describePrFormat(used), 'github (.github/pull_request_template.md)');
+  assert.equal(
+    describePrFormat(prFormatInUse({ kind: 'agents', path: 'AGENTS.md', text: '## PRs' })),
+    'agents (AGENTS.md)',
+  );
+  assert.equal(describePrFormat(prFormatInUse({ kind: 'default' })), "default (the factory's own)");
 });

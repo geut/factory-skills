@@ -51,13 +51,13 @@ function bodyInstructions(input: Pick<WrapupInput, 'communication' | 'prFormat'>
       return [
         `Open the pull request with your ## PR summary as its body. Once the controller accepts your handoff, it sets the body itself from ${pullRequestSections(input.communication)}, so write those for the pull request's reader.`,
       ];
-    case 'template':
+    case 'github':
       return [
         `This project's pull request format is the template ${prFormat.path}, as of the base commit. Write the pull request body in it: keep every heading, in order, fill each section ${extent}, remove its <!-- --> hints, and add no other section and no attribution. Tick a checkbox only when your handoff's evidence supports it, and never delete one. The controller checks the headings and leaves the body to you.`,
         'Template:',
         prFormat.text.trimEnd(),
       ];
-    case 'instructions':
+    case 'agents':
       return [
         `This project's agent instructions (${prFormat.path}, as of the base commit) say how to write a pull request. Write the body that way, ${extent}, with no other section and no attribution. The controller leaves the body to you.`,
         prFormat.text,
@@ -146,7 +146,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
           checklist: report.detail.checklist,
           kind: 'accept',
           notice: report.detail.usage,
-          projectPrFormat: report.detail.prFormat !== 'default',
+          prFormat: report.detail.prFormat,
           roundFiles: report.detail.roundFiles,
           rules: report.detail.rules,
           ...(report.detail.pullRequest === null

@@ -37,6 +37,7 @@ import {
   handshakeExtensionPath,
 } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import { writeEmbeddedSkills } from './embedded-skills.ts';
@@ -311,6 +312,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         factoryConfig: () => readFactoryConfig(factoryRoot),
         instanceId,
         openapi: () => (document ??= buildOpenApiDocument(apiRoutes)),
+        pullRequestFormat: () => prFormatInUse(currentPrFormat(codeRoot)),
         saveCommunication: (communication) => writeCommunication(factoryRoot, communication),
         trackerInventory: async () => {
           const current = readFactoryConfig(factoryRoot);

@@ -79,6 +79,7 @@ async function start(options: Partial<RouterOptions> = {}): Promise<string> {
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({}),
+        pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
         webhooks: null,

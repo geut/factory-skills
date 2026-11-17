@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomIds, zeroUsage, type ActionRecord, type FactorySnapshot } from '../domain.ts';
+import type { PrFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { feedbackRoundWorking, wrapupRunning } from '../stories/scenarios.ts';
 import { errorReport, failedReport, passedReport } from '../validation/report.ts';
 import { WRAPUP_VALIDATOR_VERSION } from '../validation/wrapup.ts';
@@ -111,7 +112,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
       {
         checklist: noIssue,
-        prFormat: 'default' as const,
+        prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -164,7 +165,7 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
             },
           ],
         },
-        prFormat: 'default' as const,
+        prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -215,7 +216,7 @@ function handoffUpdate(communication: FactorySnapshot['execution']['policy']['co
           met: [{ id: 'B1', key: '1:Reload keeps it.', text: 'Reload keeps it.' }],
           open: [],
         },
-        prFormat: 'default' as const,
+        prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
         rules: [],
@@ -248,7 +249,7 @@ test('at minimal the handoff only moves the status; at standard it ticks and com
 // The pull request writes an accepted wrap-up with an open pull request queues.
 function acceptWithPullRequest(
   setup: (snapshot: FactorySnapshot) => void,
-  prFormat: 'default' | 'instructions' | 'template' = 'default',
+  prFormat: PrFormatInUse = { path: null, source: 'default' },
 ) {
   const { runId, snapshot } = finishedWrapup();
   setup(snapshot);
@@ -301,7 +302,10 @@ test('an accepted wrap-up queues the pull request body it built, once and only w
   assert.match(body, /Opened by the factory for /);
   assert.doesNotMatch(body, /## Files/);
   // The project's own format: the agent wrote the body, so nothing to set.
-  for (const format of ['template', 'instructions'] as const) {
+  for (const format of [
+    { path: '.github/pull_request_template.md', source: 'github' },
+    { path: 'AGENTS.md', source: 'agents' },
+  ] as const) {
     assert.deepEqual(
       acceptWithPullRequest((snapshot) => {
         snapshot.execution.policy.pullRequests = true;
@@ -309,6 +313,44 @@ test('an accepted wrap-up queues the pull request body it built, once and only w
       [],
     );
   }
+  // The person's handoff message names the format the pull request followed.
+  const { runId, snapshot } = finishedWrapup();
+  snapshot.execution.policy.pullRequests = true;
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: noIssue,
+        prFormat: { path: '.github/pull_request_template.md', source: 'github' },
+        pullRequest: {
+          author: 'dpaez',
+          body: '',
+          closedAt: null,
+          headBranch: 'factory/demo',
+          headSha: 'abc',
+          mergedAt: null,
+          number: 9,
+          openedAt: null,
+          state: 'open',
+          title: 'Persist the filter',
+          url: 'https://github.com/geut/app/pull/9',
+        },
+        roundFiles: [],
+        rules: [],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  assert.match(
+    (passed.snapshot ?? snapshot).attention.at(-1)?.question ?? '',
+    /\nPull request format: github \(\.github\/pull_request_template\.md\)\.\n/,
+  );
   // Pull requests off: nothing to set.
   assert.deepEqual(
     acceptWithPullRequest(() => {}),
@@ -364,7 +406,7 @@ test('an accepted wrap-up names the project rule files the ticket changes', () =
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
-        prFormat: 'default' as const,
+        prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
         rules: ['AGENTS.md'],
@@ -430,7 +472,7 @@ function failedWith(
   }
   const detail = {
     checklist: noIssue,
-    prFormat: 'default' as const,
+    prFormat: { path: null, source: 'default' as const },
     pullRequest: null,
     roundFiles: [],
     rules: [],

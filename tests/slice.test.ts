@@ -2227,6 +2227,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
         factoryConfig: null,
         instanceId: 'test',
         openapi: () => ({ openapi: '3.1.0' }),
+        pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
         webhooks: null,

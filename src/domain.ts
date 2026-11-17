@@ -7,6 +7,7 @@ import type { InputStage, PreparedInput, StageReports } from './stages/index.ts'
 import type { ContextGaps } from './stages/plan/context.ts';
 import type { Criterion } from './stages/qa/criteria.ts';
 import type { IssueBox, IssueChecklist } from './stages/wrapup/checklist.ts';
+import type { PrFormatInUse } from './stages/wrapup/pr-format.ts';
 import type { TitleTemplate } from './stages/wrapup/title.ts';
 import type { ValidationReport } from './validation/report.ts';
 
@@ -317,9 +318,9 @@ export type ReviewValidationReport = ValidationReport<
 export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
-  // Where the pull request's format came from: the project's own
-  // (`instructions` or `template`), or the factory's `default`.
-  prFormat: 'default' | 'instructions' | 'template';
+  // The format the pull request's body follows: the project's own (`agents`
+  // or `github`), or the factory's `default`, and the file it came from.
+  prFormat: PrFormatInUse;
   pullRequest: PullRequestInfo | null;
   // The paths a feedback round's commits changed; empty for the first wrap-up.
   roundFiles: Array<string>;

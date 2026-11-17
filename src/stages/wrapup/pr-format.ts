@@ -10,11 +10,30 @@ import { CONTEXT_FILE_NAMES } from '../review/rules.ts';
 
 export type PrFormat =
   | { kind: 'default' }
-  // A section of AGENTS.md or CLAUDE.md about pull requests: prose the agent
-  // follows and the factory cannot check.
-  | { kind: 'instructions'; path: string; text: string }
-  // A template file: its headings must all be in the body, in order.
-  | { headings: Array<string>; kind: 'template'; path: string; text: string };
+  // `agents`: a section of AGENTS.md or CLAUDE.md about pull requests, prose
+  // the agent follows and the factory cannot check.
+  | { kind: 'agents'; path: string; text: string }
+  // `github`: a pull request template file, whose headings must all be in the
+  // body, in order.
+  | { headings: Array<string>; kind: 'github'; path: string; text: string };
+
+// Which format a pull request follows, and the file it came from: `agents`
+// for agent instructions, `github` for a pull request template, `default` for
+// the factory's own.
+export type PrFormatInUse = { path: string | null; source: PrFormat['kind'] };
+
+export function prFormatInUse(format: PrFormat): PrFormatInUse {
+  return format.kind === 'default'
+    ? { path: null, source: 'default' }
+    : { path: format.path, source: format.kind };
+}
+
+// One line for a person: `github (.github/pull_request_template.md)`.
+export function describePrFormat(used: PrFormatInUse): string {
+  return used.path === null
+    ? `${used.source} (the factory's own)`
+    : `${used.source} (${used.path})`;
+}
 
 // Where GitHub looks for a single template, in the order it picks one. A
 // PULL_REQUEST_TEMPLATE/ directory only applies when a link asks for it.
@@ -128,7 +147,7 @@ export function readPrFormat(input: { codeRoot: string; sha: string }): PrFormat
   const loaded = CONTEXT_FILE_NAMES.find((name) => (contexts.get(name) ?? null) !== null);
   const instructions = loaded === undefined ? null : prInstructions(contexts.get(loaded) ?? '');
   if (loaded !== undefined && instructions !== null) {
-    return { kind: 'instructions', path: loaded, text: instructions };
+    return { kind: 'agents', path: loaded, text: instructions };
   }
   const templates = TEMPLATE_DIRECTORIES.flatMap((directory) =>
     namesIn(codeRoot, sha, directory).filter(
@@ -139,8 +158,18 @@ export function readPrFormat(input: { codeRoot: string; sha: string }): PrFormat
   for (const file of templates) {
     const text = texts.get(file) ?? null;
     if (text !== null) {
-      return { headings: templateHeadings(text), kind: 'template', path: file, text };
+      return { headings: templateHeadings(text), kind: 'github', path: file, text };
     }
   }
   return { kind: 'default' };
+}
+
+// The format a ticket started now would follow: read at the remote's default
+// branch as last fetched, else the checkout's HEAD. Nothing is fetched, so it
+// can lag the ticket's own base commit, which wrap-up reads again.
+export function currentPrFormat(codeRoot: string): PrFormat {
+  const sha =
+    git(codeRoot, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/HEAD^{commit}']) ??
+    git(codeRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  return sha === null ? { kind: 'default' } : readPrFormat({ codeRoot, sha: sha.trim() });
 }

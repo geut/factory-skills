@@ -2123,6 +2123,33 @@
               "null"
             ]
           },
+          "pullRequestFormat": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "description": "The file it comes from, such as `.github/pull_request_template.md`; null for `default`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "agents",
+                  "github",
+                  "default"
+                ],
+                "description": "`agents`: a pull-request section of the root AGENTS.md or CLAUDE.md. `github`: a pull_request_template.md in .github/, the root, or docs/. `default`: the factory's own body."
+              }
+            },
+            "required": [
+              "path",
+              "source"
+            ],
+            "additionalProperties": false,
+            "description": "The format a ticket started now would give its pull request body, read at the remote's default branch as last fetched. Each ticket reads it again at its own base commit."
+          },
           "stages": {
             "type": "array",
             "items": {
@@ -2135,6 +2162,7 @@
           "communication",
           "factoryId",
           "name",
+          "pullRequestFormat",
           "stages"
         ],
         "additionalProperties": false
