@@ -499,9 +499,7 @@ export function createFactoryService(input: {
           notify,
           now,
           runtime,
-          setPullRequestBody: (url, body) => {
-            codeHost().setPullRequestBody(url, body);
-          },
+          setPullRequestBody: (url, body) => codeHost().setPullRequestBody(url, body),
           stopped: () => stopped,
           tracker: trackerFor,
         });

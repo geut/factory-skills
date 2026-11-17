@@ -1502,7 +1502,7 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
   const { branch, runtime, service, wrapup } = await reachWrapup({}, () => ({
     ...codeHostWith('open', []),
     pullRequest: () => opened,
-    setPullRequestBody: (target, body) => {
+    setPullRequestBody: async (target, body) => {
       bodies.push({ body, url: target });
     },
   }));
@@ -1987,7 +1987,7 @@ function codeHostWith(
         },
       ],
     }),
-    setPullRequestBody: () => undefined,
+    setPullRequestBody: async () => undefined,
     verifyWebhook: () => false,
   };
 }

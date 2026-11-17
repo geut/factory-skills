@@ -127,7 +127,7 @@ export async function dispatchPending(input: {
   now: () => string;
   runtime: FactorySubagentRuntime;
   // Replaces a pull request's body on the code host.
-  setPullRequestBody: (url: string, body: string) => void;
+  setPullRequestBody: (url: string, body: string) => Promise<void>;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
@@ -182,7 +182,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
-    setPullRequestBody: (url: string, body: string) => void;
+    setPullRequestBody: (url: string, body: string) => Promise<void>;
     tracker: () => ConfiguredTracker | null;
   },
   action: ActionRecord,
@@ -526,14 +526,14 @@ async function updatePullRequest(
   input: {
     db: DatabaseSync;
     now: () => string;
-    setPullRequestBody: (url: string, body: string) => void;
+    setPullRequestBody: (url: string, body: string) => Promise<void>;
   },
   action: Extract<ActionRecord, { kind: 'update_pull_request' }>,
 ): Promise<RunId | null> {
   let failure = '';
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
-      input.setPullRequestBody(action.pullRequestUrl, action.body);
+      await input.setPullRequestBody(action.pullRequestUrl, action.body);
       finishLeasedAction(input.db, action.id, input.now(), 'succeeded', null);
       return null;
     } catch (error: unknown) {

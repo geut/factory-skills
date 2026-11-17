@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
 import type { CodeHostConfig } from '../config.ts';
-import { createGithubCodeHost, type GhJson, type PullRequestInfo } from './code-host.ts';
+import {
+  createGithubCodeHost,
+  runCommand,
+  type GhJson,
+  type PullRequestInfo,
+} from './code-host.ts';
 
 const config: CodeHostConfig = {
   feedbackAuthors: [],
@@ -308,23 +313,68 @@ test('a feedback list longer than one page is flagged, and an unexpected payload
   );
 });
 
-test('setting a pull request body sends it on stdin to gh pr edit, and a refusal throws', () => {
+test('setting a pull request body PATCHes it through the REST API, on stdin', async () => {
   const writes: Array<{ args: Array<string>; input: string }> = [];
-  const host = createGithubCodeHost(config, gh({}), (args, input) => {
+  const host = createGithubCodeHost(config, gh({}), async (args, input) => {
     writes.push({ args, input });
   });
-  host.setPullRequestBody('https://github.com/geut/app/pull/9', '## Summary\n\n`$(rm -rf /)`\n');
+  await host.setPullRequestBody(
+    'https://github.com/geut/app/pull/9',
+    '## Summary\n\n`$(rm -rf /)`\n',
+  );
   assert.deepEqual(writes, [
     {
-      args: ['pr', 'edit', 'https://github.com/geut/app/pull/9', '--body-file', '-'],
+      args: ['api', '-X', 'PATCH', 'repos/geut/app/pulls/9', '-F', 'body=@-'],
       input: '## Summary\n\n`$(rm -rf /)`\n',
     },
   ]);
-  const refusing = createGithubCodeHost(config, gh({}), () => {
-    throw new Error('GraphQL: Resource not accessible by integration');
+  await assert.rejects(
+    host.setPullRequestBody('https://github.com/geut/app/issues/9', 'x'),
+    /is not a pull request URL/,
+  );
+  const refusing = createGithubCodeHost(config, gh({}), async () => {
+    throw new Error('HTTP 403: Resource not accessible by integration');
   });
-  assert.throws(
-    () => refusing.setPullRequestBody('https://github.com/geut/app/pull/9', 'x'),
+  await assert.rejects(
+    refusing.setPullRequestBody('https://github.com/geut/app/pull/9', 'x'),
     /Resource not accessible/,
+  );
+});
+
+test('a write command runs without blocking, reads its stdin, and ends when stuck', async () => {
+  const node = process.execPath;
+  // It reads stdin and fails with what it read, as gh fails with its error.
+  await assert.rejects(
+    runCommand({
+      args: [
+        '-e',
+        "process.stdin.on('data', (d) => { console.error('got ' + d); process.exit(3); })",
+      ],
+      command: node,
+      stdin: 'the body',
+      timeoutMs: 10_000,
+    }),
+    /got the body/,
+  );
+  await runCommand({ args: ['-e', ''], command: node, stdin: 'ignored', timeoutMs: 10_000 });
+  // The event loop keeps running while the command runs.
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks += 1;
+  }, 5);
+  await assert.rejects(
+    runCommand({
+      args: ['-e', 'setTimeout(() => {}, 60_000)'],
+      command: node,
+      stdin: '',
+      timeoutMs: 200,
+    }),
+    /was stopped by SIGTERM after 200 ms/,
+  );
+  clearInterval(timer);
+  assert.ok(ticks > 5);
+  await assert.rejects(
+    runCommand({ args: [], command: 'factory-no-such-command', stdin: '', timeoutMs: 1000 }),
+    /ENOENT/,
   );
 });
