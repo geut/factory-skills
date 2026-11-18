@@ -102,6 +102,7 @@ test('the step is the running action, else the next one queued, timed from its c
     update: 'started',
   });
   assert.deepEqual(controllerStep(snapshot, times), {
+    command: null,
     kind: 'update_ticket_source',
     label: 'updating the issue',
     since: '2026-10-09T15:00:00.000Z',
@@ -115,6 +116,7 @@ test('the step is the running action, else the next one queued, timed from its c
     status: 'leased',
   });
   assert.deepEqual(controllerStep(snapshot, times), {
+    command: null,
     kind: 'validate_run',
     label: "validating task 02's review",
     since: '2026-10-09T14:59:30.000Z',
@@ -125,4 +127,30 @@ test('the step is the running action, else the next one queued, timed from its c
     action.status = 'succeeded';
   }
   assert.equal(controllerStep(snapshot, times), null);
+});
+
+test('a running step carries the command the server says it is on; a queued one never does', () => {
+  const { review, snapshot } = ticket();
+  snapshot.actions.push({
+    ...base,
+    id: actionId('running'),
+    kind: 'validate_run',
+    runId: review.id,
+    status: 'leased',
+  });
+  const times = new Map([['running', { createdAt: 't0', updatedAt: 't1' }]]);
+  const command = { command: 'test', index: 2, startedAt: 't2', total: 3 };
+  assert.deepEqual(
+    controllerStep(snapshot, times, (id) => (id === 'running' ? command : null))?.command,
+    command,
+  );
+  const queued = controllerStep(
+    {
+      ...snapshot,
+      actions: [{ ...base, id: actionId('queued'), kind: 'validate_run', runId: review.id }],
+    },
+    new Map([['queued', { createdAt: 't0', updatedAt: 't0' }]]),
+    () => command,
+  );
+  assert.equal(queued?.command, null);
 });

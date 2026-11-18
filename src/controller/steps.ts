@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { ActionRecord, FactorySnapshot, RunRecord } from '../domain.ts';
 import { stages } from '../stages/index.ts';
+import type { CommandProgress } from './command-progress.ts';
 import { taskNumber } from './progress.ts';
 import { listCurrentTicketRefs, loadCurrentByTicketKey, ticketKeyOf } from './store.ts';
 
@@ -9,6 +10,9 @@ import { listCurrentTicketRefs, loadCurrentByTicketKey, ticketKeyOf } from './st
 // lease on; `queued` is the next one waiting its turn.
 
 export type ControllerStep = {
+  // The command a long step is running, from the server's memory: null
+  // between commands, for other steps, and to a reader with only the database.
+  command: CommandProgress | null;
   kind: ActionRecord['kind'];
   // For a person: `validating task 02's work`.
   label: string;
@@ -97,6 +101,7 @@ export function stepLabel(snapshot: FactorySnapshot, action: ActionRecord): stri
 export function controllerStep(
   snapshot: FactorySnapshot,
   times: ActionTimes,
+  commandOf: (actionId: string) => CommandProgress | null = () => null,
 ): ControllerStep | null {
   const active = snapshot.actions.filter(
     (action) => action.status === 'leased' || action.status === 'pending',
@@ -108,6 +113,7 @@ export function controllerStep(
   const at = times.get(action.id);
   const running = action.status === 'leased';
   return {
+    command: running ? commandOf(action.id) : null,
     kind: action.kind,
     label: stepLabel(snapshot, action),
     since: (running ? at?.updatedAt : at?.createdAt) ?? new Date().toISOString(),
@@ -133,13 +139,16 @@ export function actionTimes(db: DatabaseSync, executionId: string): ActionTimes 
 export type TicketStep = { displayRef: string; step: ControllerStep; ticket: string };
 
 // The controller steps of current tickets, for Pi and the API.
-export function controllerStepsOf(db: DatabaseSync): Array<TicketStep> {
+export function controllerStepsOf(
+  db: DatabaseSync,
+  commandOf: (actionId: string) => CommandProgress | null = () => null,
+): Array<TicketStep> {
   return listCurrentTicketRefs(db).flatMap((ref) => {
     const snapshot = loadCurrentByTicketKey(db, ref);
     if (snapshot === null) {
       return [];
     }
-    const step = controllerStep(snapshot, actionTimes(db, snapshot.execution.id));
+    const step = controllerStep(snapshot, actionTimes(db, snapshot.execution.id), commandOf);
     return step === null
       ? []
       : [{ displayRef: snapshot.ticket.displayRef, step, ticket: ticketKeyOf(snapshot) }];
@@ -151,4 +160,12 @@ export function controllerStepsOf(db: DatabaseSync): Array<TicketStep> {
 export function actionsVersion(db: DatabaseSync): string {
   const row = db.prepare('SELECT count(*) AS n, max(updated_at) AS at FROM actions').get();
   return `${String(row?.['n'] ?? 0)}:${String(row?.['at'] ?? '')}`;
+}
+
+// The kinds of step that run the controller's own commands: Pi asks the
+// server which one while such a step runs.
+export function runsCommands(step: ControllerStep): boolean {
+  return (
+    step.state === 'running' && (step.kind === 'validate_run' || step.kind === 'prepare_worktree')
+  );
 }

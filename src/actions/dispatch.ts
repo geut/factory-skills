@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import type { CommandBoard } from '../controller/command-progress.ts';
 import { recordPullRequest } from '../controller/facts.ts';
 import { factoryRootOf } from '../controller/keys.ts';
 import { attentionCard } from '../controller/run-card.ts';
@@ -118,6 +119,8 @@ function taskLabel(snapshot: FactorySnapshot, session: SessionRecord): string | 
 export async function dispatchPending(input: {
   afterValidation: () => void;
   arm: (runId: RunId) => void;
+  // The commands long actions are running, for their controller steps.
+  commands: CommandBoard;
   db: DatabaseSync;
   factoryRoot: string;
   findPullRequest: PullRequestLookup;
@@ -176,6 +179,7 @@ export async function dispatchPending(input: {
 
 async function perform(
   input: {
+    commands: CommandBoard;
     db: DatabaseSync;
     factoryRoot: string;
     findPullRequest: PullRequestLookup;
@@ -402,7 +406,7 @@ async function launch(
 }
 
 async function worktree(
-  input: { db: DatabaseSync; ids: IdSource; now: () => string },
+  input: { commands: CommandBoard; db: DatabaseSync; ids: IdSource; now: () => string },
   action: Extract<ActionRecord, { kind: 'prepare_worktree' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
@@ -427,7 +431,13 @@ async function worktree(
       setup.reduce((sum, command) => sum + command.timeoutMs, 0) + 30_000,
     );
   }
-  const ready = prepared.kind === 'ready' ? await setUpWorktree(setup, prepared.path) : prepared;
+  const reportCommand = input.commands.reporter(action.id);
+  const ready =
+    prepared.kind === 'ready'
+      ? await setUpWorktree(setup, prepared.path, reportCommand).finally(() => {
+          reportCommand(null);
+        })
+      : prepared;
   if (prepared.kind === 'failed' || ready.kind === 'failed') {
     const message = ready.kind === 'failed' ? ready.message : 'worktree preparation failed';
     applyActionEvent(
@@ -551,7 +561,13 @@ async function updatePullRequest(
 }
 
 async function runValidation(
-  input: { db: DatabaseSync; findPullRequest: PullRequestLookup; ids: IdSource; now: () => string },
+  input: {
+    commands: CommandBoard;
+    db: DatabaseSync;
+    findPullRequest: PullRequestLookup;
+    ids: IdSource;
+    now: () => string;
+  },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
@@ -577,10 +593,12 @@ async function runValidation(
       stage,
     });
   };
+  const reportCommand = input.commands.reporter(action.id);
   try {
     const report = await validator.validate({
       deps: {
         findPullRequest: input.findPullRequest,
+        reportCommand,
         usage: () => usageTable(input.db, executionId, { includeWrapup: true }),
       },
       run,
@@ -600,6 +618,8 @@ async function runValidation(
     // validator error: it retries, then fails the ticket where retry finds it.
     // Failing only the action would leave the ticket active with nothing queued.
     record(errorReport(validator.version, messageOf(error)));
+  } finally {
+    reportCommand(null);
   }
   return null;
 }

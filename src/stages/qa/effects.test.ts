@@ -74,6 +74,8 @@ function validate(
     lint?: WorkCommand;
     // The test the plan cites for AC1.
     proof?: string;
+    // Collects the commands the validator reports as it starts each one.
+    reported?: Array<string>;
     typecheck?: WorkCommand;
   },
 ) {
@@ -94,25 +96,37 @@ function validate(
   );
   writeFileSync(paths.ledger, 'none\n');
   return qaValidator.validate(
-    validationContext('qa', (snapshot, finished) => {
-      addTasks(snapshot, 1);
-      task(snapshot, '01').taskFile = '01-task.md';
-      snapshot.execution.factoryDir = factoryDir;
-      snapshot.execution.worktreePath = cwd;
-      snapshot.execution.policy.stages['qa'] = {
-        commands: [input.e2e ?? command('e2e')],
-        enabled: true,
-      };
-      const work = [
-        command('test'),
-        input.typecheck ?? command('check'),
-        input.lint ?? command('lint'),
-      ];
-      snapshot.execution.policy.validation.work.commands = work;
-      snapshot.execution.policy.validation.qa.commands =
-        input.again === undefined ? work : work.filter((item) => input.again?.includes(item.name));
-      finished.baseline = input.baseline === false ? null : baseline;
-    }),
+    validationContext(
+      'qa',
+      (snapshot, finished) => {
+        addTasks(snapshot, 1);
+        task(snapshot, '01').taskFile = '01-task.md';
+        snapshot.execution.factoryDir = factoryDir;
+        snapshot.execution.worktreePath = cwd;
+        snapshot.execution.policy.stages['qa'] = {
+          commands: [input.e2e ?? command('e2e')],
+          enabled: true,
+        };
+        const work = [
+          command('test'),
+          input.typecheck ?? command('check'),
+          input.lint ?? command('lint'),
+        ];
+        snapshot.execution.policy.validation.work.commands = work;
+        snapshot.execution.policy.validation.qa.commands =
+          input.again === undefined
+            ? work
+            : work.filter((item) => input.again?.includes(item.name));
+        finished.baseline = input.baseline === false ? null : baseline;
+      },
+      {
+        reportCommand: (progress) => {
+          input.reported?.push(
+            progress === null ? 'none' : `${progress.command} ${progress.index}/${progress.total}`,
+          );
+        },
+      },
+    ),
   );
 }
 
@@ -193,4 +207,10 @@ test('a component test or story counts as a criterion’s proof', async () => {
   });
   assert.equal(report.status, 'passed');
   assert.equal(report.checks.find((check) => check.name === 'AC1 covered')?.status, 'passed');
+});
+
+test('QA reports each command as it starts, its own then the validation ones, on one count', async () => {
+  const reported: Array<string> = [];
+  await validate(worktree(), { again: ['lint'], reported });
+  assert.deepEqual(reported, ['e2e 1/4', 'test 2/4', 'check 3/4', 'lint 4/4']);
 });

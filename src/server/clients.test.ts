@@ -123,6 +123,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
       authorize: createAuthorizer(db, () => now),
       context: {
         backlog: null,
+        commandProgress: null,
         commands: unusedCommands,
         db: null,
         events: null,

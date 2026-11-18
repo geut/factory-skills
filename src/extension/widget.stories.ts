@@ -210,6 +210,44 @@ export const component: Component = {
       },
     ),
     widget(
+      'between agents: validating, second of three commands',
+      'Work validation runs its commands one after another; the line names the one running and its position, from the server’s memory.',
+      () => {
+        const { snapshot } = approvedNext();
+        const last = snapshot.runs.at(-1);
+        const steps =
+          last === undefined
+            ? []
+            : stepOf(
+                snapshot,
+                {
+                  ...actionBase,
+                  id: actionId('step-1'),
+                  kind: 'validate_run',
+                  runId: last.id,
+                  status: 'leased',
+                },
+                41,
+              );
+        return {
+          children: [],
+          steps: steps.map((item) => ({
+            ...item,
+            step: {
+              ...item.step,
+              command: {
+                command: 'test',
+                index: 2,
+                startedAt: new Date(NOW - 12_000).toISOString(),
+                total: 3,
+              },
+            },
+          })),
+          tickets: [snapshot],
+        };
+      },
+    ),
+    widget(
       'between agents: preparing the worktree',
       'A new ticket: the controller is preparing its worktree, setup included, before the planner starts.',
       () => {

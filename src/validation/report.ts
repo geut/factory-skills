@@ -1,3 +1,4 @@
+import type { CommandReporter } from '../controller/command-progress.ts';
 import type { ControllerEvent, FactorySnapshot, RunRecord, SessionRecord } from '../domain.ts';
 import type { PullRequestLookup } from './wrapup.ts';
 
@@ -69,6 +70,9 @@ export function failuresOf(checks: Array<ValidationCheck>): Array<string> {
 export type ValidationContext = {
   deps: {
     findPullRequest: PullRequestLookup;
+    // Called as each command the validator runs starts: the controller step
+    // shows it.
+    reportCommand: CommandReporter;
     // The all-stage usage table, including finished wrap-up runs.
     usage: () => string;
   };

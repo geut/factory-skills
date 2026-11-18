@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
+import type { CommandReporter } from '../controller/command-progress.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
@@ -216,6 +217,7 @@ async function validateWork(input: {
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   cwd: string;
+  reportCommand: CommandReporter;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -240,7 +242,8 @@ async function validateWork(input: {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
-  for (const command of input.commands) {
+  for (const [index, command] of input.commands.entries()) {
+    input.reportCommand({ command: command.name, index: index + 1, total: input.commands.length });
     const result = await runCommand(command, input.cwd);
     if (result.spawnError !== null) {
       return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
@@ -266,7 +269,7 @@ async function validateWork(input: {
 
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
-  validate: ({ session, snapshot }) => {
+  validate: ({ deps, session, snapshot }) => {
     const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
@@ -282,6 +285,7 @@ export const workValidator: Validator<'work'> = {
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
+      reportCommand: deps.reportCommand,
     });
   },
   version: WORK_VALIDATOR_VERSION,

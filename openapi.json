@@ -2823,6 +2823,44 @@
       "ControllerStep": {
         "type": "object",
         "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string",
+                    "description": "Its name in FACTORY.json, such as `test`."
+                  },
+                  "index": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991,
+                    "description": "Its position among the step’s commands, from 1."
+                  },
+                  "startedAt": {
+                    "type": "string"
+                  },
+                  "total": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "command",
+                  "index",
+                  "startedAt",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The command a running step is on: worktree setup, work validation, QA’s commands, or QA validation. Null otherwise. Kept in the server’s memory only."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -2857,6 +2895,7 @@
           }
         },
         "required": [
+          "command",
           "kind",
           "label",
           "since",

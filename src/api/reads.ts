@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import type { CommandProgress } from '../controller/command-progress.ts';
 import { needsUser, runVerdict, ticketProgress } from '../controller/progress.ts';
 import { outcomeLabel, RUN_OUTCOMES, runOutcome } from '../controller/run-card.ts';
 import {
@@ -249,6 +250,18 @@ const STEP_KINDS = [
 
 export const ControllerStepSchema = z
   .object({
+    command: z
+      .object({
+        command: z.string().meta({ description: 'Its name in FACTORY.json, such as `test`.' }),
+        index: z.int().meta({ description: 'Its position among the step’s commands, from 1.' }),
+        startedAt: z.string(),
+        total: z.int(),
+      })
+      .nullable()
+      .meta({
+        description:
+          'The command a running step is on: worktree setup, work validation, QA’s commands, or QA validation. Null otherwise. Kept in the server’s memory only.',
+      }),
     kind: z.enum(STEP_KINDS).meta({ description: 'The controller action behind the step.' }),
     label: z.string().meta({ description: "For a person, such as `validating task 02's work`." }),
     since: z.string().meta({ description: 'When it started running, or was queued.' }),
@@ -261,6 +274,16 @@ export const ControllerStepSchema = z
       'What the controller is doing for the ticket between agents: the action it runs, else the next one queued.',
     id: 'ControllerStep',
   });
+
+export const TicketControllerSteps = z.array(
+  z
+    .object({
+      displayRef: z.string(),
+      step: ControllerStepSchema,
+      ticket: z.string().meta({ description: 'The ticket key, as the ticket routes take it.' }),
+    })
+    .meta({ id: 'TicketControllerStep' }),
+);
 
 const TicketDetail = TicketSummary.extend({
   attention: z.array(Attention),
@@ -548,7 +571,11 @@ function sourceOf(snapshot: FactorySnapshot): z.infer<typeof TicketSource> | nul
   };
 }
 
-function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof TicketDetail> {
+function detailOf(
+  db: DatabaseSync,
+  snapshot: FactorySnapshot,
+  commandOf?: (actionId: string) => CommandProgress | null,
+): z.infer<typeof TicketDetail> {
   const replyTimes = new Map(
     db
       .prepare(
@@ -577,7 +604,7 @@ function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof T
       status: item.status,
     })),
     // An earlier execution has no active actions, so it has none.
-    controllerStep: controllerStep(snapshot, actionTimes(db, snapshot.execution.id)),
+    controllerStep: controllerStep(snapshot, actionTimes(db, snapshot.execution.id), commandOf),
     source: sourceOf(snapshot),
     tasks: snapshot.tasks.map((task) => ({
       blockedBy: task.blockedBy,
@@ -804,7 +831,14 @@ const listTickets = defineRoute({
 const getTicket = defineRoute({
   handler: ({ context, params, query }) => {
     const db = database(context);
-    return { body: detailOf(db, ticketByKey(db, params.key, query.execution)), status: 200 };
+    return {
+      body: detailOf(
+        db,
+        ticketByKey(db, params.key, query.execution),
+        context.commandProgress ?? undefined,
+      ),
+      status: 200,
+    };
   },
   method: 'GET',
   operationId: 'getTicket',
@@ -940,7 +974,7 @@ const listAgents = defineRoute({
 
 const listControllerSteps = defineRoute({
   handler: ({ context }) => ({
-    body: controllerStepsOf(database(context)),
+    body: controllerStepsOf(database(context), context.commandProgress ?? undefined),
     status: 200,
   }),
   method: 'GET',
@@ -949,17 +983,7 @@ const listControllerSteps = defineRoute({
   responses: {
     200: {
       description: 'One per current ticket the controller is running or queuing something for.',
-      schema: z.array(
-        z
-          .object({
-            displayRef: z.string(),
-            step: ControllerStepSchema,
-            ticket: z
-              .string()
-              .meta({ description: 'The ticket key, as the ticket routes take it.' }),
-          })
-          .meta({ id: 'TicketControllerStep' }),
-      ),
+      schema: TicketControllerSteps,
     },
   },
   scope: 'read',

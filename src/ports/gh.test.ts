@@ -50,6 +50,7 @@ test('while gh waits on GitHub, the server still answers requests', async () => 
     createRouter({
       context: {
         backlog: null,
+        commandProgress: null,
         commands: unusedCommands,
         db: null,
         events: null,

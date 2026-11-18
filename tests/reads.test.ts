@@ -267,6 +267,7 @@ test('controller steps list what the controller runs for each ticket, and the ti
     '/v1/controller-steps',
   );
   const step = {
+    command: null,
     kind: 'prepare_worktree',
     label: 'preparing the worktree',
     since: '2026-11-18T10:00:05.000Z',

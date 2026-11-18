@@ -21,6 +21,7 @@ async function serveWith(secret: string | null, changed: Array<PullRequestInfo>)
     createRouter({
       context: {
         backlog: null,
+        commandProgress: null,
         commands: unusedCommands,
         db: null,
         events: null,
