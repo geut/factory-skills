@@ -306,7 +306,9 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       authorize: createAuthorizer(db, () => new Date().toISOString()),
       context: {
         backlog: (refresh) => ready().backlog(refresh),
-        commandProgress: (actionId) => ready().commandProgress(actionId),
+        // Read routes answer during startup too: no command is known until
+        // the service is up.
+        commandProgress: (actionId) => service?.commandProgress(actionId) ?? null,
         commands,
         db,
         events,

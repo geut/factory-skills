@@ -207,13 +207,13 @@ export type FactoryService = {
   // The backlog, from a short cache unless `refresh`.
   backlog: (refresh: boolean) => Promise<BacklogResult>;
   command: (args: string) => Promise<string>;
-  // The code host reported a pull request changed: refresh the ticket that
-  // has it and return the ticket's key, or null when none does.
   // The command an action is running, while it runs one.
   commandProgress: (actionId: string) => CommandProgress | null;
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
   progress: () => Array<TicketProgress>;
+  // The code host reported a pull request changed: refresh the ticket that
+  // has it and return the ticket's key, or null when none does.
   pullRequestChanged: (pullRequest: PullRequestInfo) => Promise<string | null>;
   // Records what the code host says about a ticket's pull request, then
   // finishes the ticket on a merge or a close.
