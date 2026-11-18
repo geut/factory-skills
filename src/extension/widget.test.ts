@@ -157,3 +157,42 @@ test('a ticket waiting on the user shows the command to run', () => {
   assert.equal(lines[0], '▲ dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1');
   assert.equal(lines[2], '  paused · → /factory retry dpaez/factory-dashboard#11');
 });
+
+// A ticket's controller step, running or queued.
+function stepFor(state: 'queued' | 'running') {
+  return {
+    displayRef: 'proj-1',
+    step: {
+      kind: 'validate_run' as const,
+      label: "validating task 02's work",
+      since: '2026-10-09T14:59:19.000Z',
+      state,
+    },
+    ticket: 'proj-1-abc',
+  };
+}
+
+test('a controller step shows under its ticket: running with a spinner and its time, queued dimmed', () => {
+  const ticket = {
+    current: null,
+    displayRef: 'proj-1',
+    done: 1,
+    needsUser: false,
+    next: null,
+    stage: 'work' as const,
+    status: 'active',
+    total: 3,
+  };
+  const render = (state: 'queued' | 'running') =>
+    renderFactoryWidget({
+      children: [],
+      frame: 0,
+      now: Date.parse('2026-10-09T15:00:00.000Z'),
+      steps: [stepFor(state)],
+      theme,
+      tickets: [ticket],
+      width: 80,
+    });
+  assert.deepEqual(render('running').slice(1), ["  ◜ validating task 02's work · 41.0s"]);
+  assert.deepEqual(render('queued').slice(1), ["  ◌ queued: validating task 02's work"]);
+});

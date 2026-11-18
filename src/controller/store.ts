@@ -2001,12 +2001,14 @@ export function extendActionLease(
   ttlMs: number,
 ): void {
   const expires = new Date(Date.parse(now) + ttlMs).toISOString();
+  // updated_at stays when the action was claimed: a controller step's
+  // elapsed time counts from it.
   immediateTransaction(db, () => {
     db.prepare(
       `UPDATE actions
-       SET lease_expires_at = ?, updated_at = ?
+       SET lease_expires_at = ?
        WHERE id = ? AND status = 'leased'`,
-    ).run(expires, now, action);
+    ).run(expires, action);
   });
 }
 

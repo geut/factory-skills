@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { TicketProgress } from '../controller/progress.ts';
+import type { ControllerStep, TicketStep } from '../controller/steps.ts';
 import type { RunningChildRow } from '../controller/store.ts';
 import { taskProgressText } from '../runtime/policy.ts';
 import { sessionActivity, type SessionActivity } from '../runtime/session-activity.ts';
@@ -105,17 +106,39 @@ export function formatElapsed(startedAt: string | null, now: number): string {
   return `${Math.max(0, (now - start) / 1000).toFixed(1)}s`;
 }
 
+// A ticket's controller step, under its progress line, so the gap between
+// agents never looks idle:
+//     ◐ validating task 02's work · 41.2s
+//     ◌ queued: updating the issue
+export function stepLine(
+  step: ControllerStep,
+  input: { frame: number; now: number; theme: AgentTheme },
+): string {
+  const { theme } = input;
+  if (step.state === 'queued') {
+    return `  ${theme.fg('dim', `◌ queued: ${step.label}`)}`;
+  }
+  const spinner = spinnerFrames[input.frame % spinnerFrames.length] ?? '●';
+  return `  ${theme.fg('accent', spinner)} ${step.label}${theme.fg('dim', ` · ${formatElapsed(step.since, input.now)}`)}`;
+}
+
 export function renderFactoryWidget(input: {
   children: Array<WidgetChild>;
   frame: number;
   now: number;
+  // Controller steps of current tickets, matched to them by ref.
+  steps?: Array<TicketStep>;
   theme: AgentTheme;
   tickets?: Array<TicketProgress>;
   width: number;
 }): Array<string> {
   const { children, theme } = input;
   const tickets = input.tickets ?? [];
-  const progress = tickets.slice(0, maxTickets).flatMap((ticket) => ticketLines(ticket, theme));
+  const steps = input.steps ?? [];
+  const progress = tickets.slice(0, maxTickets).flatMap((ticket) => {
+    const step = steps.find((item) => item.displayRef === ticket.displayRef)?.step;
+    return [...ticketLines(ticket, theme), ...(step === undefined ? [] : [stepLine(step, input)])];
+  });
   if (tickets.length > maxTickets) {
     progress.push(theme.fg('muted', `... (+${tickets.length - maxTickets} more tickets)`));
   }

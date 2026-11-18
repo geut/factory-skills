@@ -310,6 +310,102 @@
 │    reading src/lib/server/read.ts…
 ... (+1 more — /factory agents)
 
+== between agents: validating a review · 40 cols ==
+● dpaez/factory-dashboard#11 · ■■...
+  04/06 Ticket detail page (`/tic...
+  ◜ validating task 03's review ·...
+
+== between agents: validating a review · 60 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the...
+  ◜ validating task 03's review · 41.0s
+
+== between agents: validating a review · 80 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module
+  ◜ validating task 03's review · 41.0s
+
+== between agents: validating a review · 120 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module
+  ◜ validating task 03's review · 41.0s
+
+== between agents: preparing the worktree · 40 cols ==
+● geut/factory-skills#42 · plan
+  ◜ preparing the worktree · 125.0s
+
+== between agents: preparing the worktree · 60 cols ==
+● geut/factory-skills#42 · plan
+  ◜ preparing the worktree · 125.0s
+
+== between agents: preparing the worktree · 80 cols ==
+● geut/factory-skills#42 · plan
+  ◜ preparing the worktree · 125.0s
+
+== between agents: preparing the worktree · 120 cols ==
+● geut/factory-skills#42 · plan
+  ◜ preparing the worktree · 125.0s
+
+== a step queued · 40 cols ==
+▲ dpaez/factory-dashboard#11 · ■■...
+  ready for handoff · → /factory ...
+  ◌ queued: opening the handoff p...
+
+== a step queued · 60 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/facto...
+  ◌ queued: opening the handoff panes
+
+== a step queued · 80 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/factory-dashboard#11
+  ◌ queued: opening the handoff panes
+
+== a step queued · 120 cols ==
+▲ dpaez/factory-dashboard#11 · ■■■■■■ 6/6 · wrapup
+  ready for handoff · → /factory complete dpaez/factory-dashboard#11
+  ◌ queued: opening the handoff panes
+
+== two tickets: an agent on one, a controller step on the other · 40 cols ==
+● dpaez/factory-dashboard#11 · ■■...
+  03/06 Overview page (`/`) on th...
+● geut/factory-skills#12 · □□ 0/2...
+  01/02 Read-only v2 connection, ...
+  ◜ validating task 01's review ·...
+● Agents · 1 running · 180.0s
+└─ ◜ 🛠 dpaez/factory-dashboard#11...
+     running npm test…
+
+== two tickets: an agent on one, a controller step on the other · 60 cols ==
+● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+  03/06 Overview page (`/`) on the v2 read module
+● geut/factory-skills#12 · □□ 0/2 · review r1
+  01/02 Read-only v2 connection, schema guard, scratc...
+  ◜ validating task 01's review · 12.0s
+● Agents · 1 running · 180.0s
+└─ ◜ 🛠 dpaez/factory-dashboard#11 03 · 12 tool uses ·...
+     running npm test…
+
+== two tickets: an agent on one, a controller step on the other · 80 cols ==
+● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+  03/06 Overview page (`/`) on the v2 read module
+● geut/factory-skills#12 · □□ 0/2 · review r1
+  01/02 Read-only v2 connection, schema guard, scratch fixture, and error...
+  ◜ validating task 01's review · 12.0s
+● Agents · 1 running · 180.0s
+└─ ◜ 🛠 dpaez/factory-dashboard#11 03 · 12 tool uses · 67K/200K ctx (33.5%...
+     running npm test…
+
+== two tickets: an agent on one, a controller step on the other · 120 cols ==
+● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · work
+  03/06 Overview page (`/`) on the v2 read module
+● geut/factory-skills#12 · □□ 0/2 · review r1
+  01/02 Read-only v2 connection, schema guard, scratch fixture, and error page
+  ◜ validating task 01's review · 12.0s
+● Agents · 1 running · 180.0s
+└─ ◜ 🛠 dpaez/factory-dashboard#11 03 · 12 tool uses · 67K/200K ctx (33.5%) · Overview page (`/`) on the v2 read m...
+     running npm test…
+
 == nothing in progress · 40 cols ==
 
 

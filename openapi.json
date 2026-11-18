@@ -706,6 +706,47 @@
         }
       }
     },
+    "/v1/controller-steps": {
+      "get": {
+        "operationId": "listControllerSteps",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "See what the controller is doing for each ticket between agents",
+        "tags": [
+          "tickets"
+        ],
+        "responses": {
+          "200": {
+            "description": "One per current ticket the controller is running or queuing something for.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TicketControllerStep"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/backlog": {
       "get": {
         "operationId": "listBacklog",
@@ -2634,6 +2675,17 @@
               "$ref": "#/components/schemas/Attention"
             }
           },
+          "controllerStep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ControllerStep"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the controller is neither running nor queuing anything for the ticket."
+          },
           "source": {
             "anyOf": [
               {
@@ -2674,6 +2726,7 @@
           "trackerWarnings",
           "updatedAt",
           "attention",
+          "controllerStep",
           "source",
           "tasks",
           "usage"
@@ -2766,6 +2819,51 @@
           "version"
         ],
         "additionalProperties": false
+      },
+      "ControllerStep": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "launch_run",
+              "notify_attention",
+              "open_diff",
+              "open_pane",
+              "prepare_input",
+              "prepare_worktree",
+              "resume_run",
+              "update_pull_request",
+              "update_ticket_source",
+              "validate_run"
+            ],
+            "description": "The controller action behind the step."
+          },
+          "label": {
+            "type": "string",
+            "description": "For a person, such as `validating task 02's work`."
+          },
+          "since": {
+            "type": "string",
+            "description": "When it started running, or was queued."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running"
+            ],
+            "description": "`running`: the controller is doing it now. `queued`: it waits its turn."
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "since",
+          "state"
+        ],
+        "additionalProperties": false,
+        "description": "What the controller is doing for the ticket between agents: the action it runs, else the next one queued."
       },
       "TicketSource": {
         "type": "object",
@@ -3646,6 +3744,27 @@
           "stage",
           "startedAt",
           "task",
+          "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "TicketControllerStep": {
+        "type": "object",
+        "properties": {
+          "displayRef": {
+            "type": "string"
+          },
+          "step": {
+            "$ref": "#/components/schemas/ControllerStep"
+          },
+          "ticket": {
+            "type": "string",
+            "description": "The ticket key, as the ticket routes take it."
+          }
+        },
+        "required": [
+          "displayRef",
+          "step",
           "ticket"
         ],
         "additionalProperties": false

@@ -4,6 +4,12 @@ import { z } from 'zod';
 import { needsUser, runVerdict, ticketProgress } from '../controller/progress.ts';
 import { outcomeLabel, RUN_OUTCOMES, runOutcome } from '../controller/run-card.ts';
 import {
+  actionTimes,
+  controllerStep,
+  controllerStepsOf,
+  type ControllerStep,
+} from '../controller/steps.ts';
+import {
   listCurrentTicketRefs,
   loadCurrentByFactoryKey,
   loadGeneration,
@@ -227,8 +233,40 @@ const TicketSource = z
   })
   .meta({ id: 'TicketSource' });
 
+// Every kind of action a controller step can be.
+const STEP_KINDS = [
+  'launch_run',
+  'notify_attention',
+  'open_diff',
+  'open_pane',
+  'prepare_input',
+  'prepare_worktree',
+  'resume_run',
+  'update_pull_request',
+  'update_ticket_source',
+  'validate_run',
+] as const satisfies ReadonlyArray<ControllerStep['kind']>;
+
+export const ControllerStepSchema = z
+  .object({
+    kind: z.enum(STEP_KINDS).meta({ description: 'The controller action behind the step.' }),
+    label: z.string().meta({ description: "For a person, such as `validating task 02's work`." }),
+    since: z.string().meta({ description: 'When it started running, or was queued.' }),
+    state: z.enum(['queued', 'running']).meta({
+      description: '`running`: the controller is doing it now. `queued`: it waits its turn.',
+    }),
+  })
+  .meta({
+    description:
+      'What the controller is doing for the ticket between agents: the action it runs, else the next one queued.',
+    id: 'ControllerStep',
+  });
+
 const TicketDetail = TicketSummary.extend({
   attention: z.array(Attention),
+  controllerStep: ControllerStepSchema.nullable().meta({
+    description: 'Null when the controller is neither running nor queuing anything for the ticket.',
+  }),
   source: TicketSource.nullable().meta({
     description:
       'The issue or brief this execution started from, as fetched then. Null for an execution recorded before the factory kept it.',
@@ -538,6 +576,8 @@ function detailOf(db: DatabaseSync, snapshot: FactorySnapshot): z.infer<typeof T
       runId: item.runId,
       status: item.status,
     })),
+    // An earlier execution has no active actions, so it has none.
+    controllerStep: controllerStep(snapshot, actionTimes(db, snapshot.execution.id)),
     source: sourceOf(snapshot),
     tasks: snapshot.tasks.map((task) => ({
       blockedBy: task.blockedBy,
@@ -898,4 +938,41 @@ const listAgents = defineRoute({
   tags: ['agents'],
 });
 
-export const readRoutes = [listTickets, getTicket, listExecutions, listRuns, getRun, listAgents];
+const listControllerSteps = defineRoute({
+  handler: ({ context }) => ({
+    body: controllerStepsOf(database(context)),
+    status: 200,
+  }),
+  method: 'GET',
+  operationId: 'listControllerSteps',
+  path: '/v1/controller-steps',
+  responses: {
+    200: {
+      description: 'One per current ticket the controller is running or queuing something for.',
+      schema: z.array(
+        z
+          .object({
+            displayRef: z.string(),
+            step: ControllerStepSchema,
+            ticket: z
+              .string()
+              .meta({ description: 'The ticket key, as the ticket routes take it.' }),
+          })
+          .meta({ id: 'TicketControllerStep' }),
+      ),
+    },
+  },
+  scope: 'read',
+  summary: 'See what the controller is doing for each ticket between agents',
+  tags: ['tickets'],
+});
+
+export const readRoutes = [
+  listTickets,
+  getTicket,
+  listExecutions,
+  listRuns,
+  getRun,
+  listAgents,
+  listControllerSteps,
+];

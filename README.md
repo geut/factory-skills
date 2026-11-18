@@ -137,13 +137,14 @@ The server's routes are declared once, in [`src/api/routes.ts`](src/api/routes.t
 
 Reads need a `read` token.
 
-| Route                        | Returns                                                                                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/tickets`            | Each ticket's current execution: stage, status, progress, whether it needs a person, and who started it.                          |
-| `GET /v1/tickets/{key}`      | The same, plus the source it started from, tasks with dependencies and review state, questions with their replies, and usage.     |
-| `GET /v1/tickets/{key}/runs` | The ticket's runs, oldest first.                                                                                                  |
-| `GET /v1/runs/{id}`          | One run: purpose, round, outcome, model setup, latest validation and its checks, review findings, usage, and its latest activity. |
-| `GET /v1/agents`             | Runs that are starting or running.                                                                                                |
+| Route                        | Returns                                                                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/tickets`            | Each ticket's current execution: stage, status, progress, whether it needs a person, and who started it.                                                             |
+| `GET /v1/tickets/{key}`      | The same, plus the source it started from, tasks with dependencies and review state, questions with their replies, usage, and its `controllerStep` (null when none). |
+| `GET /v1/tickets/{key}/runs` | The ticket's runs, oldest first.                                                                                                                                     |
+| `GET /v1/runs/{id}`          | One run: purpose, round, outcome, model setup, latest validation and its checks, review findings, usage, and its latest activity.                                    |
+| `GET /v1/agents`             | Runs that are starting or running.                                                                                                                                   |
+| `GET /v1/controller-steps`   | Each current ticket's controller step: what the controller runs for it between agents, else the next action queued.                                                  |
 
 - `/v1/tickets` filters by `status=open|finished|all` (default `open`), `stage`, `state` (the execution status), `needsUser=true|false`, and `ref`. Filters combine with AND; repeat one for OR, as in `?stage=review&stage=qa&needsUser=true`.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
@@ -217,12 +218,15 @@ Every status card names the ticket, the stage, and what the run led to, then the
 
 Outcomes are `planned`, `ready for review`, `approved`, `changes requested`, `blocked`, `correcting`, `retrying`, `diff changed`, `paused`, `waiting for you`, `failed`, and `finished`. The plan card lists every task with its dependencies. Blocking findings show under the card. A card that waits on you (`▲`) shows its whole message and the command to run next.
 
-Above the editor, the widget keeps each unfinished ticket's progress on screen between runs, followed by the running agents:
+Above the editor, the widget keeps each unfinished ticket's progress on screen between runs, followed by the running agents. Between agents, a line under the ticket shows its **controller step**: what the controller is doing for it, such as preparing the worktree, preparing a stage's input, validating a run, starting an agent, updating the issue or the pull request, or opening the handoff panes, with a spinner and how long it has run. An action waiting its turn shows dimmed as queued:
 
 ```text
 ● dpaez/factory-dashboard#11 · ■■□□□□ 2/6 · review r1
   03/06 Overview page
+  ◜ validating task 03's review · 41.0s
 ```
+
+Pi reads the steps from the controller's actions in the database, and checks them every second along with the event revision, since starting or finishing an action records no event.
 
 ## Layout
 

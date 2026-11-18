@@ -243,3 +243,45 @@ test('a ticket shows the pull request recorded for it', async () => {
   const ticket = await get<{ pullRequest: { url: string } | null }>(f, `/v1/tickets/${alpha}`);
   assert.equal(ticket.pullRequest?.url, 'https://github.com/geut/factory-skills/pull/7');
 });
+
+test('controller steps list what the controller runs for each ticket, and the ticket read has its own', async () => {
+  const f = await factory();
+  const { alpha, beta } = await twoTickets(f);
+  // Between agents: the controller holds beta's validation-like work.
+  const db = openStateDatabase(path.join(f.codeRoot, '.factory'));
+  const execution = String(
+    db
+      .prepare(
+        `SELECT e.id FROM ticket_executions e JOIN tickets t ON t.id = e.ticket_id
+         WHERE e.is_current = 1 AND t.title = 'beta'`,
+      )
+      .get()?.['id'],
+  );
+  db.prepare(
+    `INSERT INTO actions (id, execution_id, kind, status, idempotency_key, payload_json, lease_owner, lease_token, lease_expires_at, created_at, updated_at)
+     VALUES ('step', ?, 'prepare_worktree', 'leased', 'step', '{"slug":"beta"}', 'test', 'test-token', '2999-01-01T00:00:00.000Z', '2026-11-18T10:00:00.000Z', '2026-11-18T10:00:05.000Z')`,
+  ).run(execution);
+  db.close();
+  const steps = await get<Array<{ step: Record<string, unknown>; ticket: string }>>(
+    f,
+    '/v1/controller-steps',
+  );
+  const step = {
+    kind: 'prepare_worktree',
+    label: 'preparing the worktree',
+    since: '2026-11-18T10:00:05.000Z',
+    state: 'running',
+  };
+  assert.deepEqual(
+    steps.map((item) => [item.ticket, item.step]),
+    [[beta, step]],
+  );
+  assert.deepEqual(
+    (await get<{ controllerStep: unknown }>(f, `/v1/tickets/${beta}`)).controllerStep,
+    step,
+  );
+  assert.equal(
+    (await get<{ controllerStep: unknown }>(f, `/v1/tickets/${alpha}`)).controllerStep,
+    null,
+  );
+});
