@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { truncateToWidth } from '@earendil-works/pi-tui';
+import type { CommandProgress } from '../controller/command-progress.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import type { ControllerStep, TicketStep } from '../controller/steps.ts';
 import type { RunningChildRow } from '../controller/store.ts';
@@ -108,7 +109,7 @@ export function formatElapsed(startedAt: string | null, now: number): string {
 
 // A ticket's controller step, under its progress line, so the gap between
 // agents never looks idle:
-//     ◐ validating task 02's work · 41.2s
+//     ◐ validating task 02's work · test (2/3) · 41.2s
 //     ◌ queued: updating the issue
 export function stepLine(
   step: ControllerStep,
@@ -119,7 +120,26 @@ export function stepLine(
     return `  ${theme.fg('dim', `◌ queued: ${step.label}`)}`;
   }
   const spinner = spinnerFrames[input.frame % spinnerFrames.length] ?? '●';
-  return `  ${theme.fg('accent', spinner)} ${step.label}${theme.fg('dim', ` · ${formatElapsed(step.since, input.now)}`)}`;
+  const command =
+    step.command === null
+      ? ''
+      : ` · ${step.command.command} (${step.command.index}/${step.command.total})`;
+  return `  ${theme.fg('accent', spinner)} ${step.label}${theme.fg('dim', `${command} · ${formatElapsed(step.since, input.now)}`)}`;
+}
+
+// A step shows the command the server reported for the same step.
+export function withCommands(
+  current: Array<TicketStep>,
+  live: ReadonlyMap<string, { command: CommandProgress; kind: string; since: string }>,
+): Array<TicketStep> {
+  return current.map((item) => {
+    const reported = live.get(item.ticket);
+    return reported !== undefined &&
+      reported.kind === item.step.kind &&
+      reported.since === item.step.since
+      ? { ...item, step: { ...item.step, command: reported.command } }
+      : item;
+  });
 }
 
 export function renderFactoryWidget(input: {

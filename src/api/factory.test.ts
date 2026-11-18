@@ -33,6 +33,7 @@ async function serveWith(
     createRouter({
       context: {
         backlog: null,
+        commandProgress: null,
         commands: unusedCommands,
         db,
         events: null,

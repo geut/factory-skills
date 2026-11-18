@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
+import { ignoreCommands, type CommandReporter } from '../controller/command-progress.ts';
 import { runCommand } from '../validation/work.ts';
 import { archiveLeftoverDir, archivePath } from './leftovers.ts';
 
@@ -208,8 +209,10 @@ const SETUP_OUTPUT_TAIL = 1500;
 export async function setUpWorktree(
   commands: Array<WorkCommand>,
   worktree: string,
+  reportCommand: CommandReporter = ignoreCommands,
 ): Promise<{ kind: 'ready' } | WorktreeFailure> {
-  for (const command of commands) {
+  for (const [index, command] of commands.entries()) {
+    reportCommand({ command: command.name, index: index + 1, total: commands.length });
     const result = await runCommand(command, worktree);
     if (result.spawnError !== null) {
       return {

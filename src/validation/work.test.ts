@@ -340,3 +340,32 @@ test('a feedback round works on top of the round start, and may change nothing',
   assert.equal(empty.status, 'passed', empty.status === 'failed' ? empty.summary : '');
   assert.equal(empty.status === 'passed' ? empty.detail.diff : null, '');
 });
+
+test('work validation reports each command as it starts', async () => {
+  const { baseSha, cwd } = repo();
+  writeFileSync(path.join(cwd, 'change.txt'), 'changed\n');
+  const reported: Array<string> = [];
+  const commands: Array<WorkCommand> = ['lint', 'test', 'check'].map((name) => ({
+    argv: ['node', '-e', ''],
+    name,
+    timeoutMs: 10_000,
+  }));
+  await workValidator.validate(
+    validationContext(
+      'work',
+      (snapshot) => {
+        snapshot.execution.worktreePath = cwd;
+        snapshot.execution.worktreeBaseSha = baseSha;
+        snapshot.execution.policy.validation.work.commands = commands;
+      },
+      {
+        reportCommand: (progress) => {
+          reported.push(
+            progress === null ? 'none' : `${progress.command} ${progress.index}/${progress.total}`,
+          );
+        },
+      },
+    ),
+  );
+  assert.deepEqual(reported, ['lint 1/3', 'test 2/3', 'check 3/3']);
+});

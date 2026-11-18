@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { PendingFeedback } from '../api/commands.ts';
+import { TicketControllerSteps } from '../api/reads.ts';
+import type { CommandProgress } from '../controller/command-progress.ts';
 import type { ParsedCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import { pendingFeedbackCard } from '../controller/run-card.ts';
@@ -42,8 +44,15 @@ export type FactoryClient = {
   revision: () => number;
   runningChildren: () => Array<RunningChildRow>;
   status: (ref: string) => string;
+  // The commands long controller steps are running, by ticket key; empty
+  // when the server cannot say.
+  stepCommands: () => Promise<Map<string, LiveCommand>>;
   ticketDetail: (ref: string | null) => TicketDetail | string;
 };
+
+// A step's command as the server reported it, with the step it belongs to, so
+// a command is never shown on the step after it.
+export type LiveCommand = { command: CommandProgress; kind: string; since: string };
 
 export type PendingFeedbackView = z.infer<typeof PendingFeedback> & { displayRef: string };
 
@@ -167,6 +176,42 @@ export function createFactoryClient(input: {
         (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
         `The server answered ${response.status}.`,
     };
+  }
+
+  // The commands long controller steps are running, by ticket key, from the
+  // server's memory. Empty when the server cannot say: the steps still show
+  // from the database, without their commands.
+  async function stepCommands(): Promise<Map<string, LiveCommand>> {
+    const open = database();
+    const url = open === null ? null : serverUrl(open);
+    if (url === null) {
+      return new Map();
+    }
+    try {
+      const token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
+      const response = await send(`${url}/v1/controller-steps`, {
+        headers: { authorization: `Bearer ${token}` },
+        method: 'GET',
+      });
+      const listed = TicketControllerSteps.safeParse(await response.json());
+      if (response.status !== 200 || !listed.success) {
+        return new Map();
+      }
+      return new Map(
+        listed.data.flatMap((item) =>
+          item.step.command === null
+            ? []
+            : [
+                [
+                  item.ticket,
+                  { command: item.step.command, kind: item.step.kind, since: item.step.since },
+                ] as const,
+              ],
+        ),
+      );
+    } catch {
+      return new Map();
+    }
   }
 
   async function command(parsed: ParsedCommand): Promise<string> {
@@ -309,6 +354,7 @@ export function createFactoryClient(input: {
       const open = database();
       return open === null ? unavailable() : statusOf(open, ref);
     },
+    stepCommands,
     ticketDetail: (ref) => {
       const open = database();
       return open === null ? unavailable() : ticketDetailFor(open, ref);

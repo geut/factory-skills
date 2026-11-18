@@ -8,6 +8,7 @@ import {
   progressBar,
   renderFactoryWidget,
   ticketLines,
+  withCommands,
   type AgentTheme,
   type WidgetChild,
 } from './widget.ts';
@@ -163,6 +164,7 @@ function stepFor(state: 'queued' | 'running') {
   return {
     displayRef: 'proj-1',
     step: {
+      command: null,
       kind: 'validate_run' as const,
       label: "validating task 02's work",
       since: '2026-10-09T14:59:19.000Z',
@@ -195,4 +197,49 @@ test('a controller step shows under its ticket: running with a spinner and its t
     });
   assert.deepEqual(render('running').slice(1), ["  ◜ validating task 02's work · 41.0s"]);
   assert.deepEqual(render('queued').slice(1), ["  ◌ queued: validating task 02's work"]);
+});
+
+test('a running step shows the command it is on, and its position', () => {
+  const step = {
+    ...stepFor('running'),
+    step: {
+      ...stepFor('running').step,
+      command: { command: 'test', index: 2, startedAt: '2026-10-09T14:59:50.000Z', total: 3 },
+    },
+  };
+  const lines = renderFactoryWidget({
+    children: [],
+    frame: 0,
+    now: Date.parse('2026-10-09T15:00:00.000Z'),
+    steps: [step],
+    theme,
+    tickets: [
+      {
+        current: null,
+        displayRef: 'proj-1',
+        done: 1,
+        needsUser: false,
+        next: null,
+        stage: 'work',
+        status: 'active',
+        total: 3,
+      },
+    ],
+    width: 80,
+  });
+  assert.deepEqual(lines.slice(1), ["  ◜ validating task 02's work · test (2/3) · 41.0s"]);
+});
+
+test('the server’s command is shown only on the step it belongs to', () => {
+  const command = { command: 'test', index: 2, startedAt: 't', total: 3 };
+  const current = [stepFor('running')];
+  const live = (since: string) =>
+    new Map([['proj-1-abc', { command, kind: 'validate_run', since }]]);
+  assert.deepEqual(
+    withCommands(current, live('2026-10-09T14:59:19.000Z'))[0]?.step.command,
+    command,
+  );
+  // A command from an earlier step of the ticket is not this one's.
+  assert.equal(withCommands(current, live('2026-10-09T14:00:00.000Z'))[0]?.step.command, null);
+  assert.equal(withCommands(current, new Map())[0]?.step.command, null);
 });

@@ -144,7 +144,7 @@ Reads need a `read` token.
 | `GET /v1/tickets/{key}/runs` | The ticket's runs, oldest first.                                                                                                                                     |
 | `GET /v1/runs/{id}`          | One run: purpose, round, outcome, model setup, latest validation and its checks, review findings, usage, and its latest activity.                                    |
 | `GET /v1/agents`             | Runs that are starting or running.                                                                                                                                   |
-| `GET /v1/controller-steps`   | Each current ticket's controller step: what the controller runs for it between agents, else the next action queued.                                                  |
+| `GET /v1/controller-steps`   | Each current ticket's controller step: what the controller runs for it between agents, else the next action queued, with the command a long step is on.              |
 
 - `/v1/tickets` filters by `status=open|finished|all` (default `open`), `stage`, `state` (the execution status), `needsUser=true|false`, and `ref`. Filters combine with AND; repeat one for OR, as in `?stage=review&stage=qa&needsUser=true`.
 - Finished tickets and runs page: pass the response's `nextCursor` as `cursor`, with `limit` up to 200.
@@ -226,7 +226,9 @@ Above the editor, the widget keeps each unfinished ticket's progress on screen b
   ◜ validating task 03's review · 41.0s
 ```
 
-Pi reads the steps from the controller's actions in the database, and checks them every second along with the event revision, since starting or finishing an action records no event.
+While a step runs commands of the controller's own (`worktree.setup`, work validation, QA's commands, and QA validation), the line also names the command and its position, as in `◜ validating task 02's work · test (2/3) · 41.0s`.
+
+Pi reads the steps from the controller's actions in the database, and checks them every second along with the event revision, since starting or finishing an action records no event. The running command is not in the database: the server keeps it in memory, and Pi asks `GET /v1/controller-steps` for it once a second, only while such a step runs. A server that does not answer leaves the line without its command.
 
 ## Layout
 

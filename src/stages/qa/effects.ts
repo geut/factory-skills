@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../../config.ts';
+import type { CommandReporter } from '../../controller/command-progress.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
 import { sha256 } from '../../hash.ts';
 import {
@@ -149,6 +150,7 @@ async function validateQa(input: {
   baseline: QaBaseline | null;
   commands: ReturnType<typeof qaSettings>['commands'];
   factoryDir: string;
+  reportCommand: CommandReporter;
   taskFile: string;
   taskId: string;
   validationCommands: Array<WorkCommand>;
@@ -214,7 +216,10 @@ async function validateQa(input: {
     return failedReport(QA_VALIDATOR_VERSION, checks, incomplete, { reason: 'incomplete' });
   }
   const failing: Array<string> = [];
-  for (const command of input.commands) {
+  // QA's commands, then the validation commands: one count for the step.
+  const total = input.commands.length + input.validationCommands.length;
+  for (const [index, command] of input.commands.entries()) {
+    input.reportCommand({ command: command.name, index: index + 1, total });
     const result = await runCommand(command, input.worktree);
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -242,7 +247,12 @@ async function validateQa(input: {
       : Object.keys(current).filter((file) => current[file] !== input.baseline?.files[file]);
   const again: Array<ValidationCheck> = [];
   const qaFailures: Array<string> = [];
-  for (const command of input.validationCommands) {
+  for (const [index, command] of input.validationCommands.entries()) {
+    input.reportCommand({
+      command: command.name,
+      index: input.commands.length + index + 1,
+      total,
+    });
     const result = await runCommand(command, input.worktree);
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -288,7 +298,7 @@ export const qaValidator: Validator<'qa'> = {
       ...qaSettings(snapshot.execution.policy).commands,
       ...qaValidationCommands(snapshot.execution.policy),
     ]),
-  validate: ({ run, session, snapshot }) => {
+  validate: ({ deps, run, session, snapshot }) => {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const worktree = snapshot.execution.worktreePath;
     if (task === null || worktree === null) {
@@ -308,6 +318,7 @@ export const qaValidator: Validator<'qa'> = {
       baseline: parseBaseline(baseline?.baseline ?? null),
       commands: qaSettings(snapshot.execution.policy).commands,
       factoryDir: snapshot.execution.factoryDir,
+      reportCommand: deps.reportCommand,
       taskFile: task.taskFile,
       taskId: task.taskId,
       validationCommands: qaValidationCommands(snapshot.execution.policy),

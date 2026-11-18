@@ -1,3 +1,4 @@
+import { ignoreCommands } from '../controller/command-progress.ts';
 import type { FactorySnapshot, RunRecord, SessionRecord } from '../domain.ts';
 import { blank, run, session } from '../stories/fixtures.ts';
 import type { ValidatedStage, ValidationContext } from './report.ts';
@@ -20,6 +21,7 @@ export function validationContext(
   return {
     deps: {
       findPullRequest: deps.findPullRequest ?? (() => ({ missing: true })),
+      reportCommand: deps.reportCommand ?? ignoreCommands,
       usage: deps.usage ?? (() => ''),
     },
     run: finished,

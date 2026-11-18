@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { z } from 'zod';
 import type { Communication } from '../communication.ts';
 import type { ConfigResult } from '../config.ts';
+import type { CommandProgress } from '../controller/command-progress.ts';
 import type { BacklogResult, FactoryCommands } from '../controller/service.ts';
 import type { Actor } from '../domain.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
@@ -16,6 +17,9 @@ import { ProblemError } from './problem.ts';
 export type ApiContext = {
   // The tracker's backlog, cached; null where the server has none.
   backlog: ((refresh: boolean) => Promise<BacklogResult>) | null;
+  // The command a long controller step is running, from the server's
+  // memory; null where the server has none.
+  commandProgress: ((actionId: string) => CommandProgress | null) | null;
   commands: FactoryCommands;
   // The server's connection; read routes only read it.
   db: DatabaseSync | null;

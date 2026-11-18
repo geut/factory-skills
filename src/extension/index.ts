@@ -3,19 +3,25 @@ import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import { factoryPaths } from '../controller/service.ts';
-import type { TicketStep } from '../controller/steps.ts';
+import { runsCommands, type TicketStep } from '../controller/steps.ts';
 import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { FactoryAgentsView } from './agents-view.ts';
 import {
   createFactoryClient,
   type FactoryClient,
+  type LiveCommand,
   type PendingFeedbackView,
 } from './factory-client.ts';
 import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
-import { readChildActivity, renderFactoryWidget, type WidgetChild } from './widget.ts';
+import {
+  readChildActivity,
+  renderFactoryWidget,
+  withCommands,
+  type WidgetChild,
+} from './widget.ts';
 
 // Pi never hosts the controller (ADR-003): it reads the database and sends
 // commands to the factory server.
@@ -31,6 +37,9 @@ let tick: ReturnType<typeof setInterval> | null = null;
 let widgetTui: TUI | null = null;
 let tickets: Array<TicketProgress> = [];
 let steps: Array<TicketStep> = [];
+// The commands long steps are running, from the server; see refreshCommands.
+let liveCommands = new Map<string, LiveCommand>();
+let fetchingCommands = false;
 let closeOverlay: (() => void) | null = null;
 let publishStatus: (text: string) => void = (text) => {
   latest?.ui.notify(text, 'info');
@@ -93,7 +102,7 @@ function refreshWidget(service: FactoryClient): void {
             children: widgetChildren(service),
             frame,
             now: Date.now(),
-            steps,
+            steps: withCommands(steps, liveCommands),
             theme,
             tickets,
             width,
@@ -117,6 +126,32 @@ function refreshWidget(service: FactoryClient): void {
   }, 80);
 }
 
+// Asks the server which commands long steps are running, once a second and
+// only while such a step runs: the database does not keep them. A server
+// that does not answer leaves the steps without their commands.
+function refreshCommands(service: FactoryClient): void {
+  if (fetchingCommands) {
+    return;
+  }
+  if (!steps.some((item) => runsCommands(item.step))) {
+    if (liveCommands.size > 0) {
+      liveCommands = new Map();
+      widgetTui?.requestRender();
+    }
+    return;
+  }
+  fetchingCommands = true;
+  void service
+    .stepCommands()
+    .then((found) => {
+      liveCommands = found;
+      widgetTui?.requestRender();
+    })
+    .finally(() => {
+      fetchingCommands = false;
+    });
+}
+
 function serviceFor(cwd: string): FactoryClient {
   const { factoryRoot } = factoryPaths(cwd);
   const existing = clients.get(factoryRoot);
@@ -138,6 +173,7 @@ function watch(service: FactoryClient): void {
   seenActions = service.actionsVersion();
   refreshWidget(service);
   poll = setInterval(() => {
+    refreshCommands(service);
     const revision = service.revision();
     // A controller step starts and ends with no event, only an action change.
     const actions = service.actionsVersion();

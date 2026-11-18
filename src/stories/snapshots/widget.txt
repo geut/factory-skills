@@ -330,6 +330,26 @@
   04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module
   ◜ validating task 03's review · 41.0s
 
+== between agents: validating, second of three commands · 40 cols ==
+● dpaez/factory-dashboard#11 · ■■...
+  04/06 Ticket detail page (`/tic...
+  ◜ validating task 03's review ·...
+
+== between agents: validating, second of three commands · 60 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the...
+  ◜ validating task 03's review · test (2/3) · 41.0s
+
+== between agents: validating, second of three commands · 80 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module
+  ◜ validating task 03's review · test (2/3) · 41.0s
+
+== between agents: validating, second of three commands · 120 cols ==
+● dpaez/factory-dashboard#11 · ■■■□□□ 3/6 · work
+  04/06 Ticket detail page (`/tickets/[slug]`) on the v2 read module
+  ◜ validating task 03's review · test (2/3) · 41.0s
+
 == between agents: preparing the worktree · 40 cols ==
 ● geut/factory-skills#42 · plan
   ◜ preparing the worktree · 125.0s

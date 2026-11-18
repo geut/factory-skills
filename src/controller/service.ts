@@ -49,6 +49,7 @@ import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
+import { createCommandBoard, type CommandProgress } from './command-progress.ts';
 import {
   markPullRequestSynced,
   pullRequestUrlOf,
@@ -206,11 +207,13 @@ export type FactoryService = {
   // The backlog, from a short cache unless `refresh`.
   backlog: (refresh: boolean) => Promise<BacklogResult>;
   command: (args: string) => Promise<string>;
+  // The code host reported a pull request changed: refresh the ticket that
+  // has it and return the ticket's key, or null when none does.
+  // The command an action is running, while it runs one.
+  commandProgress: (actionId: string) => CommandProgress | null;
   commands: FactoryCommands;
   // Progress of every current ticket that is not finished.
   progress: () => Array<TicketProgress>;
-  // The code host reported a pull request changed: refresh the ticket that
-  // has it and return the ticket's key, or null when none does.
   pullRequestChanged: (pullRequest: PullRequestInfo) => Promise<string | null>;
   // Records what the code host says about a ticket's pull request, then
   // finishes the ticket on a merge or a close.
@@ -312,6 +315,8 @@ export function createFactoryService(input: {
       return createGithubCodeHost(config.kind === 'ok' ? config.config.codeHost : null);
     });
   const findPullRequest: PullRequestLookup = (url) => pullRequestLookup(codeHost())(url);
+  // The commands long actions are running, for their controller steps.
+  const commandBoard = createCommandBoard(now);
   const trackerFor = (): ConfiguredTracker | null => {
     const config = readFactoryConfig(input.factoryRoot);
     return config.kind === 'ok' && config.config.tracker !== null
@@ -497,6 +502,7 @@ export function createFactoryService(input: {
             void drain();
           },
           arm,
+          commands: commandBoard,
           db,
           factoryRoot: input.factoryRoot,
           findPullRequest: input.findPullRequest ?? findPullRequest,
@@ -1159,6 +1165,7 @@ export function createFactoryService(input: {
         }
       }
     },
+    commandProgress: commandBoard.get,
     commands,
     progress: () => progressOf(db),
     pullRequestChanged,
