@@ -242,7 +242,7 @@ skills/            specialist procedures and output templates
 tests/             recovery tests against real SQLite
 ```
 
-Child sessions follow the named skill, return only the versioned template in that skill's `references/output.md`, then call `subagent_done`. `caller_ping` replaces the template when a decision is needed. Skills do not write the controller database.
+Child sessions follow the named skill, return only the versioned template in that skill's `references/output.md`, then call `subagent_done`. `caller_ping` replaces the template when a decision is needed. Skills do not write the controller database. Both calls end the child, but each still gets a tool result in the session ("The session is shutting down…") and stops Pi after the turn. The child publishes its `.exit` sidecar and exits only at the end of that turn, once Pi has saved every tool result and before any further model request, so a session resumed with a reply or a validation correction never replays a tool call without its result, which providers such as Anthropic's refuse.
 
 ## Vocabulary
 

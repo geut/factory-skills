@@ -129,19 +129,49 @@ function pingName(env: NodeJS.ProcessEnv): string {
   return name !== undefined && name.length > 0 ? name : 'factory';
 }
 
-export default function factoryChildHandshake(pi: ExtensionAPI): void {
+// What a terminal tool answers. The run ends after the turn, so the model
+// reads these only when the controller resumes the session: they tell it why
+// its last call has a result and a new message follows.
+export const DONE_RESULT =
+  'The session is shutting down: the controller checks your reply. A later message resumes this session; follow it.';
+export const PING_RESULT =
+  'The session is shutting down until a person answers your question. Their answer arrives as the next message; follow it.';
+
+export type HandshakeDeps = { env: NodeJS.ProcessEnv; exit: (code: number) => void };
+
+const processDeps: HandshakeDeps = {
+  env: process.env,
+  exit: (code) => {
+    process.exit(code);
+  },
+};
+
+// subagent_done and caller_ping end the run, but a tool call must keep its
+// result in the session: a resumed session whose last tool call has none is
+// history a provider such as Anthropic's refuses. So a terminal tool records
+// the ending and returns a result that asks Pi to stop after the turn
+// (`terminate`). At turn_end, Pi has saved every tool result of the turn and
+// starts no further request, so the child publishes the sidecar and exits
+// then: the controller never sees a session it cannot resume.
+export default function factoryChildHandshake(
+  pi: ExtensionAPI,
+  deps: HandshakeDeps = processDeps,
+): void {
+  const { env } = deps;
   const writeTerminal = createTerminalWriter();
   let replyNudged = false;
+  // The first terminal call of the turn; the run ends once the turn does.
+  let ending: TerminalSidecar | null = null;
 
   pi.registerTool({
     description:
-      'Finish this factory stage once your reply is written as text. Call it once. The process exits immediately. If a reply still arrives, stop. Do not call it again and do not call caller_ping.',
+      'Finish this factory stage once your reply is written as text. Call it once, as your last tool call; the session ends after it. If a message still arrives, follow it. Do not call it again in the same turn and do not call caller_ping.',
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       // A Pi without a tool context cannot be checked; it ends as before.
       const entries = (ctx as typeof ctx | undefined)?.sessionManager.getEntries();
       // Asked once per run; a second call ends the run either way.
       if (
-        process.env['FACTORY_REPLY_REQUIRED'] === '1' &&
+        env['FACTORY_REPLY_REQUIRED'] === '1' &&
         !replyNudged &&
         entries !== undefined &&
         replyIsMissing(entries as ReadonlyArray<SessionEntryLike>)
@@ -149,8 +179,12 @@ export default function factoryChildHandshake(pi: ExtensionAPI): void {
         replyNudged = true;
         return { content: [{ text: MISSING_REPLY, type: 'text' }], details: undefined };
       }
-      writeTerminal(process.env['PI_SUBAGENT_SESSION'], { type: 'done' });
-      process.exit(0);
+      ending ??= { type: 'done' };
+      return {
+        content: [{ text: DONE_RESULT, type: 'text' }],
+        details: undefined,
+        terminate: true,
+      };
     },
     label: 'Done',
     name: 'subagent_done',
@@ -161,16 +195,24 @@ export default function factoryChildHandshake(pi: ExtensionAPI): void {
       'Ask the human a question you cannot answer. This replaces the stage template. Do not use it to report that the work is finished.',
     async execute(_toolCallId, params: { message?: string }) {
       const message = typeof params.message === 'string' ? params.message : '';
-      writeTerminal(process.env['PI_SUBAGENT_SESSION'], {
-        message,
-        name: pingName(process.env),
-        type: 'ping',
-      });
-      process.exit(0);
+      ending ??= { message, name: pingName(env), type: 'ping' };
+      return {
+        content: [{ text: PING_RESULT, type: 'text' }],
+        details: undefined,
+        terminate: true,
+      };
     },
     label: 'Ping',
     name: 'caller_ping',
     parameters: pingParameters,
+  });
+  // Every tool result of the turn is saved by now, and no request has started.
+  pi.on('turn_end', () => {
+    if (ending === null) {
+      return;
+    }
+    writeTerminal(env['PI_SUBAGENT_SESSION'], ending);
+    deps.exit(0);
   });
   let nudges = 0;
   pi.on('agent_end', (event, ctx) => {
@@ -186,13 +228,14 @@ export default function factoryChildHandshake(pi: ExtensionAPI): void {
       return;
     }
     if (step.kind === 'exit') {
-      process.exit(1);
-    }
-    nudges = 0;
-    if (process.env['PI_SUBAGENT_AUTO_EXIT'] !== '1' || !shouldAutoExit(event.messages)) {
+      deps.exit(1);
       return;
     }
-    writeTerminal(process.env['PI_SUBAGENT_SESSION'], { type: 'done' });
-    process.exit(0);
+    nudges = 0;
+    if (env['PI_SUBAGENT_AUTO_EXIT'] !== '1' || !shouldAutoExit(event.messages)) {
+      return;
+    }
+    writeTerminal(env['PI_SUBAGENT_SESSION'], { type: 'done' });
+    deps.exit(0);
   });
 }
