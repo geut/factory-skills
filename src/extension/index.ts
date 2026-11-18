@@ -3,6 +3,7 @@ import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import { factoryPaths } from '../controller/service.ts';
+import type { TicketStep } from '../controller/steps.ts';
 import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { FactoryAgentsView } from './agents-view.ts';
@@ -23,11 +24,13 @@ const clients = new Map<string, FactoryClient>();
 const POLL_MS = 1000;
 let poll: ReturnType<typeof setInterval> | null = null;
 let seenRevision = 0;
+let seenActions = '';
 let latest: ExtensionContext | null = null;
 let frame = 0;
 let tick: ReturnType<typeof setInterval> | null = null;
 let widgetTui: TUI | null = null;
 let tickets: Array<TicketProgress> = [];
+let steps: Array<TicketStep> = [];
 let closeOverlay: (() => void) | null = null;
 let publishStatus: (text: string) => void = (text) => {
   latest?.ui.notify(text, 'info');
@@ -68,7 +71,10 @@ function refreshWidget(service: FactoryClient): void {
   }
   // Progress is read on activity, not on every spinner frame.
   tickets = service.progress();
-  const running = widgetChildren(service).length > 0;
+  steps = service.controllerSteps();
+  // A controller step keeps the spinner and its elapsed time moving too.
+  const running =
+    widgetChildren(service).length > 0 || steps.some((item) => item.step.state === 'running');
   if (!running && tickets.length === 0) {
     ctx.ui.setWidget('factory-agents', undefined);
     stopTick();
@@ -87,6 +93,7 @@ function refreshWidget(service: FactoryClient): void {
             children: widgetChildren(service),
             frame,
             now: Date.now(),
+            steps,
             theme,
             tickets,
             width,
@@ -128,16 +135,20 @@ function watch(service: FactoryClient): void {
     clearInterval(poll);
   }
   seenRevision = service.revision();
+  seenActions = service.actionsVersion();
   refreshWidget(service);
   poll = setInterval(() => {
     const revision = service.revision();
-    if (revision === seenRevision) {
+    // A controller step starts and ends with no event, only an action change.
+    const actions = service.actionsVersion();
+    if (revision === seenRevision && actions === seenActions) {
       return;
     }
     for (const { card } of service.cardsSince(seenRevision)) {
       publishStatus(card);
     }
     seenRevision = revision;
+    seenActions = actions;
     refreshWidget(service);
   }, POLL_MS);
   poll.unref();

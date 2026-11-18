@@ -2,6 +2,12 @@
 
 A factory turns tickets into reviewed pull requests by running agents through fixed stages, under one developer's accounts.
 
+## Progress
+
+**Controller step**:
+What the controller is doing for a ticket between agents, such as preparing a worktree, validating a run, or updating the issue, with the command it is running, if any. Scheduled steps, such as a retry, count too.
+_Avoid_: activity (that is an agent's), job, task (a planned slice of a ticket)
+
 ## Communication
 
 **Outward communication**:

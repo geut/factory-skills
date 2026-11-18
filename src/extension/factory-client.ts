@@ -5,6 +5,7 @@ import { PendingFeedback } from '../api/commands.ts';
 import type { ParsedCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import { pendingFeedbackCard } from '../controller/run-card.ts';
+import { actionsVersion, controllerStepsOf, type TicketStep } from '../controller/steps.ts';
 import {
   cardsSince,
   latestRevision,
@@ -28,9 +29,13 @@ import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 // controller, so any number of Pi sessions can watch one factory.
 
 export type FactoryClient = {
+  // Changes when an action is queued or changes status.
+  actionsVersion: () => string;
   cardsSince: (revision: number) => Array<{ card: string; revision: number }>;
   close: () => void;
   command: (command: ParsedCommand) => Promise<string>;
+  // What the controller is doing for each current ticket between agents.
+  controllerSteps: () => Array<TicketStep>;
   // The ticket's pending feedback, for the picker, or why it cannot be read.
   pendingFeedback: (ref: string) => Promise<PendingFeedbackView | string>;
   progress: () => Array<TicketProgress>;
@@ -253,6 +258,10 @@ export function createFactoryClient(input: {
   }
 
   return {
+    actionsVersion: () => {
+      const open = database();
+      return open === null ? '' : actionsVersion(open);
+    },
     cardsSince: (revision) => {
       const open = database();
       return open === null ? [] : cardsSince(open, revision);
@@ -262,6 +271,10 @@ export function createFactoryClient(input: {
       db = null;
     },
     command,
+    controllerSteps: () => {
+      const open = database();
+      return open === null ? [] : controllerStepsOf(open);
+    },
     pendingFeedback: async (ref) => {
       const open = database();
       if (open === null) {
