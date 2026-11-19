@@ -575,9 +575,10 @@ test('passing work validation launches one read-only reviewer', async () => {
   assert.match(reviews[0]?.prompt ?? '', /not a template/);
   assert.match(service.status('proj-123'), /stage: review/);
   // Only the reviewer takes the project rules from the base commit; the
-  // worker keeps Pi's discovery in its worktree.
+  // worker keeps Pi's discovery in its worktree, and gets its skill by path.
   assert.deepEqual(runtime.launches.find((launch) => launch.stage === 'work')?.projectConfig, {
     kind: 'worktree',
+    skill: 'factory-work',
   });
   const rules = reviews[0]?.projectConfig;
   assert.equal(rules?.kind, 'base');

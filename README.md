@@ -113,6 +113,14 @@ dist/factory serve
 
 `npm run build` bundles `src/cli.ts` with esbuild and injects it into a copy of the running `node` ([single executable applications](https://nodejs.org/api/single-executable-applications.html)). Build on the platform that runs it. `node src/cli.ts serve` runs the same server from source.
 
+A release is one artifact: the binary is all a factory needs, with no Pi package to install. It carries:
+
+- **the agents' extension**, which it writes to `.factory/runtime/child-handshake.ts`;
+- **every stage skill**, written to `.factory/runtime/skills/` and passed to each agent with `--skill`;
+- **the operator's Pi extension** (`/factory`, the widget, and the cards). On every start the binary writes it to `extensions/factory/index.js` in Pi's agent directory (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent`), which Pi loads on its next start or `/reload`.
+
+Pi keeps the first skill of a name, so an installed factory-skills package still wins over the binary's copy. If Pi lists factory-skills as a package in its settings, personal or the project's `.pi/settings.json` (a git install, or a checkout like this one), the binary leaves its extension out and says so once at start, with the `pi remove` command that lets updates reach Pi. Remove an old git install (`pi remove git:github.com/geut/factory-skills@v…`) once the binary carries the extension; keep a local checkout's package while you develop the factory.
+
 - The server refuses to start outside Herdr. It needs `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`, plus `herdr` (0.8.2 or newer) and `pi` on `PATH`; `FACTORY_PI_BIN` overrides the path to `pi`.
 - Agent and handoff panes open through the factory's own Herdr plugin, `geut.factory`. On every start the server writes its manifest to `$XDG_DATA_HOME/factory/herdr-plugin/` (`~/.local/share/factory/herdr-plugin/` by default) and runs `herdr plugin link` on it, so there is nothing to install. Its pane runs the launch script directly in non-interactive bash, so shell setup that prints or prompts cannot swallow the launch. A failed link stops the server with the command to run by hand.
 - Agents see the server's `PATH`, and its `BASH_ENV` when set. Herdr opens panes with its own environment and agents run non-interactive bash, which never reads `~/.bashrc`, so every pane's launch script exports both. Whatever the server can run, its agents can run too, so start `factory serve` from a shell where the project's toolchain (`pnpm`, `bun`, ...) is on `PATH`.

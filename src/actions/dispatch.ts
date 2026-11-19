@@ -284,7 +284,7 @@ function launchProjectConfig(
 ): ProjectConfig {
   const definition = stages[stage];
   if (definition.projectRules === 'worktree') {
-    return { kind: 'worktree' };
+    return { kind: 'worktree', skill: definition.skill };
   }
   const { execution } = snapshot;
   if (execution.worktreeBaseSha === null) {
