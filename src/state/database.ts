@@ -94,10 +94,32 @@ function schemaVersion(db: DatabaseSync): number | null {
   return firstNumber(row, 'schema_version');
 }
 
+// The identity as one snapshot. Read one by one, a process that commits the
+// schema between the reads shows half of it: application_id 0 with
+// user_version and schema_meta already set.
+function identityOf(db: DatabaseSync): {
+  applicationId: number;
+  storedSchemaVersion: number | null;
+  userVersion: number;
+} {
+  const read = () => ({
+    applicationId: pragmaNumber(db, 'application_id'),
+    storedSchemaVersion: schemaVersion(db),
+    userVersion: pragmaNumber(db, 'user_version'),
+  });
+  if (db.isTransaction) {
+    return read();
+  }
+  db.exec('BEGIN');
+  try {
+    return read();
+  } finally {
+    db.exec('COMMIT');
+  }
+}
+
 function assertCompatible(db: DatabaseSync, databasePath: string): void {
-  const applicationId = pragmaNumber(db, 'application_id');
-  const userVersion = pragmaNumber(db, 'user_version');
-  const storedSchemaVersion = schemaVersion(db);
+  const { applicationId, storedSchemaVersion, userVersion } = identityOf(db);
 
   if (
     applicationId === APPLICATION_ID &&
@@ -226,8 +248,18 @@ export function openStateDatabase(
         upgrade(db);
       } else {
         compatible = false;
-        if (!create || readOnly || !canInitialize(db)) {
+        if (!create || readOnly) {
           throw compatibilityError;
+        }
+        if (!canInitialize(db)) {
+          // Another process may have finished initializing it since the
+          // check: a database that is now complete is the one wanted.
+          try {
+            assertCompatible(db, databasePath);
+          } catch {
+            throw compatibilityError;
+          }
+          compatible = true;
         }
       }
     }
