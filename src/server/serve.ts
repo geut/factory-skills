@@ -41,7 +41,7 @@ import {
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { openStateDatabase } from '../state/database.ts';
-import { CHECK_EVERY_MS, createUpdateChecker } from '../update/checker.ts';
+import { createUpdateChecker } from '../update/checker.ts';
 import { versionOf } from '../update/releases.ts';
 import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
@@ -309,7 +309,8 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     start: (source, options) => ready().start(source, options),
     stopRun: (id, options) => ready().stopRun(id, options),
   };
-  // Updates: checked on start and once a day; FACTORY.json may turn it off.
+  // Updates: checked once a day, counted across restarts; FACTORY.json may
+  // turn it off.
   const updates = createUpdateChecker({
     current: versionOf(factoryVersion()) ?? '0.0.0',
     enabled: () => {
@@ -432,9 +433,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     if (timers.sync !== null) {
       clearInterval(timers.sync);
     }
-    if (timers.updates !== null) {
-      clearInterval(timers.updates);
-    }
+    updates.close();
     events.close();
     await running.stop();
     await closeHttp(http);
@@ -445,8 +444,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   // Set once recovery is done; close() may run before that.
   const timers: {
     sync: ReturnType<typeof setInterval> | null;
-    updates: ReturnType<typeof setInterval> | null;
-  } = { sync: null, updates: null };
+  } = { sync: null };
   const heartbeat = setInterval(() => {
     if (!renewServerLease(db, instanceId, new Date().toISOString())) {
       void close().then(() => {
@@ -485,12 +483,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const minutes = config.config.codeHost?.syncMinutes ?? DEFAULT_SYNC_MINUTES;
   timers.sync = setInterval(syncPullRequests, minutes * 60_000);
   syncPullRequests();
-  const checkUpdates = (): void => {
-    void updates.check();
-  };
-  timers.updates = setInterval(checkUpdates, CHECK_EVERY_MS);
-  timers.updates.unref();
-  checkUpdates();
+  updates.start();
   input.out(`Factory server for ${codeRoot} listening on ${url}`);
   return { kind: 'ok', server: { close, instanceId, url } };
 }

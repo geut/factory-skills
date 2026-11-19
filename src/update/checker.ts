@@ -36,8 +36,14 @@ export type CheckOutcome =
   | { kind: 'off' };
 
 export type UpdateChecker = {
+  // Checks now. A check already running is shared, not repeated.
   check: () => Promise<CheckOutcome>;
+  // Stops the schedule; a check still running records nothing.
+  close: () => void;
   later: () => UpdateView | null;
+  // Checks once a day, counted from the last check recorded, so a restart
+  // does not ask GitHub again. A new version of the server checks at once.
+  start: () => void;
   view: () => UpdateView | null;
 };
 
@@ -49,29 +55,62 @@ export function createUpdateChecker(input: {
   now: () => string;
 }): UpdateChecker {
   const { current, factoryRoot } = input;
-  return {
-    check: async () => {
-      if (!input.enabled()) {
-        // Pi stops showing what an earlier check found.
-        const state = readUpdateState(factoryRoot);
-        if (state.latest !== null) {
-          writeUpdateState(factoryRoot, { ...state, announcedAt: null, latest: null });
-        }
-        return { kind: 'off' };
+  let running: Promise<CheckOutcome> | null = null;
+  let closed = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  async function run(): Promise<CheckOutcome> {
+    if (!input.enabled()) {
+      // Pi stops showing what an earlier check found.
+      const state = readUpdateState(factoryRoot);
+      if (state.latest !== null && !closed) {
+        writeUpdateState(factoryRoot, { ...state, announcedAt: null, latest: null });
       }
-      try {
-        const latest = await checkForUpdate({ current, gh: input.gh });
-        const state = afterCheck({
-          current,
-          latest,
-          now: input.now(),
-          previous: readUpdateState(factoryRoot),
-        });
-        writeUpdateState(factoryRoot, state);
-        return { kind: 'checked', update: updateView(state, current) };
-      } catch (error: unknown) {
-        // A check that fails stays quiet; the next one tries again.
-        return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
+      return { kind: 'off' };
+    }
+    try {
+      const latest = await checkForUpdate({ current, gh: input.gh });
+      if (closed) {
+        return { kind: 'failed', message: 'The server stopped during the check.' };
+      }
+      const state = afterCheck({
+        current,
+        latest,
+        now: input.now(),
+        previous: readUpdateState(factoryRoot),
+      });
+      writeUpdateState(factoryRoot, state);
+      return { kind: 'checked', update: updateView(state, current) };
+    } catch (error: unknown) {
+      // A check that fails stays quiet; the next one tries again.
+      return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  function check(): Promise<CheckOutcome> {
+    running ??= run().finally(() => {
+      running = null;
+    });
+    return running;
+  }
+
+  function schedule(delay: number): void {
+    if (closed) {
+      return;
+    }
+    timer = setTimeout(() => {
+      void check().finally(() => schedule(CHECK_EVERY_MS));
+    }, delay);
+    timer.unref();
+  }
+
+  return {
+    check,
+    close: () => {
+      closed = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
       }
     },
     later: () => {
@@ -83,6 +122,20 @@ export function createUpdateChecker(input: {
       writeUpdateState(factoryRoot, next);
       return updateView(next, current);
     },
+    start: () => {
+      schedule(dueIn({ current, now: input.now(), state: readUpdateState(factoryRoot) }));
+    },
     view: () => updateView(readUpdateState(factoryRoot), current),
   };
+}
+
+// How long until the next check is due: a day after the last one recorded,
+// or now when there was none or a different version made it.
+export function dueIn(input: { current: string; now: string; state: UpdateState }): number {
+  const { state } = input;
+  if (state.checkedAt === null || state.current !== input.current) {
+    return 0;
+  }
+  const since = Date.parse(input.now) - Date.parse(state.checkedAt);
+  return Number.isNaN(since) ? 0 : Math.min(CHECK_EVERY_MS, Math.max(0, CHECK_EVERY_MS - since));
 }

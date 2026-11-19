@@ -126,7 +126,7 @@ A pinned git or npm install keeps Pi on that version, so the server names it onc
 
 ### Updates
 
-The server checks GitHub for an **update**, a stable release newer than the one it runs, when it starts and once a day after, through `gh`. Drafts and pre-releases never count. A check that fails stays quiet and the next one tries again. `"updates": { "check": false }` in FACTORY.json turns checks off. What a check found lives in `.factory/runtime/update.json`, which only the server writes.
+The server checks GitHub for an **update**, a stable release newer than the one it runs, once a day through `gh`. The day counts from the last check recorded, so restarting the server does not check again; a server on a new version checks when it starts. Drafts and pre-releases never count. A check that fails stays quiet and the next one tries again. `"updates": { "check": false }` in FACTORY.json turns checks off. What a check found lives in `.factory/runtime/update.json`, which only the server writes.
 
 When a check first finds a release, every Pi session running then posts one card. However many releases the factory skipped, the card names only the newest, and its link covers them all: the release's notes, or GitHub's compare page from the running version.
 

@@ -126,6 +126,9 @@ test('Pi sees the update the server found, checks again, and puts it off', async
   assert.equal(checked.kind === 'notice' ? checked.notice.notesUrl : checked.text, notesUrl);
   assert.equal(client.updateState().announcedAt, announcedAt);
 
+  // Read again only when the server rewrote the file.
+  assert.equal(client.updateState(), client.updateState());
+
   const putOff = await client.update('later');
   assert.match(putOff.kind === 'text' ? putOff.text : '', /No more notices for factory 99\.0\.0/);
   assert.equal(client.updateState().update?.later, true);

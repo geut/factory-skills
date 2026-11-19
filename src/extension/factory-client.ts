@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { PendingFeedback } from '../api/commands.ts';
@@ -26,7 +26,7 @@ import { localTokenPath } from '../server/clients.ts';
 import { leaseIsLive, readServerLease } from '../server/lease.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 import { updateView, type UpdateView } from '../update/checker.ts';
-import { readUpdateState } from '../update/state.ts';
+import { readUpdateState, updateStatePath } from '../update/state.ts';
 import { UpdateNotice } from './update-notice.ts';
 
 // Pi's side of the factory. It reads the database directly for everything it
@@ -283,6 +283,25 @@ export function createFactoryClient(input: {
       : { kind: 'notice', notice: checked.update };
   }
 
+  // Pi asks every second for what changes about once a day, so the file is
+  // read again only when it changed.
+  let updateCache: { key: string; value: ReturnType<FactoryClient['updateState']> } | null = null;
+  function updateState(): ReturnType<FactoryClient['updateState']> {
+    const file = updateStatePath(input.factoryRoot);
+    const stat = statSync(file, { throwIfNoEntry: false });
+    const key = stat === undefined ? 'missing' : `${stat.mtimeMs}:${stat.size}:${stat.ino}`;
+    if (updateCache?.key === key) {
+      return updateCache.value;
+    }
+    const state = readUpdateState(input.factoryRoot);
+    const value = {
+      announcedAt: state.announcedAt,
+      update: updateView(state, state.current ?? 'an older version'),
+    };
+    updateCache = { key, value };
+    return value;
+  }
+
   async function command(parsed: ParsedCommand): Promise<string> {
     if (parsed.kind === 'invalid') {
       return parsed.message;
@@ -436,12 +455,6 @@ export function createFactoryClient(input: {
       return open === null ? unavailable() : ticketDetailFor(open, ref);
     },
     update,
-    updateState: () => {
-      const state = readUpdateState(input.factoryRoot);
-      return {
-        announcedAt: state.announcedAt,
-        update: updateView(state, state.current ?? 'an older version'),
-      };
-    },
+    updateState,
   };
 }
