@@ -3,6 +3,7 @@ import { Communication } from '../communication.ts';
 import { factoryIdentity } from '../controller/facts.ts';
 import { flowOrder, stageEnabled } from '../stages/flow.ts';
 import { stageNames, stages } from '../stages/index.ts';
+import { factoryVersion } from '../version.ts';
 import { ProblemError } from './problem.ts';
 import { database, defineRoute, type Route } from './route.ts';
 
@@ -71,6 +72,10 @@ const Factory = z
       description:
         'A newer stable release than the one this factory runs, as the last check found it; null when there is none or checks are off.',
     }),
+    version: z.string().meta({
+      description:
+        'The factory version the server runs: the release, then the commit it was built from, such as `0.5.0+1ddf4f6`.',
+    }),
   })
   .meta({ id: 'Factory' });
 
@@ -97,6 +102,7 @@ const factory = defineRoute({
           perTask: stages[stage].scope === 'task',
         })),
         update: read.config.updates.check ? (context.updates?.view() ?? null) : null,
+        version: factoryVersion(),
       },
       status: 200,
     };

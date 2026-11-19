@@ -23,7 +23,7 @@ import {
   type TicketDetail,
 } from '../controller/view.ts';
 import { localTokenPath } from '../server/clients.ts';
-import { leaseIsLive, readServerLease } from '../server/lease.ts';
+import { leaseIsLive, readServerLease, type ServerLease } from '../server/lease.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 import { updateView, type UpdateView } from '../update/checker.ts';
 import { UpdateNotice, updateNoticeText } from '../update/notice.ts';
@@ -46,8 +46,13 @@ export type FactoryClient = {
   progress: () => Array<TicketProgress>;
   revision: () => number;
   runningChildren: () => Array<RunningChildRow>;
+  // The live server's instance, which changes when it restarts; null with
+  // none running.
+  serverInstance: () => string | null;
   // Whether a server holds the factory's lease.
   serverRunning: () => boolean;
+  // The version the server runs, or null when it cannot be asked.
+  serverVersion: () => Promise<string | null>;
   status: (ref: string) => string;
   // The commands long controller steps are running, by ticket key; empty
   // when the server cannot say.
@@ -66,6 +71,7 @@ export type UpdateReply =
   | { kind: 'problem' | 'text'; text: string };
 
 const UpdateCheckBody = z.object({ message: z.string(), update: UpdateNotice.nullable() });
+const FactoryVersionBody = z.object({ version: z.string() });
 const UpdateStartedBody = z.object({ kind: z.string(), message: z.string() });
 
 // A step's command as the server reported it, with the step it belongs to, so
@@ -121,9 +127,12 @@ export function createFactoryClient(input: {
     return openError ?? noServerMessage(input.factoryRoot);
   }
 
-  function serverUrl(open: DatabaseSync): string | null {
-    const lease = readServerLease(open);
-    return lease !== null && leaseIsLive(lease, now()) ? lease.url : null;
+  // The lease of the server running now, or null: one read for every
+  // question about the server.
+  function liveLease(): ServerLease | null {
+    const open = database();
+    const lease = open === null ? null : readServerLease(open);
+    return lease !== null && leaseIsLive(lease, now()) ? lease : null;
   }
 
   async function post(
@@ -200,8 +209,7 @@ export function createFactoryClient(input: {
   // server's memory. Empty when the server cannot say: the steps still show
   // from the database, without their commands.
   async function stepCommands(): Promise<Map<string, LiveCommand>> {
-    const open = database();
-    const url = open === null ? null : serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return new Map();
     }
@@ -242,7 +250,7 @@ export function createFactoryClient(input: {
     if (open === null) {
       return unavailable();
     }
-    const url = serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return noServerMessage(input.factoryRoot);
     }
@@ -275,6 +283,24 @@ export function createFactoryClient(input: {
       (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
       `The server answered ${response.status}.`
     );
+  }
+
+  async function serverVersion(): Promise<string | null> {
+    const url = liveLease()?.url ?? null;
+    if (url === null) {
+      return null;
+    }
+    try {
+      const token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
+      const response = await send(`${url}/v1/factory`, {
+        headers: { authorization: `Bearer ${token}` },
+        method: 'GET',
+      });
+      const parsed = FactoryVersionBody.safeParse(await response.json());
+      return response.status === 200 && parsed.success ? parsed.data.version : null;
+    } catch {
+      return null;
+    }
   }
 
   async function update(mode: 'check' | 'install' | 'later' | 'when-idle'): Promise<UpdateReply> {
@@ -342,7 +368,7 @@ export function createFactoryClient(input: {
       const reply = await update(parsed.mode);
       return reply.kind === 'notice' ? updateNoticeText(reply.notice) : reply.text;
     }
-    const url = serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return noServerMessage(input.factoryRoot);
     }
@@ -439,7 +465,7 @@ export function createFactoryClient(input: {
       if (open === null) {
         return unavailable();
       }
-      const url = serverUrl(open);
+      const url = liveLease()?.url ?? null;
       if (url === null) {
         return noServerMessage(input.factoryRoot);
       }
@@ -464,10 +490,9 @@ export function createFactoryClient(input: {
       const open = database();
       return open === null ? [] : listRunningChildren(open);
     },
-    serverRunning: () => {
-      const open = database();
-      return open !== null && serverUrl(open) !== null;
-    },
+    serverInstance: () => liveLease()?.instanceId ?? null,
+    serverRunning: () => liveLease() !== null,
+    serverVersion,
     status: (ref) => {
       const open = database();
       return open === null ? unavailable() : statusOf(open, ref);

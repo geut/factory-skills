@@ -13,6 +13,7 @@ import {
 import { factoryIdentity } from '../controller/facts.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { createUpdateChecker } from '../update/checker.ts';
+import { factoryVersion } from '../version.ts';
 import type { ApiContext } from './route.ts';
 import { createRouter } from './router.ts';
 import { apiRoutes } from './routes.ts';
@@ -89,6 +90,7 @@ test('the factory route lists every stage in flow order, and which are on', asyn
       { enabled: true, name: 'wrapup', optional: false, perTask: false },
     ],
     update: null,
+    version: factoryVersion(),
   });
 });
 

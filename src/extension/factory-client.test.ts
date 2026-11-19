@@ -7,6 +7,7 @@ import { initRepo } from '../../tests/git-repo.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import { FakeRuntime, sampleUsage } from '../runtime/fake.ts';
 import { type RunningServer, serve } from '../server/serve.ts';
+import { factoryVersion } from '../version.ts';
 import { createFactoryClient, noServerMessage } from './factory-client.ts';
 
 const roots: Array<string> = [];
@@ -136,6 +137,20 @@ test('Pi sees the update the server found, checks again, and puts it off', async
     await client.command(parseFactoryCommand('update')),
     /runs from source; update it with git pull/,
   );
+  client.close();
+});
+
+test('Pi reads the running server and its version, and none when it is gone', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  const client = createFactoryClient({ factoryRoot });
+  assert.equal(client.serverInstance(), null);
+  assert.equal(await client.serverVersion(), null);
+  await serverFor(codeRoot, pi, new FakeRuntime());
+  assert.equal(client.serverInstance(), servers.at(-1)?.instanceId);
+  assert.equal(await client.serverVersion(), factoryVersion());
+  await servers.pop()?.close();
+  assert.equal(client.serverInstance(), null);
+  assert.equal(await client.serverVersion(), null);
   client.close();
 });
 

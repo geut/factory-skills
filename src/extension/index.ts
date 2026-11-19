@@ -9,6 +9,7 @@ import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { factoryPackage } from '../server/pi-extension.ts';
 import { updateNoticeText, type UpdateNotice } from '../update/notice.ts';
+import { factoryVersion } from '../version.ts';
 import { FactoryAgentsView } from './agents-view.ts';
 import {
   createFactoryClient,
@@ -17,6 +18,14 @@ import {
   type PendingFeedbackView,
 } from './factory-client.ts';
 import { FactoryFeedbackPicker } from './feedback-picker.ts';
+import {
+  createVersionAsks,
+  reloadNeeded,
+  reloadNoticeRenderer,
+  reloadNoticeText,
+  renderReloadFooter,
+  type ReloadNotice,
+} from './reload-notice.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
 import { renderUpdateFooter, updateNoticeRenderer } from './update-notice.ts';
@@ -55,6 +64,49 @@ let publishUpdate: (notice: UpdateNotice) => void = (notice) => {
 // only for a release found while it runs, and the footer line it shows.
 let seenAnnounced: string | null = null;
 let shownFooter: string | undefined;
+
+let publishReload: (notice: ReloadNotice) => void = (notice) => {
+  latest?.ui.notify(reloadNoticeText(notice), 'warning');
+};
+// Asks the server its version once per instance; a failed ask is tried
+// again once a minute, not on every poll.
+const versionAsks = createVersionAsks({ askAgainMs: 60_000, now: () => Date.now() });
+// The server version this session already posted the reload card for.
+let reloadPostedFor: string | null = null;
+
+// After the server restarts on another version, this session still runs the
+// extension it loaded at its start: post the reload card once per version, and
+// keep a footer line until /reload. With no server to ask, stay quiet.
+function refreshReload(service: FactoryClient): void {
+  if (!versionAsks.shouldAsk(service.serverInstance())) {
+    return;
+  }
+  void service
+    .serverVersion()
+    .then((server) => {
+      // A server that is up but cannot say (a bad FACTORY.json, a revoked
+      // token, an older server) is asked again in a minute, or on a restart.
+      versionAsks.answered(server !== null);
+      if (server === null) {
+        return;
+      }
+      const notice = reloadNeeded({ pi: factoryVersion(), server });
+      const ctx = latest;
+      if (notice !== null && reloadPostedFor !== notice.server) {
+        reloadPostedFor = notice.server;
+        publishReload(notice);
+      }
+      if (ctx !== null && ctx.hasUI) {
+        ctx.ui.setStatus(
+          'factory-reload',
+          notice === null ? undefined : renderReloadFooter({ notice, theme: ctx.ui.theme }),
+        );
+      }
+    })
+    .catch(() => {
+      versionAsks.answered(false);
+    });
+}
 
 // Posts the card for a newly announced release and keeps the footer line.
 function refreshUpdate(service: FactoryClient): void {
@@ -207,11 +259,14 @@ function watch(service: FactoryClient): void {
   // only; the session that was running then posted its card.
   seenAnnounced = service.updateState().announcedAt;
   shownFooter = undefined;
+  versionAsks.reset();
   refreshUpdate(service);
+  refreshReload(service);
   refreshWidget(service);
   poll = setInterval(() => {
     refreshCommands(service);
     refreshUpdate(service);
+    refreshReload(service);
     const revision = service.revision();
     // A controller step starts and ends with no event, only an action change.
     const actions = service.actionsVersion();
@@ -375,7 +430,19 @@ export default function factoryExtension(pi: ExtensionAPI): void {
     );
   };
   pi.registerMessageRenderer('factory-status', factoryStatusRenderer);
+  publishReload = (notice) => {
+    pi.sendMessage(
+      {
+        content: reloadNoticeText(notice),
+        customType: 'factory-reload',
+        details: notice,
+        display: true,
+      },
+      { triggerTurn: false },
+    );
+  };
   pi.registerMessageRenderer('factory-update', updateNoticeRenderer);
+  pi.registerMessageRenderer('factory-reload', reloadNoticeRenderer);
   pi.registerCommand('factory', {
     description: 'Start or continue a factory ticket',
     handler: async (args, ctx) => {

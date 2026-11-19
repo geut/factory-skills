@@ -2352,6 +2352,10 @@
               }
             ],
             "description": "A newer stable release than the one this factory runs, as the last check found it; null when there is none or checks are off."
+          },
+          "version": {
+            "type": "string",
+            "description": "The factory version the server runs: the release, then the commit it was built from, such as `0.5.0+1ddf4f6`."
           }
         },
         "required": [
@@ -2360,7 +2364,8 @@
           "name",
           "pullRequestFormat",
           "stages",
-          "update"
+          "update",
+          "version"
         ],
         "additionalProperties": false
       },
