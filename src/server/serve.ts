@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { getAsset, isSea } from 'node:sea';
 import type { DatabaseSync } from 'node:sqlite';
+import { piAgentDir } from '../actions/review-rules.ts';
 import { buildOpenApiDocument } from '../api/openapi.ts';
 import { ProblemError } from '../api/problem.ts';
 import { createRouter } from '../api/router.ts';
@@ -51,6 +52,7 @@ import {
   renewServerLease,
   type ServerLease,
 } from './lease.ts';
+import { PI_EXTENSION_ASSET, setUpPiExtension } from './pi-extension.ts';
 
 export type RunningServer = {
   close: () => Promise<void>;
@@ -368,6 +370,16 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
 
   ensureLocalClient(db, factoryRoot, new Date().toISOString());
+  // The release's Pi extension goes where Pi loads it; a source run is loaded
+  // from the package instead.
+  if (isSea()) {
+    setUpPiExtension({
+      agentDir: piAgentDir(input.env),
+      codeRoot,
+      out: input.out,
+      source: getAsset(PI_EXTENSION_ASSET, 'utf8'),
+    });
+  }
   const handshake = handshakePath(factoryRoot);
   const runtime =
     input.runtime?.({ handshakePath: handshake, piBin }) ??

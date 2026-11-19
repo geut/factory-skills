@@ -8,6 +8,16 @@ A factory turns tickets into reviewed pull requests by running agents through fi
 What the controller is doing for a ticket between agents, such as preparing a worktree, validating a run, or updating the issue, with the command it is running, if any. Scheduled steps, such as a retry, count too.
 _Avoid_: activity (that is an agent's), job, task (a planned slice of a ticket)
 
+## Releases
+
+**Release**:
+A published factory version: the binary, with the agents' extension, the operator's Pi extension, and the skills it carries.
+_Avoid_: build, package, tag (for this sense)
+
+**Update**:
+A newer release than the one this factory runs; updating the factory installs it and restarts the server on it.
+_Avoid_: upgrade (that is the database schema's), patch
+
 ## Communication
 
 **Outward communication**:

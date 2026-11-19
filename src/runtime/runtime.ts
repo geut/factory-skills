@@ -18,7 +18,9 @@ export type TicketTab = { key: string; label: string };
 // ticket's base commit, such as the reviewer's rules, and the stage's skill by
 // name from the factory's own skills.
 export type ProjectConfig =
-  | { kind: 'worktree' }
+  // The stage reads the worktree's own configuration; `skill` is its stage
+  // skill, which it also gets by path in case no factory package is installed.
+  | { kind: 'worktree'; skill: string }
   | {
       appendSystemPrompt: Array<string>;
       kind: 'base';

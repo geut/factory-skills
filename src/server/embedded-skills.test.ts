@@ -1,33 +1,49 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { EMBEDDED_SKILL_FILES, skillAssetKey, writeEmbeddedSkills } from './embedded-skills.ts';
+import {
+  SKILLS_MANIFEST_ASSET,
+  skillAssetKey,
+  skillFiles,
+  writeEmbeddedSkills,
+} from './embedded-skills.ts';
 
 const skills = path.resolve(import.meta.dirname, '..', '..', 'skills');
 
-test('the executable carries every Markdown file of the review skill', () => {
-  const directory = path.join(skills, 'factory-review');
-  const markdown = readdirSync(directory, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) =>
-      path.relative(skills, path.join(entry.parentPath, entry.name)).split(path.sep).join('/'),
-    )
-    .toSorted();
-  assert.deepEqual([...EMBEDDED_SKILL_FILES].toSorted(), markdown);
+test('the executable carries every stage skill and what it links to, but no tests', () => {
+  const files = skillFiles(skills);
+  for (const stage of [
+    'factory-plan',
+    'factory-work',
+    'factory-qa',
+    'factory-review',
+    'factory-wrapup',
+  ]) {
+    assert.ok(files.includes(`${stage}/SKILL.md`), stage);
+  }
+  // factory-work links to ../prove-it-works/SKILL.md.
+  assert.ok(files.includes('prove-it-works/SKILL.md'));
+  assert.ok(files.includes('factory-review/scripts/review-packet.py'));
+  assert.ok(files.every((file) => !/\.test\./.test(file) && !file.endsWith('.DS_Store')));
 });
 
+// Two skill files, each carrying its own asset key.
 function asset(key: string): string {
-  return `${key}\n`;
+  return key === SKILLS_MANIFEST_ASSET
+    ? JSON.stringify(['factory-work/SKILL.md', 'prove-it-works/SKILL.md'])
+    : `${key}\n`;
 }
 
-test('the carried skills are written out as they travel', () => {
+test('the carried skills are written out as the manifest lists them', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'factory-skills-'));
   try {
     assert.equal(writeEmbeddedSkills(directory, asset), directory);
-    const [first] = EMBEDDED_SKILL_FILES;
-    assert.equal(readFileSync(path.join(directory, first), 'utf8'), `${skillAssetKey(first)}\n`);
+    assert.equal(
+      readFileSync(path.join(directory, 'prove-it-works/SKILL.md'), 'utf8'),
+      `${skillAssetKey('prove-it-works/SKILL.md')}\n`,
+    );
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

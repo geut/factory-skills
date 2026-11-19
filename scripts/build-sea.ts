@@ -9,7 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { build } from 'esbuild';
-import { EMBEDDED_SKILL_FILES, skillAssetKey } from '../src/server/embedded-skills.ts';
+import { SKILLS_MANIFEST_ASSET, skillAssetKey, skillFiles } from '../src/server/embedded-skills.ts';
+import { PI_EXTENSION_ASSET } from '../src/server/pi-extension.ts';
 import { sourceVersion } from '../src/version.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -39,18 +40,41 @@ await build({
   target: 'node24',
 });
 
+// The operator's Pi extension (/factory, the widget, the cards), as one ES
+// module the binary writes into Pi's agent directory. Pi provides its own
+// packages to extensions, so they stay external.
+const piExtension = path.join(dist, 'pi-extension.js');
+await build({
+  bundle: true,
+  define: {
+    FACTORY_BUILD_VERSION: JSON.stringify(sourceVersion(root)),
+    FACTORY_BUNDLED_EXTENSION: 'true',
+  },
+  entryPoints: [path.join(root, 'src', 'extension', 'index.ts')],
+  external: ['@earendil-works/*', 'typebox'],
+  format: 'esm',
+  legalComments: 'none',
+  outfile: piExtension,
+  platform: 'node',
+  target: 'node24',
+});
+
+// Every skill file travels, with a manifest the executable lists them from.
+const carriedSkills = skillFiles(path.join(root, 'skills'));
+const skillsManifest = path.join(dist, 'skills-manifest.json');
+writeFileSync(skillsManifest, JSON.stringify(carriedSkills));
+
 writeFileSync(
   config,
   JSON.stringify(
     {
       assets: {
         'child-handshake.ts': path.join(root, 'src', 'runtime', 'child-handshake.ts'),
+        [PI_EXTENSION_ASSET]: piExtension,
         'schema.sql': path.join(root, 'src', 'state', 'schema.sql'),
+        [SKILLS_MANIFEST_ASSET]: skillsManifest,
         ...Object.fromEntries(
-          EMBEDDED_SKILL_FILES.map((file) => [
-            skillAssetKey(file),
-            path.join(root, 'skills', file),
-          ]),
+          carriedSkills.map((file) => [skillAssetKey(file), path.join(root, 'skills', file)]),
         ),
       },
       disableExperimentalSEAWarning: true,

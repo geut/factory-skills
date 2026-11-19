@@ -287,14 +287,15 @@ function exportLines(env: ForwardedEnv): string {
     .join('');
 }
 
-// Pi's flags for where the project configuration comes from. A `base` stage
-// runs untrusted, so the worktree's `.pi` files, extensions, and skills stay
-// out, and gets its skill by path: Pi keeps the first skill of a name, so an
-// installed factory package's copy still wins.
+// Pi's flags for where the project configuration comes from. Every stage gets
+// its skill by path, so a factory needs no Pi package: Pi keeps the first
+// skill of a name, so an installed factory package's copy still wins. A `base`
+// stage runs untrusted, so the worktree's `.pi` files, extensions, and skills
+// stay out.
 function projectConfigArgs(config: ProjectConfig, skillsPath: string): string {
   switch (config.kind) {
     case 'worktree':
-      return '';
+      return ` --skill ${shellQuote(path.join(skillsPath, config.skill))}`;
     case 'base':
       return [
         ' --no-approve --no-context-files',

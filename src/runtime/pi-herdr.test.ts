@@ -134,7 +134,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
     piBin: 'pi',
-    projectConfig: { kind: 'worktree' },
+    projectConfig: { kind: 'worktree', skill: 'factory-work' },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
     runId: 'run-1',
@@ -144,8 +144,10 @@ test('herdr launch opens the factory plugin argv pane', () => {
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
-  // A worker keeps Pi's discovery of AGENTS.md and CLAUDE.md.
+  // A worker keeps Pi's discovery of AGENTS.md and CLAUDE.md, and gets its
+  // skill by path, so a factory needs no Pi package.
   assert.doesNotMatch(script, /--no-context-files|--append-system-prompt/);
+  assert.match(script, / --skill '\/pkg\/skills\/factory-work' /);
   assert.match(script, /trap '' TSTP/);
   assert.match(script, /-e '\/pkg\/child-handshake\.ts'/);
   assert.match(script, /PI_SUBAGENT_AUTO_EXIT=1/);
@@ -203,7 +205,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
       handshakePath: '/pkg/child-handshake.ts',
       model: 'work-model',
       piBin: pi,
-      projectConfig: { kind: 'worktree' },
+      projectConfig: { kind: 'worktree', skill: 'factory-work' },
       promptFile: '/tmp/prompt.txt',
       replyRequired: false,
       runId: 'run-1',
@@ -577,7 +579,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     model: 'work-model',
     paneName: '🛠 repo#1 01',
     previousPaneId: 'pane-old',
-    projectConfig: { kind: 'worktree' as const },
+    projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'Fix the lint.',
     purpose: 'validation_correction' as const,
     runId: runId('run-2'),
@@ -810,7 +812,7 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     model: 'work-model',
     paneName: `🛠 ${ticket}`,
     previousPaneId,
-    projectConfig: { kind: 'worktree' as const },
+    projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'Work.',
     purpose: 'initial' as const,
     runId: runId(id),
@@ -921,7 +923,7 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     model: 'm',
     paneName: 'x',
     previousPaneId: null,
-    projectConfig: { kind: 'worktree' as const },
+    projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'p',
     purpose: 'initial',
     runId: runId('r'),
@@ -970,7 +972,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
       model: 'm',
       paneName: 'x',
       previousPaneId: null,
-      projectConfig: { kind: 'worktree' as const },
+      projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
       prompt: 'p',
       purpose: 'initial',
       runId: runId(id),
