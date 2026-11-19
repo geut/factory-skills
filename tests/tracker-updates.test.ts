@@ -105,6 +105,7 @@ async function start(
     github,
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => runtime,
   });
   if (result.kind !== 'ok') {
@@ -249,6 +250,7 @@ test('a tracker that cannot show statuses refuses a status mapping at startup', 
     github: noLabels,
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => new FakeRuntime(),
   });
   assert.equal(result.kind, 'error');

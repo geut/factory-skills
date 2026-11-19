@@ -194,6 +194,82 @@
         }
       }
     },
+    "/v1/factory/update-check": {
+      "post": {
+        "operationId": "checkFactoryUpdate",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Check for a factory update now",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "What the check found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryUpdateCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/factory/update-later": {
+      "post": {
+        "operationId": "putOffFactoryUpdate",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Put off the factory update on offer until a newer release",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "The update, now put off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryUpdate"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "operationId": "listTickets",
@@ -2197,6 +2273,17 @@
               "$ref": "#/components/schemas/FactoryStage"
             },
             "description": "Every stage, in flow order."
+          },
+          "update": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactoryUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A newer stable release than the one this factory runs, as the last check found it; null when there is none or checks are off."
           }
         },
         "required": [
@@ -2204,7 +2291,8 @@
           "factoryId",
           "name",
           "pullRequestFormat",
-          "stages"
+          "stages",
+          "update"
         ],
         "additionalProperties": false
       },
@@ -2240,6 +2328,63 @@
           "name",
           "optional",
           "perTask"
+        ],
+        "additionalProperties": false
+      },
+      "FactoryUpdate": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string",
+            "description": "The version this factory runs."
+          },
+          "later": {
+            "type": "boolean",
+            "description": "Whether the owner said later to it."
+          },
+          "latest": {
+            "type": "string",
+            "description": "The newest stable release."
+          },
+          "name": {
+            "type": "string",
+            "description": "The release’s name."
+          },
+          "notesUrl": {
+            "type": "string",
+            "description": "What changed: the release notes, or the compare page from the running version when releases were skipped."
+          }
+        },
+        "required": [
+          "current",
+          "later",
+          "latest",
+          "name",
+          "notesUrl"
+        ],
+        "additionalProperties": false
+      },
+      "FactoryUpdateCheck": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "For a person: what the check found."
+          },
+          "update": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactoryUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message",
+          "update"
         ],
         "additionalProperties": false
       },

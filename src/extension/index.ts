@@ -19,6 +19,12 @@ import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
 import {
+  renderUpdateFooter,
+  updateNoticeRenderer,
+  updateNoticeText,
+  type UpdateNotice,
+} from './update-notice.ts';
+import {
   readChildActivity,
   renderFactoryWidget,
   withCommands,
@@ -46,6 +52,36 @@ let closeOverlay: (() => void) | null = null;
 let publishStatus: (text: string) => void = (text) => {
   latest?.ui.notify(text, 'info');
 };
+let publishUpdate: (notice: UpdateNotice) => void = (notice) => {
+  latest?.ui.notify(updateNoticeText(notice), 'info');
+};
+// The update announcement this session has seen, so a session posts the card
+// only for a release found while it runs, and the footer line it shows.
+let seenAnnounced: string | null = null;
+let shownFooter: string | undefined;
+
+// Posts the card for a newly announced release and keeps the footer line.
+function refreshUpdate(service: FactoryClient): void {
+  const { announcedAt, update } = service.updateState();
+  if (announcedAt !== seenAnnounced) {
+    seenAnnounced = announcedAt;
+    if (announcedAt !== null && update !== null && !update.later) {
+      publishUpdate(update);
+    }
+  }
+  const ctx = latest;
+  if (ctx === null || !ctx.hasUI) {
+    return;
+  }
+  const footer =
+    update === null
+      ? undefined
+      : renderUpdateFooter({ later: update.later, latest: update.latest, theme: ctx.ui.theme });
+  if (footer !== shownFooter) {
+    shownFooter = footer;
+    ctx.ui.setStatus('factory-update', footer);
+  }
+}
 
 function widgetChildren(service: FactoryClient): Array<WidgetChild> {
   const registry = latest?.modelRegistry;
@@ -173,9 +209,15 @@ function watch(service: FactoryClient): void {
   }
   seenRevision = service.revision();
   seenActions = service.actionsVersion();
+  // A release announced before this session started shows in the footer
+  // only; the session that was running then posted its card.
+  seenAnnounced = service.updateState().announcedAt;
+  shownFooter = undefined;
+  refreshUpdate(service);
   refreshWidget(service);
   poll = setInterval(() => {
     refreshCommands(service);
+    refreshUpdate(service);
     const revision = service.revision();
     // A controller step starts and ends with no event, only an action change.
     const actions = service.actionsVersion();
@@ -327,7 +369,19 @@ export default function factoryExtension(pi: ExtensionAPI): void {
       { triggerTurn: false },
     );
   };
+  publishUpdate = (notice) => {
+    pi.sendMessage(
+      {
+        content: updateNoticeText(notice),
+        customType: 'factory-update',
+        details: notice,
+        display: true,
+      },
+      { triggerTurn: false },
+    );
+  };
   pi.registerMessageRenderer('factory-status', factoryStatusRenderer);
+  pi.registerMessageRenderer('factory-update', updateNoticeRenderer);
   pi.registerCommand('factory', {
     description: 'Start or continue a factory ticket',
     handler: async (args, ctx) => {
@@ -348,6 +402,19 @@ export default function factoryExtension(pi: ExtensionAPI): void {
           const next = service.ticketDetail(parsed.ref);
           return typeof next === 'string' ? null : next;
         });
+        return;
+      }
+      if (parsed.kind === 'update' && parsed.mode !== 'install') {
+        const service = serviceFor(ctx.cwd);
+        const reply = await service.update(parsed.mode);
+        if (reply.kind === 'notice') {
+          publishUpdate(reply.notice);
+        } else {
+          publishStatus(reply.text);
+        }
+        // The reply already showed what the check found.
+        seenAnnounced = service.updateState().announcedAt;
+        refreshUpdate(service);
         return;
       }
       // In the terminal, --list opens the picker; elsewhere it posts the card.

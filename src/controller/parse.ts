@@ -21,6 +21,9 @@ export type ParsedCommand =
   | { kind: 'status'; ref: string }
   | { kind: 'agents' }
   | { kind: 'ticket'; ref: string | null }
+  // `install` updates the factory; `check` asks GitHub now; `later` puts off
+  // the update on offer until a newer release.
+  | { kind: 'update'; mode: 'check' | 'install' | 'later' }
   | { kind: 'invalid'; message: string };
 
 const FEEDBACK_USAGE =
@@ -77,7 +80,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later]',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -161,11 +164,22 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       return { kind: 'agents' };
     case 'ticket':
       return { kind: 'ticket', ref: rest.length === 0 ? null : rest };
+    case 'update':
+      switch (rest) {
+        case '':
+          return { kind: 'update', mode: 'install' };
+        case '--check':
+          return { kind: 'update', mode: 'check' };
+        case '--later':
+          return { kind: 'update', mode: 'later' };
+        default:
+          return { kind: 'invalid', message: 'Usage: /factory update [--check|--later]' };
+      }
     default:
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket',
+          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later]',
       };
   }
 }

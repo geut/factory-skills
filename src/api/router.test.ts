@@ -83,6 +83,7 @@ async function start(options: Partial<RouterOptions> = {}): Promise<string> {
         pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
+        updates: null,
         webhooks: null,
       },
       onError: (error) => errors.push(error),

@@ -31,6 +31,7 @@ async function serveWith(secret: string | null, changed: Array<PullRequestInfo>)
         pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
+        updates: null,
         webhooks: {
           pullRequestChanged: (pullRequest) => {
             changed.push(pullRequest);

@@ -93,6 +93,7 @@ async function factory(github: Partial<GithubClient> = {}): Promise<Factory> {
     },
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => new FakeRuntime(),
   });
   if (result.kind !== 'ok') {

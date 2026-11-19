@@ -11,6 +11,7 @@ import type { MaybePromise } from '../ports/gh.ts';
 import type { InventoryResult } from '../ports/trackers.ts';
 import type { EventHub } from '../server/events.ts';
 import type { PrFormatInUse } from '../stages/wrapup/pr-format.ts';
+import type { UpdateChecker } from '../update/checker.ts';
 import { ProblemError } from './problem.ts';
 
 // What a route may ask for while it handles a request.
@@ -37,6 +38,9 @@ export type ApiContext = {
   // What the Linear workspace has, or null when the tracker is not Linear;
   // null where the server has none.
   trackerInventory: (() => Promise<InventoryResult | null>) | null;
+  // Factory updates: the newest release, checking now, and saying later;
+  // null where the server has none.
+  updates: UpdateChecker | null;
   // The code host side of webhooks; null where the server has none.
   webhooks: Webhooks | null;
 };

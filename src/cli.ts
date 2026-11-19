@@ -1,8 +1,11 @@
 #!/usr/bin/env node
+import { ghJson } from './ports/gh.ts';
 import { serve } from './server/serve.ts';
 import { runSessionsCommand } from './server/sessions-cli.ts';
 import { runTokenCommand } from './server/token-cli.ts';
 import { runTrackerCommand } from './server/tracker-cli.ts';
+import { runUpdateCommand } from './update/update-cli.ts';
+import { factoryVersion } from './version.ts';
 
 const say = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string) => process.stderr.write(`${line}\n`);
@@ -12,6 +15,7 @@ const usage = `Usage:
   factory token     manage API client tokens (factory token --help)
   factory sessions  list each stage's Pi session file (factory sessions [ticket])
   factory tracker   list what the Linear workspace has (factory tracker inspect)
+  factory update    check for a newer release (factory update --check)
 
 Start the server inside a Herdr pane; agents open in that pane's workspace.`;
 
@@ -25,6 +29,13 @@ async function main(argv: Array<string>): Promise<number> {
   }
   if (command === 'sessions') {
     return runSessionsCommand(rest, process.cwd(), { err: fail, out: say });
+  }
+  if (command === 'update') {
+    return runUpdateCommand(
+      rest,
+      { err: fail, out: say },
+      { current: factoryVersion(), gh: ghJson },
+    );
   }
   if (command !== 'serve') {
     fail(usage);

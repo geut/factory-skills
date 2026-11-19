@@ -47,7 +47,14 @@ function project(): { cwd: string; env: NodeJS.ProcessEnv } {
 }
 
 async function start(cwd: string, env: NodeJS.ProcessEnv): Promise<RunningServer> {
-  const result = await serve({ cwd, env, out: () => undefined, port: 0, runtime: fake });
+  const result = await serve({
+    cwd,
+    env,
+    out: () => undefined,
+    port: 0,
+    releases: async () => [],
+    runtime: fake,
+  });
   assert.equal(result.kind, 'ok', result.kind === 'error' ? result.message : '');
   if (result.kind !== 'ok') {
     throw new Error('serve failed');
@@ -65,6 +72,7 @@ test('serve refuses to start outside a Herdr pane', async () => {
     env: { ...env, HERDR_PANE_ID: '' },
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: fake,
   });
   assert.equal(result.kind, 'error');
@@ -86,7 +94,14 @@ test('serve answers /health and publishes its url in the lease', async () => {
 test('a second server on the same factory root is refused', async () => {
   const { cwd, env } = project();
   const first = await start(cwd, env);
-  const second = await serve({ cwd, env, out: () => undefined, port: 0, runtime: fake });
+  const second = await serve({
+    cwd,
+    env,
+    out: () => undefined,
+    port: 0,
+    releases: async () => [],
+    runtime: fake,
+  });
   assert.equal(second.kind, 'error');
   assert.match(
     second.kind === 'error' ? second.message : '',

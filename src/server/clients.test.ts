@@ -133,6 +133,7 @@ async function serveWith(db: DatabaseSync): Promise<string> {
         pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
+        updates: null,
         webhooks: null,
       },
       routes: [...apiRoutes, act],
