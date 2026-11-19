@@ -1,5 +1,5 @@
 import type { GhJson } from '../ports/gh.ts';
-import { openStateDatabase, SCHEMA_VERSION, stateDatabasePath } from '../state/database.ts';
+import { SCHEMA_VERSION, stateDatabasePath } from '../state/database.ts';
 import { installRelease, type Download } from './install.ts';
 import { checkForUpdate, versionOf } from './releases.ts';
 import {
@@ -7,6 +7,7 @@ import {
   planRollback,
   restoreDatabase,
   rollbackQuestion,
+  storedSchemaVersion,
   swapBack,
 } from './rollback.ts';
 import { readUpdateState, writeUpdateState } from './state.ts';
@@ -152,19 +153,19 @@ async function rollBack(input: {
   }
   const current = { schema: SCHEMA_VERSION, version: versionOf(deps.current) ?? deps.current };
   const databasePath = stateDatabasePath(deps.factoryRoot);
-  const plan = planRollback({
-    binary: deps.binary,
-    current,
-    databasePath,
-    loss: (backup) => {
-      const db = openStateDatabase(deps.factoryRoot, { readOnly: true });
-      try {
-        return lossSince({ backup, db });
-      } finally {
-        db.close();
-      }
-    },
-  });
+  let plan: ReturnType<typeof planRollback>;
+  try {
+    plan = planRollback({
+      binary: deps.binary,
+      current,
+      databasePath,
+      loss: (backup) => lossSince({ backup, databasePath }),
+      storedSchema: storedSchemaVersion(databasePath),
+    });
+  } catch (error: unknown) {
+    io.err(`Cannot read the database or its backup, so nothing changed: ${messageOf(error)}`);
+    return 1;
+  }
   if (plan.kind === 'refused') {
     io.err(plan.message);
     return 1;
@@ -176,12 +177,26 @@ async function rollBack(input: {
   }
   try {
     swapBack({ binary: deps.binary, current });
-    if (plan.restore !== null) {
-      restoreDatabase({ backup: plan.restore.backup, databasePath });
-    }
   } catch (error: unknown) {
-    io.err(`The rollback failed: ${messageOf(error)}`);
+    io.err(`The rollback failed, and nothing changed: ${messageOf(error)}`);
     return 1;
+  }
+  if (plan.restore !== null) {
+    try {
+      restoreDatabase({ backup: plan.restore.backup, databasePath });
+    } catch (error: unknown) {
+      // The older binary cannot open this database: put the binaries back.
+      try {
+        swapBack({ binary: deps.binary, current: plan.previous });
+      } catch {
+        io.err(
+          `Could not restore ${plan.restore.backup} (${messageOf(error)}), nor put the binaries back: swap factory.previous back by hand before starting factory serve.`,
+        );
+        return 1;
+      }
+      io.err(`Could not restore ${plan.restore.backup}, so nothing changed: ${messageOf(error)}`);
+      return 1;
+    }
   }
   // The release rolled back from stays on offer, without its cards.
   writeUpdateState(deps.factoryRoot, {

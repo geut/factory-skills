@@ -30,7 +30,13 @@ export type RollbackResult =
 // How the server restarts: on an update, the new server takes over the
 // lease; on a rollback, the old one first puts back the database `restore`
 // names, when the update upgraded it.
-export type Restart = (input: { restore: string | null; rollback: boolean }) => Promise<void>;
+// `undo` puts the binaries back when the restore fails, so the new server
+// starts on the version the database belongs to.
+export type Restart = (input: {
+  restore: string | null;
+  rollback: boolean;
+  undo: () => void;
+}) => Promise<void>;
 
 export type Updater = {
   close: () => void;
@@ -69,6 +75,8 @@ export function createUpdater(input: {
   restart: Restart;
   // The database schema this version runs.
   schema: number;
+  // The schema the database is on now.
+  storedSchema: () => number | null;
   version: (binary: string) => Promise<string | null>;
 }): Updater {
   const { binary, current, factoryRoot } = input;
@@ -169,12 +177,14 @@ export function createUpdater(input: {
       restarting = true;
       // Answered first: the restart closes this server.
       setTimeout(() => {
-        void input.restart({ restore: null, rollback: false }).catch((error: unknown) => {
-          busy = false;
-          input.report(
-            `factory ${view.latest} is installed, but the server could not restart on it: ${error instanceof Error ? error.message : String(error)}. Restart factory serve to run it.`,
-          );
-        });
+        void input
+          .restart({ restore: null, rollback: false, undo: () => undefined })
+          .catch((error: unknown) => {
+            busy = false;
+            input.report(
+              `factory ${view.latest} is installed, but the server could not restart on it: ${error instanceof Error ? error.message : String(error)}. Restart factory serve to run it.`,
+            );
+          });
       }, 0);
       return {
         kind: 'restarting',
@@ -217,6 +227,7 @@ export function createUpdater(input: {
         current: running,
         databasePath: input.databasePath,
         loss: input.loss,
+        storedSchema: input.storedSchema(),
       });
       if (plan.kind === 'refused') {
         return plan;
@@ -230,13 +241,16 @@ export function createUpdater(input: {
       save({ installed: null, later: current, pending: false });
       restarting = true;
       const restore = plan.restore?.backup ?? null;
+      const undo = (): void => {
+        swapBack({ binary, current: plan.previous });
+        save({ installed: before.installed, later: before.later });
+      };
       setTimeout(() => {
-        void input.restart({ restore, rollback: true }).catch((error: unknown) => {
+        void input.restart({ restore, rollback: true, undo }).catch((error: unknown) => {
           // Nothing stopped: this server keeps running, on the binary and
           // database it had.
           try {
-            swapBack({ binary, current: plan.previous });
-            save({ installed: before.installed, later: before.later });
+            undo();
           } catch {
             // Reported below; the binary on disk may be factory.previous.
           }

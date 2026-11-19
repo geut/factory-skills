@@ -42,7 +42,7 @@ function setUp(
     idle: true,
     onDisk: '0.5.0' as string | null,
     reports: [] as Array<string>,
-    restarted: [] as Array<Parameters<Restart>[0]>,
+    restarted: [] as Array<{ restore: string | null; rollback: boolean }>,
     restarts: 0,
   };
   const checker = createUpdateChecker({
@@ -77,9 +77,10 @@ function setUp(
       input.restart ??
       (async (restarted) => {
         world.restarts += 1;
-        world.restarted.push(restarted);
+        world.restarted.push({ restore: restarted.restore, rollback: restarted.rollback });
       }),
     schema: 8,
+    storedSchema: () => 8,
     version: input.version ?? (async () => world.onDisk),
   });
   return { binary, checker, factoryRoot, updater, world };
@@ -319,4 +320,22 @@ test('a rollback whose restart fails puts the binary back, and changes nothing',
   assert.equal(readFileSync(`${binary}.previous`, 'utf8'), 'binary 0.4.0');
   assert.equal(readUpdateState(factoryRoot).later, null);
   assert.match(world.reports.join('\n'), /nothing was rolled back: herdr is gone/);
+});
+
+test('a rollback whose restore fails is undone, so the newer version starts again', async () => {
+  const { binary, factoryRoot, updater } = setUp({
+    // The server stopped, and restoring the backup failed.
+    restart: async ({ undo }) => {
+      undo();
+    },
+  });
+  previousOf(binary, 7);
+  const backup = path.join(factoryRoot, 'db', 'state.schema-7.sqlite');
+  mkdirSync(path.dirname(backup), { recursive: true });
+  writeFileSync(backup, 'schema 7');
+  assert.equal((await updater.rollback({ confirm: true })).kind, 'restarting');
+  await settle();
+  assert.equal(readFileSync(binary, 'utf8'), 'old binary');
+  assert.equal(readFileSync(`${binary}.previous`, 'utf8'), 'binary 0.4.0');
+  assert.equal(readUpdateState(factoryRoot).later, null);
 });

@@ -298,3 +298,53 @@ test('a rollback over the API asks first, then restores the backup once this ser
   assert.equal(readFileSync(binary, 'utf8'), 'binary 0.5.0');
   assert.deepEqual(readFileSync(databasePath), readFileSync(backup));
 });
+
+test('a rollback whose restore fails is undone before the new server starts', async () => {
+  const { cwd, env } = project();
+  const factoryRoot = path.join(cwd, '.factory');
+  const binary = path.join(cwd, 'factory');
+  writeFileSync(binary, 'binary 0.6.0');
+  chmodSync(binary, 0o755);
+  writeFileSync(`${binary}.previous`, 'binary 0.5.0');
+  writePreviousRecord(binary, { schema: SCHEMA_VERSION - 1, version: '0.5.0' });
+  const lines: Array<string> = [];
+  let restarted = false;
+  const old = await serve({
+    binary,
+    cwd,
+    env,
+    onRestarted: () => {
+      restarted = true;
+    },
+    out: (line) => lines.push(line),
+    port: 0,
+    relaunch: async () => undefined,
+    releases,
+    runtime: fake,
+  });
+  if (old.kind !== 'ok') {
+    throw new Error(old.message);
+  }
+  servers.push(old.server);
+  const databasePath = stateDatabasePath(factoryRoot);
+  const db = openStateDatabase(factoryRoot);
+  db.exec(`VACUUM INTO '${upgradeBackupPath(databasePath, SCHEMA_VERSION - 1)}'`);
+  db.close();
+  // Where the restore copies the backup first.
+  mkdirSync(`${databasePath}.restore`);
+  const token = readFileSync(path.join(factoryRoot, 'local.token'), 'utf8').trim();
+  const started = await fetch(`${old.server.url}/v1/factory/rollback`, {
+    body: JSON.stringify({ confirm: true }),
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  assert.equal(started.status, 202);
+  for (let tries = 0; tries < 200 && !restarted; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(restarted);
+  // The new pane starts this version again, on its own database.
+  assert.equal(readFileSync(binary, 'utf8'), 'binary 0.6.0');
+  assert.equal(readFileSync(`${binary}.previous`, 'utf8'), 'binary 0.5.0');
+  assert.match(lines.join('\n'), /so the rollback was undone and this version starts again/);
+});

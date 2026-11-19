@@ -49,9 +49,25 @@ export function readPreviousRecord(binary: string): PreviousRecord | null {
 // the tickets they belong to.
 export type Loss = { events: number; tickets: Array<string> };
 
-// Reads the backup as a plain SQLite file: it is an older schema, which the
+// The schema the database at `databasePath` is on, or null when there is
+// none yet. Read as a plain SQLite file, as the factory's own open would
+// refuse or upgrade an older one.
+export function storedSchemaVersion(databasePath: string): number | null {
+  if (!existsSync(databasePath)) {
+    return null;
+  }
+  const db = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const row = db.prepare('SELECT schema_version FROM schema_meta WHERE singleton = 1').get();
+    return row === undefined ? null : Number(row['schema_version']);
+  } finally {
+    db.close();
+  }
+}
+
+// Reads both databases as plain SQLite files: either may be on a schema the
 // factory's own open would refuse or upgrade.
-export function lossSince(input: { backup: string; db: DatabaseSync }): Loss {
+export function lossSince(input: { backup: string; databasePath: string }): Loss {
   const backup = new DatabaseSync(input.backup, { readOnly: true });
   let revision: number;
   try {
@@ -60,10 +76,17 @@ export function lossSince(input: { backup: string; db: DatabaseSync }): Loss {
   } finally {
     backup.close();
   }
-  const counted = input.db
-    .prepare('SELECT count(*) AS n FROM events WHERE revision > ?')
-    .get(revision);
-  const tickets = input.db
+  const db = new DatabaseSync(input.databasePath, { readOnly: true });
+  try {
+    return lostIn(db, revision);
+  } finally {
+    db.close();
+  }
+}
+
+function lostIn(db: DatabaseSync, revision: number): Loss {
+  const counted = db.prepare('SELECT count(*) AS n FROM events WHERE revision > ?').get(revision);
+  const tickets = db
     .prepare(
       `SELECT DISTINCT coalesce(t.source_ref, t.id) AS ref
        FROM events AS e
@@ -93,6 +116,9 @@ export function planRollback(input: {
   current: PreviousRecord;
   databasePath: string;
   loss: (backup: string) => Loss;
+  // The schema the database is on now: an update that replaced the binary
+  // with no server running never upgraded it.
+  storedSchema: number | null;
 }): RollbackPlan {
   const { binary, current } = input;
   if (!existsSync(previousPath(binary))) {
@@ -108,15 +134,16 @@ export function planRollback(input: {
       message: `${previousPath(binary)} was not put there by factory update, so which database it needs is unknown. Swap it in by hand with the server stopped.`,
     };
   }
-  if (previous.schema >= current.schema) {
-    // Same database, or a newer binary that upgrades it itself.
+  const { storedSchema } = input;
+  if (storedSchema === null || storedSchema <= previous.schema) {
+    // A database the older binary opens as it is (or upgrades itself).
     return { kind: 'ready', previous, restore: null };
   }
   const backup = upgradeBackupPath(input.databasePath, previous.schema);
   if (!existsSync(backup)) {
     return {
       kind: 'refused',
-      message: `factory ${current.version} upgraded the database from schema ${previous.schema} to ${current.schema}, and the backup it made, ${backup}, is gone, so factory ${previous.version} cannot open the database.`,
+      message: `The database was upgraded from schema ${previous.schema} to ${storedSchema}, and the backup the upgrade made, ${backup}, is gone, so factory ${previous.version} cannot open it. Going back from ${current.version} is not possible.`,
     };
   }
   return {
@@ -144,7 +171,7 @@ export function rollbackQuestion(input: {
     loss.events === 0
       ? 'Nothing was recorded since.'
       : `Everything recorded since is lost: ${loss.events} event${loss.events === 1 ? '' : 's'}${loss.tickets.length === 0 ? '' : ` for ${loss.tickets.join(', ')}`}.`;
-  return `Rolling back to factory ${previous.version} restores ${restore.backup}, the database as it was at ${restore.madeAt}, before factory ${input.current} upgraded it. ${lost}`;
+  return `Rolling back from factory ${input.current} to ${previous.version} restores ${restore.backup}, the database as it was at ${restore.madeAt}, before it was upgraded. ${lost}`;
 }
 
 // Swaps factory.previous and the binary, so rolling back again goes forward,

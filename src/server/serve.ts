@@ -46,7 +46,7 @@ import { createUpdateChecker } from '../update/checker.ts';
 import { binaryVersion, ghDownload, type Download } from '../update/install.ts';
 import { versionOf } from '../update/releases.ts';
 import { openServerPane, waitForHandoff } from '../update/restart.ts';
-import { lossSince, restoreDatabase } from '../update/rollback.ts';
+import { lossSince, restoreDatabase, storedSchemaVersion } from '../update/rollback.ts';
 import { createUpdater } from '../update/updater.ts';
 import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
@@ -385,27 +385,38 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     download: input.download ?? ghDownload,
     factoryRoot,
     idle: () => factoryIsIdle(db),
-    loss: (backup) => lossSince({ backup, db }),
+    loss: (backup) => lossSince({ backup, databasePath: stateDatabasePath(factoryRoot) }),
     now: () => new Date().toISOString(),
     platform: process.platform,
     report: input.out,
-    restart: async ({ restore, rollback }) => {
+    restart: async ({ restore, rollback, undo }) => {
       await relaunch({ after: rollback ? null : instanceId });
       await close();
       // With the database closed, before this process exits and the new
       // server opens it.
+      // A restore that fails undoes the rollback: the new pane then starts
+      // this version again, on the database it belongs to.
       if (restore !== null) {
         try {
           restoreDatabase({ backup: restore, databasePath: stateDatabasePath(factoryRoot) });
         } catch (error: unknown) {
+          let undone = true;
+          try {
+            undo();
+          } catch {
+            undone = false;
+          }
           input.out(
-            `Could not restore ${restore}: ${messageOf(error)}. Copy it over ${stateDatabasePath(factoryRoot)} by hand, deleting state.sqlite-wal and state.sqlite-shm, before the new server can start.`,
+            undone
+              ? `Could not restore ${restore}, so the rollback was undone and this version starts again: ${messageOf(error)}.`
+              : `Could not restore ${restore} (${messageOf(error)}), nor put the binaries back. Before starting factory serve, either copy the backup over ${stateDatabasePath(factoryRoot)} (deleting state.sqlite-wal and state.sqlite-shm), or swap factory.previous back.`,
           );
         }
       }
       input.onRestarted?.();
     },
     schema: SCHEMA_VERSION,
+    storedSchema: () => storedSchemaVersion(stateDatabasePath(factoryRoot)),
     version: binaryVersion,
   });
   const http = createServer(

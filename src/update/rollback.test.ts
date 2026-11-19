@@ -32,10 +32,12 @@ function installed(previous?: { schema: number; version: string }) {
 
 const current = { schema: 9, version: '0.6.0' };
 const noLoss = () => ({ events: 0, tickets: [] });
+// The database as the running version upgraded it.
+const storedSchema = 9;
 
 test('with no factory.previous, or one no update put there, rollback refuses and says why', () => {
   const { binary, databasePath } = installed();
-  const unknown = planRollback({ binary, current, databasePath, loss: noLoss });
+  const unknown = planRollback({ binary, current, databasePath, loss: noLoss, storedSchema });
   assert.equal(unknown.kind, 'refused');
   assert.match(
     unknown.kind === 'refused' ? unknown.message : '',
@@ -48,6 +50,7 @@ test('with no factory.previous, or one no update put there, rollback refuses and
     current,
     databasePath,
     loss: noLoss,
+    storedSchema,
   });
   assert.match(
     none.kind === 'refused' ? none.message : '',
@@ -57,7 +60,7 @@ test('with no factory.previous, or one no update put there, rollback refuses and
 
 test('a previous version on the same schema rolls back without touching the database', () => {
   const { binary, databasePath } = installed({ schema: 9, version: '0.5.0' });
-  assert.deepEqual(planRollback({ binary, current, databasePath, loss: noLoss }), {
+  assert.deepEqual(planRollback({ binary, current, databasePath, loss: noLoss, storedSchema }), {
     kind: 'ready',
     previous: { schema: 9, version: '0.5.0' },
     restore: null,
@@ -66,10 +69,10 @@ test('a previous version on the same schema rolls back without touching the data
 
 test('across a schema upgrade, rollback needs the backup the upgrade made', () => {
   const { binary, databasePath } = installed({ schema: 8, version: '0.5.0' });
-  const missing = planRollback({ binary, current, databasePath, loss: noLoss });
+  const missing = planRollback({ binary, current, databasePath, loss: noLoss, storedSchema });
   assert.match(
     missing.kind === 'refused' ? missing.message : '',
-    /upgraded the database from schema 8 to 9, and the backup it made, .*state\.schema-8\.sqlite, is gone/,
+    /upgraded from schema 8 to 9, and the backup the upgrade made, .*state\.schema-8\.sqlite, is gone/,
   );
 
   writeFileSync(upgradeBackupPath(databasePath, 8), 'schema 8');
@@ -78,6 +81,7 @@ test('across a schema upgrade, rollback needs the backup the upgrade made', () =
     current,
     databasePath,
     loss: () => ({ events: 12, tickets: ['geut/app#7', 'geut/app#9'] }),
+    storedSchema,
   });
   assert.equal(plan.kind, 'ready');
   if (plan.kind !== 'ready') {
@@ -86,7 +90,24 @@ test('across a schema upgrade, rollback needs the backup the upgrade made', () =
   assert.equal(plan.restore?.backup, upgradeBackupPath(databasePath, 8));
   assert.match(
     rollbackQuestion({ current: '0.6.0', plan }),
-    /^Rolling back to factory 0\.5\.0 restores .*state\.schema-8\.sqlite, the database as it was at .*, before factory 0\.6\.0 upgraded it\. Everything recorded since is lost: 12 events for geut\/app#7, geut\/app#9\.$/,
+    /^Rolling back from factory 0\.6\.0 to 0\.5\.0 restores .*state\.schema-8\.sqlite, the database as it was at .*, before it was upgraded\. Everything recorded since is lost: 12 events for geut\/app#7, geut\/app#9\.$/,
+  );
+});
+
+test('a database no server upgraded is left alone, even with an older backup beside it', () => {
+  // factory update swapped the binary with no server running: the database
+  // is still on the schema factory.previous runs.
+  const { binary, databasePath } = installed({ schema: 8, version: '0.5.0' });
+  writeFileSync(upgradeBackupPath(databasePath, 8), 'an upgrade weeks ago');
+  assert.deepEqual(planRollback({ binary, current, databasePath, loss: noLoss, storedSchema: 8 }), {
+    kind: 'ready',
+    previous: { schema: 8, version: '0.5.0' },
+    restore: null,
+  });
+  // No database yet: nothing to restore either.
+  assert.equal(
+    planRollback({ binary, current, databasePath, loss: noLoss, storedSchema: null }).kind,
+    'ready',
   );
 });
 
@@ -107,16 +128,18 @@ test('what a restore loses: the events after the backup, and their tickets', () 
     return db;
   };
   make('backup.sqlite', [[1, 'x1']]).close();
-  const db = make('state.sqlite', [
+  make('state.sqlite', [
     [1, 'x1'],
     [2, 'x1'],
     [3, 'x2'],
-  ]);
-  assert.deepEqual(lossSince({ backup: path.join(dir, 'backup.sqlite'), db }), {
-    events: 2,
-    tickets: ['geut/app#7', 't2'],
-  });
-  db.close();
+  ]).close();
+  assert.deepEqual(
+    lossSince({
+      backup: path.join(dir, 'backup.sqlite'),
+      databasePath: path.join(dir, 'state.sqlite'),
+    }),
+    { events: 2, tickets: ['geut/app#7', 't2'] },
+  );
 });
 
 test('rolling back swaps the binaries, so rolling back again goes forward', () => {

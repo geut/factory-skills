@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -171,4 +171,43 @@ test('rollback refuses with no factory.previous', async () => {
   const refused = await run(['--rollback'], { binary });
   assert.equal(refused.code, 1);
   assert.match(refused.err.join('\n'), /no .*factory\.previous to roll back to/);
+});
+
+// A factory whose database is on `stored`, with factory.previous on `previous`
+// and a backup from an upgrade of `previous` beside it.
+function rolledForward(input: { previous: number }) {
+  const factoryRoot = mkdtempSync(path.join(tmpdir(), 'factory-cli-root-'));
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const databasePath = stateDatabasePath(factoryRoot);
+  const backup = upgradeBackupPath(databasePath, input.previous);
+  db.exec(`VACUUM INTO '${backup}'`);
+  db.close();
+  const binary = path.join(mkdtempSync(path.join(tmpdir(), 'factory-cli-')), 'factory');
+  writeFileSync(binary, 'binary 0.4.0+');
+  writeFileSync(`${binary}.previous`, 'binary 0.3.0');
+  writePreviousRecord(binary, { schema: input.previous, version: '0.3.0' });
+  return { backup, binary, databasePath, factoryRoot };
+}
+
+test('after an update no server ran, rollback only swaps the binaries', async () => {
+  // factory.previous runs the schema the database is still on; the backup
+  // is from an older upgrade and must stay out of it.
+  const { binary, databasePath, factoryRoot } = rolledForward({ previous: SCHEMA_VERSION });
+  const before = readFileSync(databasePath);
+  const done = await run(['--rollback'], { binary, factoryRoot });
+  assert.equal(done.code, 0, done.err.join('\n'));
+  assert.equal(done.out[0], 'Rolled back to factory 0.3.0; the next factory serve runs it.');
+  assert.equal(readFileSync(binary, 'utf8'), 'binary 0.3.0');
+  assert.deepEqual(readFileSync(databasePath), before);
+});
+
+test('a restore that fails puts the binaries back, and says nothing changed', async () => {
+  const { binary, databasePath, factoryRoot } = rolledForward({ previous: SCHEMA_VERSION - 1 });
+  // Where the restore copies the backup first.
+  mkdirSync(`${databasePath}.restore`);
+  const failed = await run(['--rollback', '--yes'], { binary, factoryRoot });
+  assert.equal(failed.code, 1);
+  assert.match(failed.err.join('\n'), /^Could not restore .*, so nothing changed/);
+  assert.equal(readFileSync(binary, 'utf8'), 'binary 0.4.0+');
+  assert.equal(readFileSync(`${binary}.previous`, 'utf8'), 'binary 0.3.0');
 });
