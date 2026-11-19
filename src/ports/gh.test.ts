@@ -60,6 +60,7 @@ test('while gh waits on GitHub, the server still answers requests', async () => 
         pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
+        updater: null,
         updates: null,
         webhooks: null,
       },

@@ -12,6 +12,7 @@ import type { InventoryResult } from '../ports/trackers.ts';
 import type { EventHub } from '../server/events.ts';
 import type { PrFormatInUse } from '../stages/wrapup/pr-format.ts';
 import type { UpdateChecker } from '../update/checker.ts';
+import type { Updater } from '../update/updater.ts';
 import { ProblemError } from './problem.ts';
 
 // What a route may ask for while it handles a request.
@@ -40,6 +41,8 @@ export type ApiContext = {
   trackerInventory: (() => Promise<InventoryResult | null>) | null;
   // Factory updates: the newest release, checking now, and saying later;
   // null where the server has none.
+  // Installs an update and restarts the server on it.
+  updater: Updater | null;
   updates: UpdateChecker | null;
   // The code host side of webhooks; null where the server has none.
   webhooks: Webhooks | null;

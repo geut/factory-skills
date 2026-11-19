@@ -26,12 +26,19 @@ const FactoryStage = z
 const Update = z
   .object({
     current: z.string().meta({ description: 'The version this factory runs.' }),
+    installed: z.boolean().meta({
+      description:
+        'Whether the binary on disk already has it (another factory sharing the binary updated it), so updating only restarts the server.',
+    }),
     later: z.boolean().meta({ description: 'Whether the owner said later to it.' }),
     latest: z.string().meta({ description: 'The newest stable release.' }),
     name: z.string().meta({ description: 'The release’s name.' }),
     notesUrl: z.string().meta({
       description:
         'What changed: the release notes, or the compare page from the running version when releases were skipped.',
+    }),
+    pending: z.boolean().meta({
+      description: 'Whether an update waits for no agent to run and nothing to be queued.',
     }),
   })
   .meta({ id: 'FactoryUpdate' });
@@ -204,4 +211,69 @@ const updateLater = defineRoute({
   tags: ['meta'],
 });
 
-export const factoryRoutes: Array<Route> = [factory, putCommunication, checkUpdate, updateLater];
+const UpdateStarted = z
+  .object({
+    kind: z.enum(['restarting', 'pending', 'none']).meta({
+      description:
+        '`restarting`: the update is installed and a new server is starting on it; `pending`: it waits until nothing runs or is queued; `none`: this factory runs the newest release.',
+    }),
+    message: z.string().meta({ description: 'For a person: what happens next.' }),
+  })
+  .meta({ id: 'FactoryUpdateStarted' });
+
+// POST /v1/factory/update: install the update and restart on it.
+const runUpdate = defineRoute({
+  handler: async ({ body, context }) => {
+    if (context.updater === null) {
+      throw new ProblemError('internal_error', 'The server cannot update itself.');
+    }
+    const result = await context.updater.update({ whenIdle: body?.whenIdle ?? false });
+    switch (result.kind) {
+      case 'restarting':
+      case 'pending':
+        return { body: { kind: result.kind, message: result.message }, status: 202 };
+      case 'none':
+        return { body: { kind: result.kind, message: result.message }, status: 200 };
+      case 'refused':
+        throw new ProblemError('invalid_state', result.message);
+      case 'failed':
+        throw new ProblemError('update_failed', result.message);
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
+  },
+  method: 'POST',
+  operationId: 'updateFactory',
+  path: '/v1/factory/update',
+  request: {
+    body: z
+      .object({
+        whenIdle: z.boolean().optional().meta({
+          description: 'Wait until no agent runs and nothing is queued, then update.',
+        }),
+      })
+      .optional()
+      .meta({ id: 'UpdateFactory' }),
+  },
+  responses: {
+    200: { description: 'There is nothing to update to.', schema: UpdateStarted },
+    202: {
+      description:
+        'The update is installed and a new server is starting on it in a new Herdr pane, or it waits to run once idle.',
+      schema: UpdateStarted,
+    },
+  },
+  scope: 'act',
+  summary: 'Update the factory: install the newest release and restart the server on it',
+  tags: ['meta'],
+});
+
+export const factoryRoutes: Array<Route> = [
+  factory,
+  putCommunication,
+  checkUpdate,
+  updateLater,
+  runUpdate,
+];

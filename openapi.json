@@ -270,6 +270,64 @@
         }
       }
     },
+    "/v1/factory/update": {
+      "post": {
+        "operationId": "updateFactory",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Update the factory: install the newest release and restart the server on it",
+        "tags": [
+          "meta"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFactory"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "There is nothing to update to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryUpdateStarted"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The update is installed and a new server is starting on it in a new Herdr pane, or it waits to run once idle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryUpdateStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "operationId": "listTickets",
@@ -2005,6 +2063,15 @@
         ],
         "additionalProperties": false
       },
+      "UpdateFactory": {
+        "type": "object",
+        "properties": {
+          "whenIdle": {
+            "description": "Wait until no agent runs and nothing is queued, then update.",
+            "type": "boolean"
+          }
+        }
+      },
       "StartTicket": {
         "anyOf": [
           {
@@ -2151,6 +2218,7 @@
               "umbrella_issue",
               "unauthorized",
               "unsupported_media_type",
+              "update_failed",
               "validation_error"
             ],
             "description": "A stable code clients can switch on."
@@ -2338,6 +2406,10 @@
             "type": "string",
             "description": "The version this factory runs."
           },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether the binary on disk already has it (another factory sharing the binary updated it), so updating only restarts the server."
+          },
           "later": {
             "type": "boolean",
             "description": "Whether the owner said later to it."
@@ -2353,14 +2425,20 @@
           "notesUrl": {
             "type": "string",
             "description": "What changed: the release notes, or the compare page from the running version when releases were skipped."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "Whether an update waits for no agent to run and nothing to be queued."
           }
         },
         "required": [
           "current",
+          "installed",
           "later",
           "latest",
           "name",
-          "notesUrl"
+          "notesUrl",
+          "pending"
         ],
         "additionalProperties": false
       },
@@ -2385,6 +2463,29 @@
         "required": [
           "message",
           "update"
+        ],
+        "additionalProperties": false
+      },
+      "FactoryUpdateStarted": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "restarting",
+              "pending",
+              "none"
+            ],
+            "description": "`restarting`: the update is installed and a new server is starting on it; `pending`: it waits until nothing runs or is queued; `none`: this factory runs the newest release."
+          },
+          "message": {
+            "type": "string",
+            "description": "For a person: what happens next."
+          }
+        },
+        "required": [
+          "kind",
+          "message"
         ],
         "additionalProperties": false
       },

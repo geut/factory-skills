@@ -26,8 +26,8 @@ import { localTokenPath } from '../server/clients.ts';
 import { leaseIsLive, readServerLease } from '../server/lease.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 import { updateView, type UpdateView } from '../update/checker.ts';
+import { UpdateNotice, updateNoticeText } from '../update/notice.ts';
 import { readUpdateState, updateStatePath } from '../update/state.ts';
-import { UpdateNotice } from './update-notice.ts';
 
 // Pi's side of the factory. It reads the database directly for everything it
 // shows and sends commands to the factory server; it never runs the
@@ -46,6 +46,8 @@ export type FactoryClient = {
   progress: () => Array<TicketProgress>;
   revision: () => number;
   runningChildren: () => Array<RunningChildRow>;
+  // Whether a server holds the factory's lease.
+  serverRunning: () => boolean;
   status: (ref: string) => string;
   // The commands long controller steps are running, by ticket key; empty
   // when the server cannot say.
@@ -53,14 +55,18 @@ export type FactoryClient = {
   ticketDetail: (ref: string | null) => TicketDetail | string;
   // Checks for an update now, or puts off the one on offer, through the
   // server, which alone writes what it found.
-  update: (mode: 'check' | 'later') => Promise<UpdateReply>;
+  update: (mode: 'check' | 'install' | 'later' | 'when-idle') => Promise<UpdateReply>;
   // The update the server last found, and when it was announced.
   updateState: () => { announcedAt: string | null; update: UpdateView | null };
 };
 
-export type UpdateReply = { kind: 'notice'; notice: UpdateNotice } | { kind: 'text'; text: string };
+export type UpdateReply =
+  | { kind: 'notice'; notice: UpdateNotice }
+  // What the server said, or why it could not be asked.
+  | { kind: 'problem' | 'text'; text: string };
 
 const UpdateCheckBody = z.object({ message: z.string(), update: UpdateNotice.nullable() });
+const UpdateStartedBody = z.object({ kind: z.string(), message: z.string() });
 
 // A step's command as the server reported it, with the step it belongs to, so
 // a command is never shown on the step after it.
@@ -227,7 +233,11 @@ export function createFactoryClient(input: {
   }
 
   // POSTs to an update route and parses the answer, or says what went wrong.
-  async function postUpdate<T>(route: string, schema: z.ZodType<T>): Promise<T | string> {
+  async function postUpdate<T>(
+    route: string,
+    schema: z.ZodType<T>,
+    body?: unknown,
+  ): Promise<T | string> {
     const open = database();
     if (open === null) {
       return unavailable();
@@ -245,7 +255,11 @@ export function createFactoryClient(input: {
     let response: Response;
     try {
       response = await send(`${url}${route}`, {
-        headers: { authorization: `Bearer ${token}` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
         method: 'POST',
       });
     } catch (error: unknown) {
@@ -253,7 +267,7 @@ export function createFactoryClient(input: {
     }
     const payload: unknown = await response.json().catch(() => ({}));
     const parsed = schema.safeParse(payload);
-    if (response.status === 200 && parsed.success) {
+    if ((response.status === 200 || response.status === 202) && parsed.success) {
       return parsed.data;
     }
     const problem = ProblemBody.safeParse(payload);
@@ -263,11 +277,19 @@ export function createFactoryClient(input: {
     );
   }
 
-  async function update(mode: 'check' | 'later'): Promise<UpdateReply> {
+  async function update(mode: 'check' | 'install' | 'later' | 'when-idle'): Promise<UpdateReply> {
+    if (mode === 'install' || mode === 'when-idle') {
+      const started = await postUpdate('/v1/factory/update', UpdateStartedBody, {
+        whenIdle: mode === 'when-idle',
+      });
+      return typeof started === 'string'
+        ? { kind: 'problem', text: started }
+        : { kind: 'text', text: started.message };
+    }
     if (mode === 'later') {
       const putOff = await postUpdate('/v1/factory/update-later', UpdateNotice);
       return {
-        kind: 'text',
+        kind: typeof putOff === 'string' ? 'problem' : 'text',
         text:
           typeof putOff === 'string'
             ? putOff
@@ -276,7 +298,7 @@ export function createFactoryClient(input: {
     }
     const checked = await postUpdate('/v1/factory/update-check', UpdateCheckBody);
     if (typeof checked === 'string') {
-      return { kind: 'text', text: checked };
+      return { kind: 'problem', text: checked };
     }
     return checked.update === null
       ? { kind: 'text', text: checked.message }
@@ -317,11 +339,8 @@ export function createFactoryClient(input: {
       return '';
     }
     if (parsed.kind === 'update') {
-      // Installing comes with the update command; until then the release
-      // page has the binary.
-      return parsed.mode === 'install'
-        ? 'This factory cannot install updates itself yet: download the release from its page and replace the binary, then restart `factory serve`.'
-        : '';
+      const reply = await update(parsed.mode);
+      return reply.kind === 'notice' ? updateNoticeText(reply.notice) : reply.text;
     }
     const url = serverUrl(open);
     if (url === null) {
@@ -444,6 +463,10 @@ export function createFactoryClient(input: {
     runningChildren: () => {
       const open = database();
       return open === null ? [] : listRunningChildren(open);
+    },
+    serverRunning: () => {
+      const open = database();
+      return open !== null && serverUrl(open) !== null;
     },
     status: (ref) => {
       const open = database();

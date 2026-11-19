@@ -1,5 +1,5 @@
 import type { GhJson } from '../ports/gh.ts';
-import { checkForUpdate } from './releases.ts';
+import { checkForUpdate, compareVersions, releaseUrl } from './releases.ts';
 import { afterCheck, readUpdateState, writeUpdateState, type UpdateState } from './state.ts';
 
 // The server's side of updates: it checks GitHub on start and once a day,
@@ -10,22 +10,46 @@ export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000;
 // What clients see of an update: the release this factory could run instead.
 export type UpdateView = {
   current: string;
+  // Whether the binary on disk already has it, so a restart runs it.
+  installed: boolean;
   // Whether the owner said later to it.
   later: boolean;
   latest: string;
   name: string;
   notesUrl: string;
+  // Whether it waits for nothing to run or be queued.
+  pending: boolean;
 };
 
 export function updateView(state: UpdateState, current: string): UpdateView | null {
-  return state.latest === null
+  const { installed, latest } = state;
+  // A server restarted on the installed version has nothing to restart for.
+  if (
+    installed !== null &&
+    compareVersions(installed, current) > 0 &&
+    (latest === null || compareVersions(installed, latest.version) >= 0)
+  ) {
+    const known = latest?.version === installed;
+    return {
+      current,
+      installed: true,
+      later: state.later === installed,
+      latest: installed,
+      name: known ? latest.name : `v${installed}`,
+      notesUrl: known ? latest.notesUrl : releaseUrl(installed),
+      pending: state.pending,
+    };
+  }
+  return latest === null
     ? null
     : {
         current,
-        later: state.later === state.latest.version,
-        latest: state.latest.version,
-        name: state.latest.name,
-        notesUrl: state.latest.notesUrl,
+        installed: false,
+        later: state.later === latest.version,
+        latest: latest.version,
+        name: latest.name,
+        notesUrl: latest.notesUrl,
+        pending: state.pending,
       };
 }
 

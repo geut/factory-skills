@@ -57,6 +57,34 @@
   https://github.com/geut/factory-skills/compare/v0.3.0...v0.6.0
   → /factory update · later: /factory update --later
 
+== installed by another factory · 40 cols ==
+⬆ factory 0.6.0 is installed · restart
+to use it · this server runs 0.5.0
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills
+  /releases/tag/v0.6.0
+  → /factory update · later: /factory
+  update --later
+
+== installed by another factory · 60 cols ==
+⬆ factory 0.6.0 is installed · restart to use it · this
+server runs 0.5.0
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/releases/tag/v0.6.0
+  → /factory update · later: /factory update --later
+
+== installed by another factory · 80 cols ==
+⬆ factory 0.6.0 is installed · restart to use it · this server runs 0.5.0
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/releases/tag/v0.6.0
+  → /factory update · later: /factory update --later
+
+== installed by another factory · 120 cols ==
+⬆ factory 0.6.0 is installed · restart to use it · this server runs 0.5.0
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/releases/tag/v0.6.0
+  → /factory update · later: /factory update --later
+
 == footer line · 40 cols ==
 ⬆ factory 0.5.0
 
@@ -80,3 +108,27 @@
 
 == footer line, later · 120 cols ==
 ⬆ factory 0.5.0
+
+== footer line, installed · 40 cols ==
+⬆ factory 0.6.0 · restart
+
+== footer line, installed · 60 cols ==
+⬆ factory 0.6.0 · restart
+
+== footer line, installed · 80 cols ==
+⬆ factory 0.6.0 · restart
+
+== footer line, installed · 120 cols ==
+⬆ factory 0.6.0 · restart
+
+== footer line, when idle · 40 cols ==
+⬆ factory 0.6.0 · when idle
+
+== footer line, when idle · 60 cols ==
+⬆ factory 0.6.0 · when idle
+
+== footer line, when idle · 80 cols ==
+⬆ factory 0.6.0 · when idle
+
+== footer line, when idle · 120 cols ==
+⬆ factory 0.6.0 · when idle

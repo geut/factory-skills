@@ -2261,3 +2261,16 @@ export function requeueOrphanedPanes(db: DatabaseSync, now: string): void {
     ).run(now, now);
   });
 }
+
+// Whether no agent runs and no action is queued: an update may restart the
+// server without cutting into anything.
+export function factoryIsIdle(db: DatabaseSync): boolean {
+  const row = db
+    .prepare(
+      `SELECT
+         (SELECT count(*) FROM agent_runs WHERE status IN ('prepared', 'starting', 'running')) +
+         (SELECT count(*) FROM actions WHERE status IN ('pending', 'leased')) AS busy`,
+    )
+    .get();
+  return Number(row?.['busy'] ?? 0) === 0;
+}

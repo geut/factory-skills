@@ -45,6 +45,7 @@ async function serveWith(
         pullRequestFormat: () => ({ path: '.github/pull_request_template.md', source: 'github' }),
         saveCommunication,
         trackerInventory: null,
+        updater: null,
         updates,
         webhooks: null,
       },
@@ -194,10 +195,12 @@ test('POST /v1/factory/update-check finds the newest release, and GET /v1/factor
   assert.equal(checked.status, 200);
   const update = {
     current: '0.4.0',
+    installed: false,
     later: false,
     latest: '0.5.0',
     name: 'v0.5.0',
     notesUrl: 'https://github.com/geut/factory-skills/releases/tag/v0.5.0',
+    pending: false,
   };
   assert.deepEqual(await checked.json(), {
     message: 'factory 0.5.0 is available (you run 0.4.0).',
