@@ -276,10 +276,73 @@ const runUpdate = defineRoute({
   tags: ['meta'],
 });
 
+const RollbackStarted = z
+  .object({
+    kind: z.enum(['restarting', 'confirm']).meta({
+      description:
+        '`restarting`: factory.previous is back in place and a new server is starting on it; `confirm`: the rollback restores the database, and `message` says what that loses: send it again with `confirm: true`.',
+    }),
+    message: z.string().meta({ description: 'For a person: what happens, or what to confirm.' }),
+  })
+  .meta({ id: 'FactoryRollbackStarted' });
+
+// POST /v1/factory/rollback: go back to the version an update replaced.
+const rollBack = defineRoute({
+  handler: async ({ body, context }) => {
+    if (context.updater === null) {
+      throw new ProblemError('internal_error', 'The server cannot roll itself back.');
+    }
+    const result = await context.updater.rollback({ confirm: body?.confirm ?? false });
+    switch (result.kind) {
+      case 'restarting':
+        return { body: { kind: result.kind, message: result.message }, status: 202 };
+      case 'confirm':
+        return { body: { kind: result.kind, message: result.message }, status: 200 };
+      case 'refused':
+        throw new ProblemError('invalid_state', result.message);
+      case 'failed':
+        throw new ProblemError('update_failed', result.message);
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
+  },
+  method: 'POST',
+  operationId: 'rollBackFactory',
+  path: '/v1/factory/rollback',
+  request: {
+    body: z
+      .object({
+        confirm: z.boolean().optional().meta({
+          description:
+            'Restore the database backup the update made, losing what was recorded since.',
+        }),
+      })
+      .optional()
+      .meta({ id: 'RollBackFactory' }),
+  },
+  responses: {
+    200: {
+      description: 'The rollback restores the database; nothing changed until it is confirmed.',
+      schema: RollbackStarted,
+    },
+    202: {
+      description:
+        'factory.previous is back in place, and a new server starts on it in a new Herdr pane once this one stops.',
+      schema: RollbackStarted,
+    },
+  },
+  scope: 'act',
+  summary: 'Roll back to the version the last update replaced',
+  tags: ['meta'],
+});
+
 export const factoryRoutes: Array<Route> = [
   factory,
   putCommunication,
   checkUpdate,
   updateLater,
   runUpdate,
+  rollBack,
 ];

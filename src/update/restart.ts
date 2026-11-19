@@ -4,10 +4,12 @@ import path from 'node:path';
 import { herdrPaneArgs, parsePaneId, type CommandRunner } from '../runtime/pi-herdr.ts';
 import { shellQuote } from '../shell.ts';
 
-// Restarting the server on the binary on disk: a new Herdr pane runs
-// `factory serve --after <instance>`, which waits for this server to hand back
-// its lease. Agents keep running and the new server adopts them, as on any
-// restart.
+// Restarting the server on the binary on disk: a new Herdr pane waits for
+// this server's process to exit, then runs `factory serve`. Agents keep
+// running and the new server adopts them, as on any restart. Waiting in the
+// script works for any binary, including one older than `serve --after`,
+// which a rollback starts; after an update the new server also waits for the
+// lease itself (`--after <instance>`).
 
 // Names a pane sets for itself, or that make no sense in another shell.
 const OWN_TO_PANE = new Set([
@@ -23,11 +25,13 @@ const OWN_TO_PANE = new Set([
 // toolchain, and the same keys, such as a Linear API key. The script holds
 // them, so it is the owner's alone and deletes itself as it starts.
 export function renderRestartScript(input: {
-  after: string;
+  after: string | null;
   binary: string;
   codeRoot: string;
   env: NodeJS.ProcessEnv;
   paneId: string;
+  // The server being replaced, which exits before the new one starts.
+  waitPid: number;
 }): string {
   const exports = Object.entries(input.env)
     .filter(
@@ -43,21 +47,23 @@ export function renderRestartScript(input: {
 rm -f -- "$0"
 ${exports}export HERDR_PANE_ID="\${HERDR_PANE_ID:-${input.paneId}}"
 cd ${shellQuote(input.codeRoot)} || exit 1
-exec ${shellQuote(input.binary)} serve --after ${shellQuote(input.after)}
+while kill -0 ${input.waitPid} 2>/dev/null; do sleep 0.2; done
+exec ${shellQuote(input.binary)} serve${input.after === null ? '' : ` --after ${shellQuote(input.after)}`}
 `;
 }
 
 // Opens the new server's pane beside this server's.
 export async function openServerPane(input: {
-  after: string;
+  after: string | null;
   binary: string;
   codeRoot: string;
   env: NodeJS.ProcessEnv;
   factoryRoot: string;
   paneId: string;
   run: CommandRunner;
+  waitPid: number;
 }): Promise<void> {
-  const script = path.join(input.factoryRoot, 'runtime', `restart-${input.after}.sh`);
+  const script = path.join(input.factoryRoot, 'runtime', `restart-${input.waitPid}.sh`);
   await mkdir(path.dirname(script), { recursive: true });
   writeFileSync(script, renderRestartScript(input), { mode: 0o700 });
   const opened = await input.run(

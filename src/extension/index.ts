@@ -16,6 +16,7 @@ import {
   type FactoryClient,
   type LiveCommand,
   type PendingFeedbackView,
+  ROLLBACK_CONFIRM_HINT,
 } from './factory-client.ts';
 import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import {
@@ -463,6 +464,24 @@ export default function factoryExtension(pi: ExtensionAPI): void {
           const next = service.ticketDetail(parsed.ref);
           return typeof next === 'string' ? null : next;
         });
+        return;
+      }
+      if (parsed.kind === 'update' && parsed.mode === 'rollback') {
+        const service = serviceFor(ctx.cwd);
+        const reply = await service.rollback(parsed.yes);
+        if (reply.kind !== 'confirm') {
+          publishStatus(reply.text);
+          return;
+        }
+        // Restoring the database loses what was recorded since: ask first.
+        if (ctx.mode !== 'tui' || !ctx.hasUI) {
+          publishStatus(`${reply.text}\n${ROLLBACK_CONFIRM_HINT}`);
+          return;
+        }
+        const confirmed = await ctx.ui.confirm('Roll back the factory?', reply.text);
+        publishStatus(
+          confirmed ? (await service.rollback(true)).text : 'Rollback cancelled; nothing changed.',
+        );
         return;
       }
       if (parsed.kind === 'update') {

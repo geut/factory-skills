@@ -41,11 +41,12 @@ import {
 } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
-import { openStateDatabase } from '../state/database.ts';
+import { openStateDatabase, SCHEMA_VERSION, stateDatabasePath } from '../state/database.ts';
 import { createUpdateChecker } from '../update/checker.ts';
 import { binaryVersion, ghDownload, type Download } from '../update/install.ts';
 import { versionOf } from '../update/releases.ts';
 import { openServerPane, waitForHandoff } from '../update/restart.ts';
+import { lossSince, restoreDatabase, storedSchemaVersion } from '../update/rollback.ts';
 import { createUpdater } from '../update/updater.ts';
 import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
@@ -96,7 +97,8 @@ type ServeInput = {
   // Overrides FACTORY.json server.port; tests pass 0 for a free port.
   port?: number;
   // Opens the pane that runs the new server after an update; Herdr otherwise.
-  relaunch?: (input: { after: string }) => Promise<void>;
+  // `after` is null on a rollback, whose older binary may not know it.
+  relaunch?: (input: { after: string | null }) => Promise<void>;
   // Tests pass a stand-in for GitHub's releases list; gh otherwise.
   releases?: GhJson;
   // Tests pass a fake; the server builds the Herdr runtime otherwise.
@@ -329,7 +331,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const binary = input.binary === undefined ? (isSea() ? process.execPath : null) : input.binary;
   const relaunch =
     input.relaunch ??
-    ((relaunched: { after: string }) =>
+    ((relaunched: { after: string | null }) =>
       openServerPane({
         after: relaunched.after,
         binary: binary ?? process.execPath,
@@ -338,6 +340,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         factoryRoot,
         paneId: targetPaneId,
         run: defaultRunner,
+        waitPid: process.pid,
       }));
   const events = createEventHub(db);
   let document: Record<string, unknown> | null = null;
@@ -378,17 +381,42 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     binary,
     checker: updates,
     current: versionOf(factoryVersion()) ?? '0.0.0',
+    databasePath: stateDatabasePath(factoryRoot),
     download: input.download ?? ghDownload,
     factoryRoot,
     idle: () => factoryIsIdle(db),
+    loss: (backup) => lossSince({ backup, databasePath: stateDatabasePath(factoryRoot) }),
     now: () => new Date().toISOString(),
     platform: process.platform,
     report: input.out,
-    restart: async () => {
-      await relaunch({ after: instanceId });
+    restart: async ({ restore, rollback, undo }) => {
+      await relaunch({ after: rollback ? null : instanceId });
       await close();
+      // With the database closed, before this process exits and the new
+      // server opens it.
+      // A restore that fails undoes the rollback: the new pane then starts
+      // this version again, on the database it belongs to.
+      if (restore !== null) {
+        try {
+          restoreDatabase({ backup: restore, databasePath: stateDatabasePath(factoryRoot) });
+        } catch (error: unknown) {
+          let undone = true;
+          try {
+            undo();
+          } catch {
+            undone = false;
+          }
+          input.out(
+            undone
+              ? `Could not restore ${restore}, so the rollback was undone and this version starts again: ${messageOf(error)}.`
+              : `Could not restore ${restore} (${messageOf(error)}), nor put the binaries back. Before starting factory serve, either copy the backup over ${stateDatabasePath(factoryRoot)} (deleting state.sqlite-wal and state.sqlite-shm), or swap factory.previous back.`,
+          );
+        }
+      }
       input.onRestarted?.();
     },
+    schema: SCHEMA_VERSION,
+    storedSchema: () => storedSchemaVersion(stateDatabasePath(factoryRoot)),
     version: binaryVersion,
   });
   const http = createServer(

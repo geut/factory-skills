@@ -45,6 +45,9 @@ export type FactoryClient = {
   pendingFeedback: (ref: string) => Promise<PendingFeedbackView | string>;
   progress: () => Array<TicketProgress>;
   revision: () => number;
+  // Goes back to factory.previous through the server. A rollback that
+  // restores the database answers `confirm` until `confirm` is true.
+  rollback: (confirm: boolean) => Promise<RollbackReply>;
   runningChildren: () => Array<RunningChildRow>;
   // The live server's instance, which changes when it restarts; null with
   // none running.
@@ -64,6 +67,11 @@ export type FactoryClient = {
   // The update the server last found, and when it was announced.
   updateState: () => { announcedAt: string | null; update: UpdateView | null };
 };
+
+export type RollbackReply = { kind: 'confirm' | 'problem' | 'text'; text: string };
+
+export const ROLLBACK_CONFIRM_HINT =
+  'Confirm with /factory update --rollback --yes, or factory update --rollback --yes.';
 
 export type UpdateReply =
   | { kind: 'notice'; notice: UpdateNotice }
@@ -303,6 +311,14 @@ export function createFactoryClient(input: {
     }
   }
 
+  async function rollback(confirm: boolean): Promise<RollbackReply> {
+    const sent = await postUpdate('/v1/factory/rollback', UpdateStartedBody, { confirm });
+    if (typeof sent === 'string') {
+      return { kind: 'problem', text: sent };
+    }
+    return { kind: sent.kind === 'confirm' ? 'confirm' : 'text', text: sent.message };
+  }
+
   async function update(mode: 'check' | 'install' | 'later' | 'when-idle'): Promise<UpdateReply> {
     if (mode === 'install' || mode === 'when-idle') {
       const started = await postUpdate('/v1/factory/update', UpdateStartedBody, {
@@ -363,6 +379,10 @@ export function createFactoryClient(input: {
     }
     if (parsed.kind === 'agents' || parsed.kind === 'ticket') {
       return '';
+    }
+    if (parsed.kind === 'update' && parsed.mode === 'rollback') {
+      const reply = await rollback(parsed.yes);
+      return reply.kind === 'confirm' ? `${reply.text}\n${ROLLBACK_CONFIRM_HINT}` : reply.text;
     }
     if (parsed.kind === 'update') {
       const reply = await update(parsed.mode);
@@ -486,6 +506,7 @@ export function createFactoryClient(input: {
       const open = database();
       return open === null ? 0 : latestRevision(open);
     },
+    rollback,
     runningChildren: () => {
       const open = database();
       return open === null ? [] : listRunningChildren(open);

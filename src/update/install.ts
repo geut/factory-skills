@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { ghRun, runCommand } from '../ports/gh.ts';
 import { RELEASES_REPO, versionOf } from './releases.ts';
+import { writePreviousRecord } from './rollback.ts';
 
 // Installing a release: download this machine's binary and its checksum,
 // check one against the other, keep the running binary as `factory.previous`
@@ -76,6 +77,9 @@ export async function installRelease(input: {
   binary: string;
   download: Download;
   platform: string;
+  // The running version and its database schema: what factory.previous will
+  // be, for a rollback.
+  running: { schema: number; version: string };
   version: string;
 }): Promise<InstallResult> {
   const chosen = binaryAsset({ arch: input.arch, platform: input.platform });
@@ -127,6 +131,7 @@ export async function installRelease(input: {
     try {
       await chmod(downloaded, 0o755);
       await copyFile(input.binary, previousPath(input.binary));
+      writePreviousRecord(input.binary, input.running);
       await rename(downloaded, input.binary);
     } catch (error: unknown) {
       return {
