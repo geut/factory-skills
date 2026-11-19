@@ -73,6 +73,7 @@ test('a session is named for its ticket and stage, and the API and CLI point at 
     github: { fetchIssue: () => issue, listSubIssues: () => [] },
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => runtime,
   });
   if (result.kind !== 'ok') {

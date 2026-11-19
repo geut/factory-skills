@@ -25,6 +25,9 @@ import {
 import { localTokenPath } from '../server/clients.ts';
 import { leaseIsLive, readServerLease } from '../server/lease.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
+import { updateView, type UpdateView } from '../update/checker.ts';
+import { readUpdateState } from '../update/state.ts';
+import { UpdateNotice } from './update-notice.ts';
 
 // Pi's side of the factory. It reads the database directly for everything it
 // shows and sends commands to the factory server; it never runs the
@@ -48,7 +51,16 @@ export type FactoryClient = {
   // when the server cannot say.
   stepCommands: () => Promise<Map<string, LiveCommand>>;
   ticketDetail: (ref: string | null) => TicketDetail | string;
+  // Checks for an update now, or puts off the one on offer, through the
+  // server, which alone writes what it found.
+  update: (mode: 'check' | 'later') => Promise<UpdateReply>;
+  // The update the server last found, and when it was announced.
+  updateState: () => { announcedAt: string | null; update: UpdateView | null };
 };
+
+export type UpdateReply = { kind: 'notice'; notice: UpdateNotice } | { kind: 'text'; text: string };
+
+const UpdateCheckBody = z.object({ message: z.string(), update: UpdateNotice.nullable() });
 
 // A step's command as the server reported it, with the step it belongs to, so
 // a command is never shown on the step after it.
@@ -214,6 +226,63 @@ export function createFactoryClient(input: {
     }
   }
 
+  // POSTs to an update route and parses the answer, or says what went wrong.
+  async function postUpdate<T>(route: string, schema: z.ZodType<T>): Promise<T | string> {
+    const open = database();
+    if (open === null) {
+      return unavailable();
+    }
+    const url = serverUrl(open);
+    if (url === null) {
+      return noServerMessage(input.factoryRoot);
+    }
+    let token: string;
+    try {
+      token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
+    } catch {
+      return `Cannot read ${localTokenPath(input.factoryRoot)}; restart the server.`;
+    }
+    let response: Response;
+    try {
+      response = await send(`${url}${route}`, {
+        headers: { authorization: `Bearer ${token}` },
+        method: 'POST',
+      });
+    } catch (error: unknown) {
+      return `Cannot reach the factory server at ${url}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    const payload: unknown = await response.json().catch(() => ({}));
+    const parsed = schema.safeParse(payload);
+    if (response.status === 200 && parsed.success) {
+      return parsed.data;
+    }
+    const problem = ProblemBody.safeParse(payload);
+    return (
+      (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
+      `The server answered ${response.status}.`
+    );
+  }
+
+  async function update(mode: 'check' | 'later'): Promise<UpdateReply> {
+    if (mode === 'later') {
+      const putOff = await postUpdate('/v1/factory/update-later', UpdateNotice);
+      return {
+        kind: 'text',
+        text:
+          typeof putOff === 'string'
+            ? putOff
+            : `No more notices for factory ${putOff.latest}; the next release brings them back. \`/factory update\` still installs it.`,
+      };
+    }
+    const checked = await postUpdate('/v1/factory/update-check', UpdateCheckBody);
+    if (typeof checked === 'string') {
+      return { kind: 'text', text: checked };
+    }
+    return checked.update === null
+      ? { kind: 'text', text: checked.message }
+      : { kind: 'notice', notice: checked.update };
+  }
+
   async function command(parsed: ParsedCommand): Promise<string> {
     if (parsed.kind === 'invalid') {
       return parsed.message;
@@ -227,6 +296,13 @@ export function createFactoryClient(input: {
     }
     if (parsed.kind === 'agents' || parsed.kind === 'ticket') {
       return '';
+    }
+    if (parsed.kind === 'update') {
+      // Installing comes with the update command; until then the release
+      // page has the binary.
+      return parsed.mode === 'install'
+        ? 'This factory cannot install updates itself yet: download the release from its page and replace the binary, then restart `factory serve`.'
+        : '';
     }
     const url = serverUrl(open);
     if (url === null) {
@@ -358,6 +434,14 @@ export function createFactoryClient(input: {
     ticketDetail: (ref) => {
       const open = database();
       return open === null ? unavailable() : ticketDetailFor(open, ref);
+    },
+    update,
+    updateState: () => {
+      const state = readUpdateState(input.factoryRoot);
+      return {
+        announcedAt: state.announcedAt,
+        update: updateView(state, state.current ?? 'an older version'),
+      };
     },
   };
 }

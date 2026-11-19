@@ -1159,6 +1159,8 @@ export function createFactoryService(input: {
           return 'Opened the factory agents view.';
         case 'ticket':
           return 'Opened the factory ticket view.';
+        case 'update':
+          return 'Updates go through the factory server: `factory update --check`.';
         default: {
           const _exhaustive: never = parsed;
           return _exhaustive;

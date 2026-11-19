@@ -17,6 +17,7 @@ Pi loads `src/extension/index.ts` and the `skills/` directory from this package.
 /factory cancel <ticket> ["reason"]
 /factory rerun <ticket>
 /factory status <ticket>
+/factory update [--check | --later]
 ```
 
 `start` resolves the ticket, freezes the source, adds the ticket's git worktree at `.factory/worktrees/<slug>` (see [Worktree base](#worktree-base)), and launches the planning agent in it. Repeating it does not open another child. An issue with sub-issues is an umbrella and is rejected; see [Tracker and code host](#tracker-and-code-host). After `plan.md` and at least one task file exist, each task file's frontmatter (`type`, `qa`, `blocked_by`) is valid, and `.factory/CONTEXT.md` has its required sections, the controller registers the task graph and launches the first dependency-ready work agent in the same worktree. The plan is those files; the planner's `factory.plan.v3` reply is a suggested summary, not a requirement. When the factory root has no `CONTEXT.md`, the plan prompt asks the planner to create it with the sections Commands, Environment, Test layers, Servers and ports, Known flakes, Fixtures and fakes, and Vocabulary (see [the CONTEXT.md reference](skills/factory-plan/references/context.md)); a file over 150 lines passes with a warning.
@@ -123,6 +124,21 @@ The extension file is global to the machine, but whether Pi also loads factory-s
 
 A pinned git or npm install keeps Pi on that version, so the server names it once at start with the `pi remove` command that lets updates reach Pi. Remove an old git install (`pi remove git:github.com/geut/factory-skills@v…`) once the binary carries the extension; keep a local checkout's package while you develop the factory.
 
+### Updates
+
+The server checks GitHub for an **update**, a stable release newer than the one it runs, when it starts and once a day after, through `gh`. Drafts and pre-releases never count. A check that fails stays quiet and the next one tries again. `"updates": { "check": false }` in FACTORY.json turns checks off. What a check found lives in `.factory/runtime/update.json`, which only the server writes.
+
+When a check first finds a release, every Pi session running then posts one card. However many releases the factory skipped, the card names only the newest, and its link covers them all: the release's notes, or GitHub's compare page from the running version.
+
+```text
+⬆ factory 0.6.0 is available · you run 0.3.0
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/compare/v0.3.0...v0.6.0
+  → /factory update · later: /factory update --later
+```
+
+Pi's footer keeps `⬆ factory 0.6.0` until the factory runs it; a session started after the check shows only the footer line. `/factory update --later` stops the cards for that release and dims the line; a newer release brings both back. `/factory update --check` checks now. Outside Pi, `factory update --check` asks GitHub directly and needs no server. Installing an update from the factory itself is not available yet: download the new binary from the release page and restart `factory serve`.
+
 - The server refuses to start outside Herdr. It needs `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`, plus `herdr` (0.8.2 or newer) and `pi` on `PATH`; `FACTORY_PI_BIN` overrides the path to `pi`.
 - Agent and handoff panes open through the factory's own Herdr plugin, `geut.factory`. On every start the server writes its manifest to `$XDG_DATA_HOME/factory/herdr-plugin/` (`~/.local/share/factory/herdr-plugin/` by default) and runs `herdr plugin link` on it, so there is nothing to install. Its pane runs the launch script directly in non-interactive bash, so shell setup that prints or prompts cannot swallow the launch. A failed link stops the server with the command to run by hand.
 - Agents see the server's `PATH`, and its `BASH_ENV` when set. Herdr opens panes with its own environment and agents run non-interactive bash, which never reads `~/.bashrc`, so every pane's launch script exports both. Whatever the server can run, its agents can run too, so start `factory serve` from a shell where the project's toolchain (`pnpm`, `bun`, ...) is on `PATH`.
@@ -210,7 +226,9 @@ dist/factory token revoke dashboard
 - To rotate without downtime, create a client with a new name, switch the client over, then revoke the old one.
 - The server writes a `local` act token to `.factory/local.token` (mode `0600`) for Pi on the same machine. It replaces the token when the file is missing or the client was revoked.
 - `GET /v1/me` returns the client a token belongs to and its scope (`read` or `act`), to check a token and know up front whether commands are allowed.
-- `GET /v1/factory` returns the factory's `factoryId`, its FACTORY.json `name`, its `communication` settings, the [pull request format](#tracker-and-code-host) a ticket started now would follow, and every stage in flow order, with whether it is optional, enabled, and per task. It reads FACTORY.json when asked; a running ticket keeps the settings it started with.
+- `GET /v1/factory` returns the factory's `factoryId`, its FACTORY.json `name`, its `communication` settings, the [pull request format](#tracker-and-code-host) a ticket started now would follow, and every stage in flow order, with whether it is optional, enabled, and per task. It reads FACTORY.json when asked; a running ticket keeps the settings it started with. Its `update` is the [update](#updates) the last check found, `{ current, latest, name, notesUrl, later }`, or `null`.
+- `POST /v1/factory/update-check` (`act`) checks GitHub now and answers `{ message, update }`. A failed check is `502 code_host_unavailable`.
+- `POST /v1/factory/update-later` (`act`) puts off the update on offer until a newer release, and answers with it; with none on offer it is `409 invalid_state`.
 - `PUT /v1/factory/communication` (`act`) takes the whole `communication` block (`verbosity`, `voice`, `tone`), checks it by the same rules as the file, and rewrites that block in FACTORY.json, leaving every other key as it was. It answers with the saved block. A value that breaks the rules is `400 validation_error` and changes nothing. FACTORY.json stays the only source: editing it by hand works too, and either way the change applies to tickets started after it.
 - Commands record the client that sent them. A client can add `X-Factory-On-Behalf-Of: <who>`, such as a dashboard user's name. The server stores it as given and never uses it for access.
 - An unknown or revoked token gets `401 unauthorized`; a `read` token on an `act` route gets `403 insufficient_scope`.

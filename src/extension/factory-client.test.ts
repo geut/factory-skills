@@ -38,12 +38,18 @@ function repository(): { codeRoot: string; factoryRoot: string; pi: string } {
   return { codeRoot, factoryRoot, pi };
 }
 
-async function serverFor(codeRoot: string, pi: string, runtime: FakeRuntime): Promise<void> {
+async function serverFor(
+  codeRoot: string,
+  pi: string,
+  runtime: FakeRuntime,
+  releases: () => Promise<unknown> = async () => [],
+): Promise<void> {
   const result = await serve({
     cwd: codeRoot,
     env: { FACTORY_PI_BIN: pi, HERDR_PANE_ID: 'pane-1', HERDR_SOCKET_PATH: '/tmp/herdr.sock' },
     out: () => undefined,
     port: 0,
+    releases,
     runtime: () => runtime,
   });
   if (result.kind !== 'ok') {
@@ -100,6 +106,41 @@ test('Pi starts a ticket through the server, then sees its cards in the database
   await until(() => runtime.launches.length === 2);
   assert.equal(runtime.launches[1]?.mode, 'resume');
   client.close();
+});
+
+test('Pi sees the update the server found, checks again, and puts it off', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  const notesUrl = 'https://github.com/geut/factory-skills/releases/tag/v99.0.0';
+  await serverFor(codeRoot, pi, new FakeRuntime(), async () => [
+    { draft: false, html_url: notesUrl, name: 'v99.0.0', prerelease: false, tag_name: 'v99.0.0' },
+  ]);
+  const client = createFactoryClient({ factoryRoot });
+  // The server checks on start, without holding it up.
+  await until(() => client.updateState().update !== null);
+  const { announcedAt, update } = client.updateState();
+  assert.notEqual(announcedAt, null);
+  assert.equal(update?.latest, '99.0.0');
+  assert.equal(update?.later, false);
+
+  const checked = await client.update('check');
+  assert.equal(checked.kind === 'notice' ? checked.notice.notesUrl : checked.text, notesUrl);
+  assert.equal(client.updateState().announcedAt, announcedAt);
+
+  const putOff = await client.update('later');
+  assert.match(putOff.kind === 'text' ? putOff.text : '', /No more notices for factory 99\.0\.0/);
+  assert.equal(client.updateState().update?.later, true);
+  assert.match(
+    await client.command(parseFactoryCommand('update')),
+    /cannot install updates itself yet/,
+  );
+  client.close();
+});
+
+test('/factory update takes --check or --later, and nothing else', () => {
+  assert.deepEqual(parseFactoryCommand('update'), { kind: 'update', mode: 'install' });
+  assert.deepEqual(parseFactoryCommand('update --check'), { kind: 'update', mode: 'check' });
+  assert.deepEqual(parseFactoryCommand('update --later'), { kind: 'update', mode: 'later' });
+  assert.equal(parseFactoryCommand('update now').kind, 'invalid');
 });
 
 test('commands for a ticket the factory does not know are refused locally', async () => {

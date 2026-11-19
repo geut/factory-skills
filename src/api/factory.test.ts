@@ -12,6 +12,7 @@ import {
 } from '../config.ts';
 import { factoryIdentity } from '../controller/facts.ts';
 import { openStateDatabase } from '../state/database.ts';
+import { createUpdateChecker } from '../update/checker.ts';
 import type { ApiContext } from './route.ts';
 import { createRouter } from './router.ts';
 import { apiRoutes } from './routes.ts';
@@ -27,6 +28,7 @@ after(() => {
 async function serveWith(
   config: ConfigResult | (() => ConfigResult),
   saveCommunication: ApiContext['saveCommunication'] = null,
+  updates: ApiContext['updates'] = null,
 ) {
   const db = openStateDatabase(mkdtempSync(path.join(tmpdir(), 'factory-api-')), { create: true });
   const server = createServer(
@@ -43,6 +45,7 @@ async function serveWith(
         pullRequestFormat: () => ({ path: '.github/pull_request_template.md', source: 'github' }),
         saveCommunication,
         trackerInventory: null,
+        updates,
         webhooks: null,
       },
       routes: apiRoutes,
@@ -84,6 +87,7 @@ test('the factory route lists every stage in flow order, and which are on', asyn
       { enabled: true, name: 'review', optional: false, perTask: true },
       { enabled: true, name: 'wrapup', optional: false, perTask: false },
     ],
+    update: null,
   });
 });
 
@@ -162,4 +166,84 @@ test('setting communication needs an act token', () => {
     (item) => item.method === 'PUT' && item.path === '/v1/factory/communication',
   );
   assert.equal(route?.scope, 'act');
+});
+
+// A checker on a fresh factory root whose GitHub lists `tags` as stable
+// releases, newest first.
+function checkerWith(tags: Array<string>, enabled = true) {
+  return createUpdateChecker({
+    current: '0.4.0',
+    enabled: () => enabled,
+    factoryRoot: mkdtempSync(path.join(tmpdir(), 'factory-update-')),
+    gh: async () =>
+      tags.map((tag) => ({
+        draft: false,
+        html_url: `https://github.com/geut/factory-skills/releases/tag/${tag}`,
+        name: tag,
+        prerelease: false,
+        tag_name: tag,
+      })),
+    now: () => '2026-11-19T10:00:00.000Z',
+  });
+}
+
+test('POST /v1/factory/update-check finds the newest release, and GET /v1/factory shows it', async () => {
+  const updates = checkerWith(['v0.5.0']);
+  const { base } = await serveWith(config({}), null, updates);
+  const checked = await fetch(`${base}/v1/factory/update-check`, { method: 'POST' });
+  assert.equal(checked.status, 200);
+  const update = {
+    current: '0.4.0',
+    later: false,
+    latest: '0.5.0',
+    name: 'v0.5.0',
+    notesUrl: 'https://github.com/geut/factory-skills/releases/tag/v0.5.0',
+  };
+  assert.deepEqual(await checked.json(), {
+    message: 'factory 0.5.0 is available (you run 0.4.0).',
+    update,
+  });
+  const read = (await (await fetch(`${base}/v1/factory`)).json()) as { update: unknown };
+  assert.deepEqual(read.update, update);
+
+  const putOff = await fetch(`${base}/v1/factory/update-later`, { method: 'POST' });
+  assert.equal(putOff.status, 200);
+  assert.deepEqual(await putOff.json(), { ...update, later: true });
+});
+
+test('an up-to-date factory has no update, and nothing to put off', async () => {
+  const { base } = await serveWith(config({}), null, checkerWith(['v0.4.0', 'v0.3.0']));
+  const checked = await fetch(`${base}/v1/factory/update-check`, { method: 'POST' });
+  assert.deepEqual(await checked.json(), {
+    message: 'This factory runs the newest release.',
+    update: null,
+  });
+  const putOff = await fetch(`${base}/v1/factory/update-later`, { method: 'POST' });
+  assert.equal(putOff.status, 409);
+});
+
+test('with update checks off, the check says so and GET /v1/factory shows no update', async () => {
+  const updates = checkerWith(['v0.5.0'], false);
+  const { base } = await serveWith(config({ updates: { check: false } }), null, updates);
+  const checked = await fetch(`${base}/v1/factory/update-check`, { method: 'POST' });
+  assert.deepEqual(await checked.json(), {
+    message: 'Update checks are off (FACTORY.json updates.check).',
+    update: null,
+  });
+  const read = (await (await fetch(`${base}/v1/factory`)).json()) as { update: unknown };
+  assert.equal(read.update, null);
+});
+
+test('a check GitHub fails is a problem the caller can read', async () => {
+  const updates = createUpdateChecker({
+    current: '0.4.0',
+    enabled: () => true,
+    factoryRoot: mkdtempSync(path.join(tmpdir(), 'factory-update-')),
+    gh: () => Promise.reject(new Error('gh: HTTP 503')),
+    now: () => '2026-11-19T10:00:00.000Z',
+  });
+  const { base } = await serveWith(config({}), null, updates);
+  const checked = await fetch(`${base}/v1/factory/update-check`, { method: 'POST' });
+  assert.equal(checked.status, 502);
+  assert.match(((await checked.json()) as { detail: string }).detail, /HTTP 503/);
 });

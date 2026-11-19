@@ -46,6 +46,7 @@ async function factory(): Promise<Factory> {
     env: { FACTORY_PI_BIN: pi, HERDR_PANE_ID: 'pane-1', HERDR_SOCKET_PATH: '/tmp/herdr.sock' },
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => runtime,
   });
   if (result.kind !== 'ok') {

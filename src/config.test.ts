@@ -189,6 +189,21 @@ test('tracker updates default to on, each can be turned off, and anything else i
   }
 });
 
+// What FACTORY.json's `updates` block parses to, or why it is refused.
+function checkOf(updates?: unknown) {
+  const parsed = parseFactoryConfig(updates === undefined ? { models } : { models, updates });
+  return parsed.kind === 'ok' ? parsed.config.updates.check : parsed.message;
+}
+
+test('update checks default to on, turn off with check false, and refuse anything else', () => {
+  assert.equal(checkOf(), true);
+  assert.equal(checkOf({}), true);
+  assert.equal(checkOf({ check: false }), false);
+  for (const bad of [false, { check: 'no' }, { channel: 'beta' }]) {
+    assert.match(String(checkOf(bad)), /updates takes only check/, JSON.stringify(bad));
+  }
+});
+
 test('a Linear tracker takes a team, backlog state types, and workflow state names', () => {
   const parsed = parseFactoryConfig({
     models,

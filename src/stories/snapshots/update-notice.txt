@@ -1,0 +1,82 @@
+== one release newer · 40 cols ==
+⬆ factory 0.5.0 is available · you run
+0.4.1
+  What's new in 0.5.0
+  https://github.com/geut/factory-skills
+  /releases/tag/v0.5.0
+  → /factory update · later: /factory
+  update --later
+
+== one release newer · 60 cols ==
+⬆ factory 0.5.0 is available · you run 0.4.1
+  What's new in 0.5.0
+  https://github.com/geut/factory-skills/releases/tag/v0.5.0
+  → /factory update · later: /factory update --later
+
+== one release newer · 80 cols ==
+⬆ factory 0.5.0 is available · you run 0.4.1
+  What's new in 0.5.0
+  https://github.com/geut/factory-skills/releases/tag/v0.5.0
+  → /factory update · later: /factory update --later
+
+== one release newer · 120 cols ==
+⬆ factory 0.5.0 is available · you run 0.4.1
+  What's new in 0.5.0
+  https://github.com/geut/factory-skills/releases/tag/v0.5.0
+  → /factory update · later: /factory update --later
+
+== several releases newer · 40 cols ==
+⬆ factory 0.6.0 is available · you run
+0.3.0
+  Factory updates itself
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills
+  /compare/v0.3.0...v0.6.0
+  → /factory update · later: /factory
+  update --later
+
+== several releases newer · 60 cols ==
+⬆ factory 0.6.0 is available · you run 0.3.0
+  Factory updates itself
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/compare/v0.3.0...v0
+  .6.0
+  → /factory update · later: /factory update --later
+
+== several releases newer · 80 cols ==
+⬆ factory 0.6.0 is available · you run 0.3.0
+  Factory updates itself
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/compare/v0.3.0...v0.6.0
+  → /factory update · later: /factory update --later
+
+== several releases newer · 120 cols ==
+⬆ factory 0.6.0 is available · you run 0.3.0
+  Factory updates itself
+  What's new in 0.6.0
+  https://github.com/geut/factory-skills/compare/v0.3.0...v0.6.0
+  → /factory update · later: /factory update --later
+
+== footer line · 40 cols ==
+⬆ factory 0.5.0
+
+== footer line · 60 cols ==
+⬆ factory 0.5.0
+
+== footer line · 80 cols ==
+⬆ factory 0.5.0
+
+== footer line · 120 cols ==
+⬆ factory 0.5.0
+
+== footer line, later · 40 cols ==
+⬆ factory 0.5.0
+
+== footer line, later · 60 cols ==
+⬆ factory 0.5.0
+
+== footer line, later · 80 cols ==
+⬆ factory 0.5.0
+
+== footer line, later · 120 cols ==
+⬆ factory 0.5.0

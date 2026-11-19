@@ -22,6 +22,7 @@ import {
   type FactoryService,
 } from '../controller/service.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
+import { ghJson, type GhJson } from '../ports/gh.ts';
 import { githubCliClient, type GithubClient } from '../ports/github.ts';
 import { checkLinearSettings } from '../ports/linear.ts';
 import {
@@ -40,6 +41,9 @@ import {
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { openStateDatabase } from '../state/database.ts';
+import { CHECK_EVERY_MS, createUpdateChecker } from '../update/checker.ts';
+import { versionOf } from '../update/releases.ts';
+import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import { writeEmbeddedSkills } from './embedded-skills.ts';
 import { createEventHub } from './events.ts';
@@ -77,6 +81,8 @@ type ServeInput = {
   out: (line: string) => void;
   // Overrides FACTORY.json server.port; tests pass 0 for a free port.
   port?: number;
+  // Tests pass a stand-in for GitHub's releases list; gh otherwise.
+  releases?: GhJson;
   // Tests pass a fake; the server builds the Herdr runtime otherwise.
   runtime?: (input: { handshakePath: string; piBin: string }) => FactorySubagentRuntime;
 };
@@ -303,6 +309,17 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     start: (source, options) => ready().start(source, options),
     stopRun: (id, options) => ready().stopRun(id, options),
   };
+  // Updates: checked on start and once a day; FACTORY.json may turn it off.
+  const updates = createUpdateChecker({
+    current: versionOf(factoryVersion()) ?? '0.0.0',
+    enabled: () => {
+      const current = readFactoryConfig(factoryRoot);
+      return current.kind === 'ok' ? current.config.updates.check : config.config.updates.check;
+    },
+    factoryRoot,
+    gh: input.releases ?? ghJson,
+    now: () => new Date().toISOString(),
+  });
   const http = createServer(
     createRouter({
       authorize: createAuthorizer(db, () => new Date().toISOString()),
@@ -326,6 +343,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
             ? linearInventory(configured, input.env, linear)
             : null;
         },
+        updates,
         webhooks: {
           pullRequestChanged: (pullRequest) => ready().pullRequestChanged(pullRequest),
           secret: () => {
@@ -414,6 +432,9 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     if (timers.sync !== null) {
       clearInterval(timers.sync);
     }
+    if (timers.updates !== null) {
+      clearInterval(timers.updates);
+    }
     events.close();
     await running.stop();
     await closeHttp(http);
@@ -422,7 +443,10 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
 
   // Set once recovery is done; close() may run before that.
-  const timers: { sync: ReturnType<typeof setInterval> | null } = { sync: null };
+  const timers: {
+    sync: ReturnType<typeof setInterval> | null;
+    updates: ReturnType<typeof setInterval> | null;
+  } = { sync: null, updates: null };
   const heartbeat = setInterval(() => {
     if (!renewServerLease(db, instanceId, new Date().toISOString())) {
       void close().then(() => {
@@ -461,6 +485,12 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const minutes = config.config.codeHost?.syncMinutes ?? DEFAULT_SYNC_MINUTES;
   timers.sync = setInterval(syncPullRequests, minutes * 60_000);
   syncPullRequests();
+  const checkUpdates = (): void => {
+    void updates.check();
+  };
+  timers.updates = setInterval(checkUpdates, CHECK_EVERY_MS);
+  timers.updates.unref();
+  checkUpdates();
   input.out(`Factory server for ${codeRoot} listening on ${url}`);
   return { kind: 'ok', server: { close, instanceId, url } };
 }

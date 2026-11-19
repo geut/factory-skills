@@ -169,6 +169,7 @@ async function start(
     },
     out,
     port: 0,
+    releases: async () => [],
     runtime: () => new FakeRuntime(),
   });
 }
@@ -226,6 +227,7 @@ test('without its API key, the real Linear client still lets the server say so',
     github: noGithub,
     out: () => undefined,
     port: 0,
+    releases: async () => [],
     runtime: () => new FakeRuntime(),
   });
   assert.match(

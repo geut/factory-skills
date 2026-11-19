@@ -139,6 +139,8 @@ export type FactoryConfig = {
   server: { host: string; port: number };
   stages: Record<string, StageSettings>;
   tracker: TrackerConfig | null;
+  // `updates.check`: whether the server looks for factory updates.
+  updates: { check: boolean };
   validation: Validation;
   // Commands that prepare each new worktree, such as installing dependencies.
   worktree: { setup: Array<WorkCommand> };
@@ -408,6 +410,17 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
     return settings;
   }
 
+  const updates = value['updates'];
+  if (
+    updates !== undefined &&
+    (!isRecord(updates) ||
+      Object.keys(updates).some((key) => key !== 'check') ||
+      (updates['check'] !== undefined && typeof updates['check'] !== 'boolean'))
+  ) {
+    return { kind: 'error', message: 'FACTORY.json updates takes only check, true or false.' };
+  }
+  const checkUpdates = !isRecord(updates) || updates['check'] !== false;
+
   const communication = readCommunication(value['communication']);
   if (typeof communication === 'string') {
     return { kind: 'error', message: communication };
@@ -424,6 +437,7 @@ export function parseFactoryConfig(value: unknown): ConfigResult {
       server,
       stages: settings.stages,
       tracker,
+      updates: { check: checkUpdates },
       validation: {
         qa: { commands: qaCommands ?? commands },
         work: { commands },
