@@ -1,11 +1,13 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { type Component, type TUI } from '@earendil-works/pi-tui';
+import { piAgentDir } from '../actions/review-rules.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import type { TicketProgress } from '../controller/progress.ts';
 import { factoryPaths } from '../controller/service.ts';
 import { runsCommands, type TicketStep } from '../controller/steps.ts';
 import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
+import { factoryPackage } from '../server/pi-extension.ts';
 import { FactoryAgentsView } from './agents-view.ts';
 import {
   createFactoryClient,
@@ -296,8 +298,21 @@ async function pickFeedback(
   return picked ?? false;
 }
 
+// True in the copy the factory binary installs into Pi's agent directory.
+declare const FACTORY_BUNDLED_EXTENSION: boolean | undefined;
+
 export default function factoryExtension(pi: ExtensionAPI): void {
   if (process.env['FACTORY_CHILD'] === '1') {
+    return;
+  }
+  // The binary's copy is global to the machine. Where Pi also loads
+  // factory-skills from a package (a pinned install, or a checkout someone is
+  // working on), that copy is the one meant here, so this one steps aside.
+  if (
+    typeof FACTORY_BUNDLED_EXTENSION === 'boolean' &&
+    FACTORY_BUNDLED_EXTENSION &&
+    factoryPackage({ agentDir: piAgentDir(process.env), cwd: process.cwd() }) !== null
+  ) {
     return;
   }
   publishStatus = (text) => {

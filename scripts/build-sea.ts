@@ -46,7 +46,10 @@ await build({
 const piExtension = path.join(dist, 'pi-extension.js');
 await build({
   bundle: true,
-  define: { FACTORY_BUILD_VERSION: JSON.stringify(sourceVersion(root)) },
+  define: {
+    FACTORY_BUILD_VERSION: JSON.stringify(sourceVersion(root)),
+    FACTORY_BUNDLED_EXTENSION: 'true',
+  },
   entryPoints: [path.join(root, 'src', 'extension', 'index.ts')],
   external: ['@earendil-works/*', 'typebox'],
   format: 'esm',
