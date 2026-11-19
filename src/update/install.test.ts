@@ -29,7 +29,7 @@ function release(content: string, sumOf = content): { calls: Array<string>; down
   };
 }
 
-const machine = { arch: 'arm64', platform: 'linux' };
+const machine = { arch: 'arm64', platform: 'linux', running: { schema: 8, version: '0.5.0' } };
 
 test('releases carry Linux arm64 and x64 binaries only', () => {
   assert.deepEqual(binaryAsset({ arch: 'x64', platform: 'linux' }), {
@@ -49,8 +49,16 @@ test('an update swaps the binary in and keeps the replaced one as factory.previo
   assert.equal(readFileSync(binary, 'utf8'), 'new binary');
   assert.equal(readFileSync(previousPath(binary), 'utf8'), 'old binary');
   assert.equal(previousPath(binary), path.join(dir, 'factory.previous'));
-  // The download directory is gone.
-  assert.deepEqual(readdirSync(dir).toSorted(), ['factory', 'factory.previous']);
+  // What factory.previous is, for a rollback; the download directory is gone.
+  assert.deepEqual(JSON.parse(readFileSync(`${previousPath(binary)}.json`, 'utf8')), {
+    schema: 8,
+    version: '0.5.0',
+  });
+  assert.deepEqual(readdirSync(dir).toSorted(), [
+    'factory',
+    'factory.previous',
+    'factory.previous.json',
+  ]);
 });
 
 test('a binary that fails its checksum is refused and nothing changes', async () => {

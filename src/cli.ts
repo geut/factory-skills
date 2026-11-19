@@ -50,12 +50,16 @@ async function main(argv: Array<string>): Promise<number> {
           binary: isSea() ? process.execPath : null,
           current: factoryVersion(),
           download: ghDownload,
+          factoryRoot: factoryPaths(process.cwd()).factoryRoot,
           gh: ghJson,
           platform: process.platform,
           server: client.serverRunning()
-            ? async (mode) => {
-                const reply = await client.update(mode);
-                return reply.kind === 'notice' ? { kind: 'text', text: '' } : reply;
+            ? {
+                rollback: (confirm) => client.rollback(confirm),
+                update: async (mode) => {
+                  const reply = await client.update(mode);
+                  return reply.kind === 'notice' ? { kind: 'text', text: '' } : reply;
+                },
               }
             : null,
         },

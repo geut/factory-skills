@@ -328,6 +328,64 @@
         }
       }
     },
+    "/v1/factory/rollback": {
+      "post": {
+        "operationId": "rollBackFactory",
+        "security": [
+          {
+            "bearer": [
+              "act"
+            ]
+          }
+        ],
+        "summary": "Roll back to the version the last update replaced",
+        "tags": [
+          "meta"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollBackFactory"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rollback restores the database; nothing changed until it is confirmed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryRollbackStarted"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "factory.previous is back in place, and a new server starts on it in a new Herdr pane once this one stops.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryRollbackStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "operationId": "listTickets",
@@ -2072,6 +2130,15 @@
           }
         }
       },
+      "RollBackFactory": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "description": "Restore the database backup the update made, losing what was recorded since.",
+            "type": "boolean"
+          }
+        }
+      },
       "StartTicket": {
         "anyOf": [
           {
@@ -2486,6 +2553,28 @@
           "message": {
             "type": "string",
             "description": "For a person: what happens next."
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "FactoryRollbackStarted": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "restarting",
+              "confirm"
+            ],
+            "description": "`restarting`: factory.previous is back in place and a new server is starting on it; `confirm`: the rollback restores the database, and `message` says what that loses: send it again with `confirm: true`."
+          },
+          "message": {
+            "type": "string",
+            "description": "For a person: what happens, or what to confirm."
           }
         },
         "required": [

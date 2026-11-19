@@ -13,7 +13,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { FakeRuntime } from '../runtime/fake.ts';
-import { openStateDatabase } from '../state/database.ts';
+import {
+  openStateDatabase,
+  SCHEMA_VERSION,
+  stateDatabasePath,
+  upgradeBackupPath,
+} from '../state/database.ts';
+import { writePreviousRecord } from '../update/rollback.ts';
 import { readServerLease } from './lease.ts';
 import { type RunningServer, serve } from './serve.ts';
 
@@ -177,7 +183,7 @@ test('an update installs the release, starts a server after this one, and hands 
     // The pane the restart opens runs `factory serve --after <instance>`.
     relaunch: async ({ after }) => {
       replacement.started = serve({
-        after,
+        ...(after === null ? {} : { after }),
         cwd,
         env,
         out: () => undefined,
@@ -229,4 +235,66 @@ test('a source run refuses to update itself', async () => {
   });
   assert.equal(response.status, 409);
   assert.match(((await response.json()) as { detail: string }).detail, /git pull/);
+});
+
+test('a rollback over the API asks first, then restores the backup once this server stopped', async () => {
+  const { cwd, env } = project();
+  const factoryRoot = path.join(cwd, '.factory');
+  const binary = path.join(cwd, 'factory');
+  writeFileSync(binary, 'binary 0.6.0');
+  chmodSync(binary, 0o755);
+  writeFileSync(`${binary}.previous`, 'binary 0.5.0');
+  writePreviousRecord(binary, { schema: SCHEMA_VERSION - 1, version: '0.5.0' });
+  const relaunched: Array<string | null> = [];
+  let restarted = false;
+  const old = await serve({
+    binary,
+    cwd,
+    env,
+    onRestarted: () => {
+      restarted = true;
+    },
+    out: () => undefined,
+    port: 0,
+    relaunch: async ({ after }) => {
+      relaunched.push(after);
+    },
+    releases,
+    runtime: fake,
+  });
+  if (old.kind !== 'ok') {
+    throw new Error(old.message);
+  }
+  servers.push(old.server);
+  // The backup an upgrade from the previous schema made, before anything
+  // this server records.
+  const databasePath = stateDatabasePath(factoryRoot);
+  const backup = upgradeBackupPath(databasePath, SCHEMA_VERSION - 1);
+  const db = openStateDatabase(factoryRoot);
+  db.exec(`VACUUM INTO '${backup}'`);
+  db.close();
+  const token = readFileSync(path.join(factoryRoot, 'local.token'), 'utf8').trim();
+  const rollBack = (body: unknown) =>
+    fetch(`${old.server.url}/v1/factory/rollback`, {
+      body: JSON.stringify(body),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      method: 'POST',
+    });
+
+  const asked = await rollBack({});
+  assert.equal(asked.status, 200);
+  assert.equal(((await asked.json()) as { kind: string }).kind, 'confirm');
+  assert.equal(readFileSync(binary, 'utf8'), 'binary 0.6.0');
+
+  const started = await rollBack({ confirm: true });
+  assert.equal(started.status, 202);
+  for (let tries = 0; tries < 200 && !restarted; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(restarted);
+  // The older binary may not know --after; the new pane waits for this
+  // process instead.
+  assert.deepEqual(relaunched, [null]);
+  assert.equal(readFileSync(binary, 'utf8'), 'binary 0.5.0');
+  assert.deepEqual(readFileSync(databasePath), readFileSync(backup));
 });

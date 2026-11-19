@@ -24,6 +24,8 @@ export type ParsedCommand =
   // `install` updates the factory, now or `when-idle`; `check` asks GitHub
   // now; `later` puts off the update on offer until a newer release.
   | { kind: 'update'; mode: 'check' | 'install' | 'later' | 'when-idle' }
+  // Back to factory.previous; `yes` confirms restoring the database.
+  | { kind: 'update'; mode: 'rollback'; yes: boolean }
   | { kind: 'invalid'; message: string };
 
 const FEEDBACK_USAGE =
@@ -80,7 +82,7 @@ export function parseFactoryCommand(args: string): ParsedCommand {
     return {
       kind: 'invalid',
       message:
-        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later|--when-idle]',
+        'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later|--when-idle|--rollback [--yes]]',
     };
   }
   const space = trimmed.indexOf(' ');
@@ -174,17 +176,21 @@ export function parseFactoryCommand(args: string): ParsedCommand {
           return { kind: 'update', mode: 'later' };
         case '--when-idle':
           return { kind: 'update', mode: 'when-idle' };
+        case '--rollback':
+          return { kind: 'update', mode: 'rollback', yes: false };
+        case '--rollback --yes':
+          return { kind: 'update', mode: 'rollback', yes: true };
         default:
           return {
             kind: 'invalid',
-            message: 'Usage: /factory update [--check|--later|--when-idle]',
+            message: 'Usage: /factory update [--check|--later|--when-idle|--rollback [--yes]]',
           };
       }
     default:
       return {
         kind: 'invalid',
         message:
-          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later|--when-idle]',
+          'Usage: /factory start|reply|retry|complete|feedback|stop|cancel|rerun|status <ticket> | /factory agents | /factory ticket | /factory update [--check|--later|--when-idle|--rollback [--yes]]',
       };
   }
 }

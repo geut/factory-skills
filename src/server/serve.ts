@@ -41,11 +41,12 @@ import {
 } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
-import { openStateDatabase } from '../state/database.ts';
+import { openStateDatabase, SCHEMA_VERSION, stateDatabasePath } from '../state/database.ts';
 import { createUpdateChecker } from '../update/checker.ts';
 import { binaryVersion, ghDownload, type Download } from '../update/install.ts';
 import { versionOf } from '../update/releases.ts';
 import { openServerPane, waitForHandoff } from '../update/restart.ts';
+import { lossSince, restoreDatabase } from '../update/rollback.ts';
 import { createUpdater } from '../update/updater.ts';
 import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
@@ -96,7 +97,8 @@ type ServeInput = {
   // Overrides FACTORY.json server.port; tests pass 0 for a free port.
   port?: number;
   // Opens the pane that runs the new server after an update; Herdr otherwise.
-  relaunch?: (input: { after: string }) => Promise<void>;
+  // `after` is null on a rollback, whose older binary may not know it.
+  relaunch?: (input: { after: string | null }) => Promise<void>;
   // Tests pass a stand-in for GitHub's releases list; gh otherwise.
   releases?: GhJson;
   // Tests pass a fake; the server builds the Herdr runtime otherwise.
@@ -329,7 +331,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   const binary = input.binary === undefined ? (isSea() ? process.execPath : null) : input.binary;
   const relaunch =
     input.relaunch ??
-    ((relaunched: { after: string }) =>
+    ((relaunched: { after: string | null }) =>
       openServerPane({
         after: relaunched.after,
         binary: binary ?? process.execPath,
@@ -338,6 +340,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
         factoryRoot,
         paneId: targetPaneId,
         run: defaultRunner,
+        waitPid: process.pid,
       }));
   const events = createEventHub(db);
   let document: Record<string, unknown> | null = null;
@@ -378,17 +381,31 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     binary,
     checker: updates,
     current: versionOf(factoryVersion()) ?? '0.0.0',
+    databasePath: stateDatabasePath(factoryRoot),
     download: input.download ?? ghDownload,
     factoryRoot,
     idle: () => factoryIsIdle(db),
+    loss: (backup) => lossSince({ backup, db }),
     now: () => new Date().toISOString(),
     platform: process.platform,
     report: input.out,
-    restart: async () => {
-      await relaunch({ after: instanceId });
+    restart: async ({ restore, rollback }) => {
+      await relaunch({ after: rollback ? null : instanceId });
       await close();
+      // With the database closed, before this process exits and the new
+      // server opens it.
+      if (restore !== null) {
+        try {
+          restoreDatabase({ backup: restore, databasePath: stateDatabasePath(factoryRoot) });
+        } catch (error: unknown) {
+          input.out(
+            `Could not restore ${restore}: ${messageOf(error)}. Copy it over ${stateDatabasePath(factoryRoot)} by hand, deleting state.sqlite-wal and state.sqlite-shm, before the new server can start.`,
+          );
+        }
+      }
       input.onRestarted?.();
     },
+    schema: SCHEMA_VERSION,
     version: binaryVersion,
   });
   const http = createServer(

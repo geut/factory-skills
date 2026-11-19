@@ -154,13 +154,23 @@ test('Pi reads the running server and its version, and none when it is gone', as
   client.close();
 });
 
-test('/factory update takes --check, --later, or --when-idle, and nothing else', () => {
+test('/factory update takes --check, --later, --when-idle, or --rollback, and nothing else', () => {
   assert.deepEqual(parseFactoryCommand('update'), { kind: 'update', mode: 'install' });
   assert.deepEqual(parseFactoryCommand('update --check'), { kind: 'update', mode: 'check' });
   assert.deepEqual(parseFactoryCommand('update --later'), { kind: 'update', mode: 'later' });
   assert.deepEqual(parseFactoryCommand('update --when-idle'), {
     kind: 'update',
     mode: 'when-idle',
+  });
+  assert.deepEqual(parseFactoryCommand('update --rollback'), {
+    kind: 'update',
+    mode: 'rollback',
+    yes: false,
+  });
+  assert.deepEqual(parseFactoryCommand('update --rollback --yes'), {
+    kind: 'update',
+    mode: 'rollback',
+    yes: true,
   });
   assert.equal(parseFactoryCommand('update now').kind, 'invalid');
 });
