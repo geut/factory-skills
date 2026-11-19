@@ -21,6 +21,7 @@ import {
   type FactoryCommands,
   type FactoryService,
 } from '../controller/service.ts';
+import { factoryIsIdle } from '../controller/store.ts';
 import { verifyGithubSignature, type CodeHost } from '../ports/code-host.ts';
 import { ghJson, type GhJson } from '../ports/gh.ts';
 import { githubCliClient, type GithubClient } from '../ports/github.ts';
@@ -42,7 +43,10 @@ import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { currentPrFormat, prFormatInUse } from '../stages/wrapup/pr-format.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { createUpdateChecker } from '../update/checker.ts';
+import { binaryVersion, ghDownload, type Download } from '../update/install.ts';
 import { versionOf } from '../update/releases.ts';
+import { openServerPane, waitForHandoff } from '../update/restart.ts';
+import { createUpdater } from '../update/updater.ts';
 import { factoryVersion } from '../version.ts';
 import { createAuthorizer, ensureLocalClient } from './clients.ts';
 import { writeEmbeddedSkills } from './embedded-skills.ts';
@@ -69,18 +73,30 @@ export type ServeResult =
   | { kind: 'ok'; server: RunningServer };
 
 type ServeInput = {
+  // The instance this server replaces: it waits for that server to hand back
+  // the lease (an update's restart).
+  after?: string;
+  // The running binary, or null for a source run; the single executable's
+  // own path otherwise. Tests pass a stand-in.
+  binary?: string | null;
   // Tests pass stand-ins; the server uses the gh CLI otherwise.
   codeHost?: () => CodeHost;
   cwd: string;
+  // Tests pass a stand-in for downloading a release; gh otherwise.
+  download?: Download;
   env: NodeJS.ProcessEnv;
   github?: GithubClient;
   // Tests pass a stand-in; a Linear tracker uses the SDK otherwise.
   linear?: TrackerClients['linear'];
   // Called when the server loses its lease and has shut itself down.
   onLost?: (message: string) => void;
+  // Called when an update started a new server and this one has shut down.
+  onRestarted?: () => void;
   out: (line: string) => void;
   // Overrides FACTORY.json server.port; tests pass 0 for a free port.
   port?: number;
+  // Opens the pane that runs the new server after an update; Herdr otherwise.
+  relaunch?: (input: { after: string }) => Promise<void>;
   // Tests pass a stand-in for GitHub's releases list; gh otherwise.
   releases?: GhJson;
   // Tests pass a fake; the server builds the Herdr runtime otherwise.
@@ -278,6 +294,29 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     return { kind: 'error', message: messageOf(error) };
   }
 
+  // After an update, the server being replaced hands back the lease as it stops.
+  const { after } = input;
+  if (after !== undefined) {
+    const handedOver = await waitForHandoff({
+      held: () => {
+        const lease = readServerLease(db);
+        return (
+          lease !== null &&
+          lease.instanceId === after &&
+          leaseIsLive(lease, new Date().toISOString())
+        );
+      },
+    });
+    if (!handedOver) {
+      db.close();
+      return {
+        kind: 'error',
+        message:
+          'The server being replaced did not stop within a minute; stop it and run factory serve.',
+      };
+    }
+  }
+
   // Checked before binding so a second server reports the first, not a busy
   // port. Acquiring the lease below is the check that holds under a race.
   const existing = readServerLease(db);
@@ -287,6 +326,19 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   }
 
   const instanceId = randomUUID();
+  const binary = input.binary === undefined ? (isSea() ? process.execPath : null) : input.binary;
+  const relaunch =
+    input.relaunch ??
+    ((relaunched: { after: string }) =>
+      openServerPane({
+        after: relaunched.after,
+        binary: binary ?? process.execPath,
+        codeRoot,
+        env: input.env,
+        factoryRoot,
+        paneId: targetPaneId,
+        run: defaultRunner,
+      }));
   const events = createEventHub(db);
   let document: Record<string, unknown> | null = null;
   // The router listens before the service exists; commands wait for it.
@@ -321,6 +373,24 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     gh: input.releases ?? ghJson,
     now: () => new Date().toISOString(),
   });
+  const updater = createUpdater({
+    arch: process.arch,
+    binary,
+    checker: updates,
+    current: versionOf(factoryVersion()) ?? '0.0.0',
+    download: input.download ?? ghDownload,
+    factoryRoot,
+    idle: () => factoryIsIdle(db),
+    now: () => new Date().toISOString(),
+    platform: process.platform,
+    report: input.out,
+    restart: async () => {
+      await relaunch({ after: instanceId });
+      await close();
+      input.onRestarted?.();
+    },
+    version: binaryVersion,
+  });
   const http = createServer(
     createRouter({
       authorize: createAuthorizer(db, () => new Date().toISOString()),
@@ -344,6 +414,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
             ? linearInventory(configured, input.env, linear)
             : null;
         },
+        updater,
         updates,
         webhooks: {
           pullRequestChanged: (pullRequest) => ready().pullRequestChanged(pullRequest),
@@ -434,6 +505,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
       clearInterval(timers.sync);
     }
     updates.close();
+    updater.close();
     events.close();
     await running.stop();
     await closeHttp(http);
@@ -484,6 +556,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
   timers.sync = setInterval(syncPullRequests, minutes * 60_000);
   syncPullRequests();
   updates.start();
+  updater.start();
   input.out(`Factory server for ${codeRoot} listening on ${url}`);
   return { kind: 'ok', server: { close, instanceId, url } };
 }

@@ -2232,6 +2232,7 @@ test('the stats routes answer for the factory, and the export is NDJSON', async 
         pullRequestFormat: null,
         saveCommunication: null,
         trackerInventory: null,
+        updater: null,
         updates: null,
         webhooks: null,
       },

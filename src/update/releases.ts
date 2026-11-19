@@ -15,6 +15,11 @@ const GithubRelease = z.object({
   tag_name: z.string(),
 });
 
+// A release's page on GitHub.
+export function releaseUrl(version: string): string {
+  return `https://github.com/${RELEASES_REPO}/releases/tag/v${version}`;
+}
+
 export type Release = { name: string; notesUrl: string; version: string };
 
 // `0.5.0` from `v0.5.0`, `0.5.0+1ddf4f6`, or `0.5.0`; null for anything else.

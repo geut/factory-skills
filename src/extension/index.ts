@@ -8,6 +8,7 @@ import { runsCommands, type TicketStep } from '../controller/steps.ts';
 import type { TicketDetail } from '../controller/view.ts';
 import { contextLabel } from '../runtime/session-activity.ts';
 import { factoryPackage } from '../server/pi-extension.ts';
+import { updateNoticeText, type UpdateNotice } from '../update/notice.ts';
 import { FactoryAgentsView } from './agents-view.ts';
 import {
   createFactoryClient,
@@ -18,12 +19,7 @@ import {
 import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
-import {
-  renderUpdateFooter,
-  updateNoticeRenderer,
-  updateNoticeText,
-  type UpdateNotice,
-} from './update-notice.ts';
+import { renderUpdateFooter, updateNoticeRenderer } from './update-notice.ts';
 import {
   readChildActivity,
   renderFactoryWidget,
@@ -74,9 +70,7 @@ function refreshUpdate(service: FactoryClient): void {
     return;
   }
   const footer =
-    update === null
-      ? undefined
-      : renderUpdateFooter({ later: update.later, latest: update.latest, theme: ctx.ui.theme });
+    update === null ? undefined : renderUpdateFooter({ ...update, theme: ctx.ui.theme });
   if (footer !== shownFooter) {
     shownFooter = footer;
     ctx.ui.setStatus('factory-update', footer);
@@ -404,7 +398,7 @@ export default function factoryExtension(pi: ExtensionAPI): void {
         });
         return;
       }
-      if (parsed.kind === 'update' && parsed.mode !== 'install') {
+      if (parsed.kind === 'update') {
         const service = serviceFor(ctx.cwd);
         const reply = await service.update(parsed.mode);
         if (reply.kind === 'notice') {

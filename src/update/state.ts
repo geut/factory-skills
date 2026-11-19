@@ -16,10 +16,15 @@ export const UpdateState = z.object({
   // The version the server ran at the last check, which Pi shows as the
   // version this factory runs.
   current: z.string().nullable(),
+  // A newer version than the server runs, already in the binary on disk:
+  // another factory sharing it updated it, so a restart is all it takes.
+  installed: z.string().nullable().default(null),
   // The update available, or null when this factory runs the newest.
   latest: ReleaseState.nullable(),
   // The version the owner said later to: no more notices for it.
   later: z.string().nullable(),
+  // The owner asked to update once nothing runs or is queued.
+  pending: z.boolean().default(false),
 });
 
 export type UpdateState = z.infer<typeof UpdateState>;
@@ -28,8 +33,10 @@ export const EMPTY_UPDATE_STATE: UpdateState = {
   announcedAt: null,
   checkedAt: null,
   current: null,
+  installed: null,
   later: null,
   latest: null,
+  pending: false,
 };
 
 export function updateStatePath(factoryRoot: string): string {

@@ -15,6 +15,7 @@ export const problemTypes = {
   umbrella_issue: { status: 422, title: 'Umbrella issue' },
   unauthorized: { status: 401, title: 'Unauthorized' },
   unsupported_media_type: { status: 415, title: 'Unsupported media type' },
+  update_failed: { status: 502, title: 'Update failed' },
   validation_error: { status: 400, title: 'Validation error' },
 } as const;
 

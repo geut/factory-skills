@@ -134,15 +134,19 @@ test('Pi sees the update the server found, checks again, and puts it off', async
   assert.equal(client.updateState().update?.later, true);
   assert.match(
     await client.command(parseFactoryCommand('update')),
-    /cannot install updates itself yet/,
+    /runs from source; update it with git pull/,
   );
   client.close();
 });
 
-test('/factory update takes --check or --later, and nothing else', () => {
+test('/factory update takes --check, --later, or --when-idle, and nothing else', () => {
   assert.deepEqual(parseFactoryCommand('update'), { kind: 'update', mode: 'install' });
   assert.deepEqual(parseFactoryCommand('update --check'), { kind: 'update', mode: 'check' });
   assert.deepEqual(parseFactoryCommand('update --later'), { kind: 'update', mode: 'later' });
+  assert.deepEqual(parseFactoryCommand('update --when-idle'), {
+    kind: 'update',
+    mode: 'when-idle',
+  });
   assert.equal(parseFactoryCommand('update now').kind, 'invalid');
 });
 
