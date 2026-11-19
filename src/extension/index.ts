@@ -19,6 +19,7 @@ import {
 } from './factory-client.ts';
 import { FactoryFeedbackPicker } from './feedback-picker.ts';
 import {
+  createVersionAsks,
   reloadNeeded,
   reloadNoticeRenderer,
   reloadNoticeText,
@@ -67,10 +68,9 @@ let shownFooter: string | undefined;
 let publishReload: (notice: ReloadNotice) => void = (notice) => {
   latest?.ui.notify(reloadNoticeText(notice), 'warning');
 };
-// The server instance whose version this session last compared, so it asks
-// again only after a restart; undefined until the first look.
-let seenInstance: string | null | undefined;
-let askingVersion = false;
+// Asks the server its version once per instance; a failed ask is tried
+// again once a minute, not on every poll.
+const versionAsks = createVersionAsks({ askAgainMs: 60_000, now: () => Date.now() });
 // The server version this session already posted the reload card for.
 let reloadPostedFor: string | null = null;
 
@@ -78,21 +78,16 @@ let reloadPostedFor: string | null = null;
 // extension it loaded at its start: post the reload card once per version, and
 // keep a footer line until /reload. With no server to ask, stay quiet.
 function refreshReload(service: FactoryClient): void {
-  const instance = service.serverInstance();
-  if (instance === seenInstance || askingVersion) {
+  if (!versionAsks.shouldAsk(service.serverInstance())) {
     return;
   }
-  seenInstance = instance;
-  if (instance === null) {
-    return;
-  }
-  askingVersion = true;
   void service
     .serverVersion()
     .then((server) => {
+      // A server that is up but cannot say (a bad FACTORY.json, a revoked
+      // token, an older server) is asked again in a minute, or on a restart.
+      versionAsks.answered(server !== null);
       if (server === null) {
-        // Asked again on the next look.
-        seenInstance = undefined;
         return;
       }
       const notice = reloadNeeded({ pi: factoryVersion(), server });
@@ -108,8 +103,8 @@ function refreshReload(service: FactoryClient): void {
         );
       }
     })
-    .finally(() => {
-      askingVersion = false;
+    .catch(() => {
+      versionAsks.answered(false);
     });
 }
 
@@ -264,7 +259,7 @@ function watch(service: FactoryClient): void {
   // only; the session that was running then posted its card.
   seenAnnounced = service.updateState().announcedAt;
   shownFooter = undefined;
-  seenInstance = undefined;
+  versionAsks.reset();
   refreshUpdate(service);
   refreshReload(service);
   refreshWidget(service);

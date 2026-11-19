@@ -20,6 +20,42 @@ export function reloadNeeded(input: { pi: string; server: string }): ReloadNotic
   return pi === null || server === null || pi === server ? null : { pi, server };
 }
 
+// When to ask the server its version: once per server instance (a restart
+// is a new one), one ask at a time, and after an ask that failed, again only
+// once `askAgainMs` has passed, not on every poll.
+export function createVersionAsks(input: { askAgainMs: number; now: () => number }): {
+  answered: (ok: boolean) => void;
+  reset: () => void;
+  shouldAsk: (instance: string | null) => boolean;
+} {
+  let seen: string | null | undefined;
+  let asking = false;
+  let askAgainAt: number | null = null;
+  return {
+    answered: (ok) => {
+      asking = false;
+      askAgainAt = ok ? null : input.now() + input.askAgainMs;
+    },
+    reset: () => {
+      seen = undefined;
+      askAgainAt = null;
+    },
+    shouldAsk: (instance) => {
+      if (asking) {
+        return false;
+      }
+      const retrying = askAgainAt !== null && input.now() >= askAgainAt;
+      if (instance === seen && !retrying) {
+        return false;
+      }
+      seen = instance;
+      askAgainAt = null;
+      asking = instance !== null;
+      return asking;
+    },
+  };
+}
+
 export function reloadNoticeText(notice: ReloadNotice): string {
   return `The factory server is on ${notice.server}; this Pi runs ${notice.pi}. Run /reload`;
 }

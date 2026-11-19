@@ -23,7 +23,7 @@ import {
   type TicketDetail,
 } from '../controller/view.ts';
 import { localTokenPath } from '../server/clients.ts';
-import { leaseIsLive, readServerLease } from '../server/lease.ts';
+import { leaseIsLive, readServerLease, type ServerLease } from '../server/lease.ts';
 import { openStateDatabase, stateDatabasePath } from '../state/database.ts';
 import { updateView, type UpdateView } from '../update/checker.ts';
 import { UpdateNotice, updateNoticeText } from '../update/notice.ts';
@@ -127,9 +127,12 @@ export function createFactoryClient(input: {
     return openError ?? noServerMessage(input.factoryRoot);
   }
 
-  function serverUrl(open: DatabaseSync): string | null {
-    const lease = readServerLease(open);
-    return lease !== null && leaseIsLive(lease, now()) ? lease.url : null;
+  // The lease of the server running now, or null: one read for every
+  // question about the server.
+  function liveLease(): ServerLease | null {
+    const open = database();
+    const lease = open === null ? null : readServerLease(open);
+    return lease !== null && leaseIsLive(lease, now()) ? lease : null;
   }
 
   async function post(
@@ -206,8 +209,7 @@ export function createFactoryClient(input: {
   // server's memory. Empty when the server cannot say: the steps still show
   // from the database, without their commands.
   async function stepCommands(): Promise<Map<string, LiveCommand>> {
-    const open = database();
-    const url = open === null ? null : serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return new Map();
     }
@@ -248,7 +250,7 @@ export function createFactoryClient(input: {
     if (open === null) {
       return unavailable();
     }
-    const url = serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return noServerMessage(input.factoryRoot);
     }
@@ -284,8 +286,7 @@ export function createFactoryClient(input: {
   }
 
   async function serverVersion(): Promise<string | null> {
-    const open = database();
-    const url = open === null ? null : serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return null;
     }
@@ -367,7 +368,7 @@ export function createFactoryClient(input: {
       const reply = await update(parsed.mode);
       return reply.kind === 'notice' ? updateNoticeText(reply.notice) : reply.text;
     }
-    const url = serverUrl(open);
+    const url = liveLease()?.url ?? null;
     if (url === null) {
       return noServerMessage(input.factoryRoot);
     }
@@ -464,7 +465,7 @@ export function createFactoryClient(input: {
       if (open === null) {
         return unavailable();
       }
-      const url = serverUrl(open);
+      const url = liveLease()?.url ?? null;
       if (url === null) {
         return noServerMessage(input.factoryRoot);
       }
@@ -489,18 +490,8 @@ export function createFactoryClient(input: {
       const open = database();
       return open === null ? [] : listRunningChildren(open);
     },
-    serverInstance: () => {
-      const open = database();
-      if (open === null) {
-        return null;
-      }
-      const lease = readServerLease(open);
-      return lease !== null && leaseIsLive(lease, now()) ? lease.instanceId : null;
-    },
-    serverRunning: () => {
-      const open = database();
-      return open !== null && serverUrl(open) !== null;
-    },
+    serverInstance: () => liveLease()?.instanceId ?? null,
+    serverRunning: () => liveLease() !== null,
     serverVersion,
     status: (ref) => {
       const open = database();
