@@ -40,7 +40,9 @@ export function updateView(state: UpdateState, current: string): UpdateView | nu
       pending: state.pending,
     };
   }
-  return latest === null
+  // A server already on the newest release, as after an update's restart,
+  // has nothing to offer.
+  return latest === null || compareVersions(latest.version, current) <= 0
     ? null
     : {
         current,
@@ -83,7 +85,17 @@ export function createUpdateChecker(input: {
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  // Never rejects: the daily check runs on a timer, where an error would end
+  // the server.
   async function run(): Promise<CheckOutcome> {
+    try {
+      return await attempt();
+    } catch (error: unknown) {
+      return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async function attempt(): Promise<CheckOutcome> {
     if (!input.enabled()) {
       // Pi stops showing what an earlier check found.
       const state = readUpdateState(factoryRoot);
@@ -137,12 +149,15 @@ export function createUpdateChecker(input: {
         timer = null;
       }
     },
+    // Puts off the update on offer: the version the view shows, which may be
+    // the one installed on disk rather than the last check's.
     later: () => {
       const state = readUpdateState(factoryRoot);
-      if (state.latest === null) {
+      const offered = updateView(state, current);
+      if (offered === null) {
         return null;
       }
-      const next = { ...state, later: state.latest.version };
+      const next = { ...state, later: offered.latest };
       writeUpdateState(factoryRoot, next);
       return updateView(next, current);
     },

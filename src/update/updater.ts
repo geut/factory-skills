@@ -86,7 +86,21 @@ export function createUpdater(input: {
     }
   }
 
+  // Never rejects: a pending update runs from the poll, where an error would
+  // end the server. Whatever fails is a failed update.
   async function update(request: { whenIdle: boolean }): Promise<UpdateResult> {
+    try {
+      return await attempt(request);
+    } catch (error: unknown) {
+      busy = false;
+      return {
+        kind: 'failed',
+        message: `The update failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  async function attempt(request: { whenIdle: boolean }): Promise<UpdateResult> {
     if (binary === null) {
       return { kind: 'refused', message: SOURCE_RUN_MESSAGE };
     }
@@ -153,21 +167,28 @@ export function createUpdater(input: {
     }
   }
 
+  // One poll: look at the binary on disk, then run a pending update once
+  // idle. A background poll never ends the server: anything that fails is
+  // reported, and the next poll tries again.
+  async function poll(): Promise<void> {
+    await probe();
+    if (closed || busy || !readUpdateState(factoryRoot).pending || !input.idle()) {
+      return;
+    }
+    const result = await update({ whenIdle: false });
+    input.report(result.message);
+    // A failed update waits for the owner rather than retrying every poll.
+    if (result.kind !== 'restarting') {
+      save({ pending: false });
+    }
+  }
+
   function tick(): void {
     if (closed || busy) {
       return;
     }
-    void probe().then(() => {
-      if (closed || busy || !readUpdateState(factoryRoot).pending || !input.idle()) {
-        return;
-      }
-      void update({ whenIdle: false }).then((result) => {
-        input.report(result.message);
-        // A failed update waits for the owner rather than retrying every poll.
-        if (result.kind !== 'restarting') {
-          save({ pending: false });
-        }
-      });
+    poll().catch((error: unknown) => {
+      input.report(`Update poll failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 

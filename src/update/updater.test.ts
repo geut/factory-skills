@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { createUpdateChecker } from './checker.ts';
 import type { Download } from './install.ts';
-import { readUpdateState } from './state.ts';
+import { readUpdateState, writeUpdateState } from './state.ts';
 import { createUpdater, SOURCE_RUN_MESSAGE } from './updater.ts';
 
 const download: Download = async ({ asset, dir }) => {
@@ -20,6 +20,7 @@ const download: Download = async ({ asset, dir }) => {
 function setUp(
   input: {
     binary?: boolean;
+    idle?: () => boolean;
     restart?: () => Promise<void>;
     tags?: Array<string>;
     version?: () => Promise<string | null>;
@@ -56,7 +57,7 @@ function setUp(
     current: '0.5.0',
     download,
     factoryRoot,
-    idle: () => world.idle,
+    idle: input.idle ?? (() => world.idle),
     now,
     platform: 'linux',
     pollMs: 60_000,
@@ -183,9 +184,67 @@ test('a server restarted on the installed version offers nothing', async () => {
   const { checker, factoryRoot } = setUp({ tags: ['v0.5.0'] });
   await checker.check();
   const state = readUpdateState(factoryRoot);
-  writeFileSync(
-    path.join(factoryRoot, 'runtime', 'update.json'),
-    JSON.stringify({ ...state, installed: '0.5.0' }),
-  );
+  writeUpdateState(factoryRoot, { ...state, installed: '0.5.0' });
   assert.equal(checker.view(), null);
+});
+
+test('after an update restarts the server, the release it runs is not offered again', async () => {
+  const { binary, checker, factoryRoot, updater } = setUp({ tags: ['v0.5.0'] });
+  // What the server on 0.4.x recorded before it updated to 0.5.0.
+  writeUpdateState(factoryRoot, {
+    announcedAt: now(),
+    checkedAt: now(),
+    current: '0.4.0',
+    installed: '0.5.0',
+    later: null,
+    latest: { name: 'v0.5.0', notesUrl: 'https://example.test', version: '0.5.0' },
+    pending: false,
+  });
+  assert.equal(checker.view(), null);
+  // Updating asks GitHub again rather than reinstalling the running release.
+  assert.equal((await updater.update({ whenIdle: false })).kind, 'none');
+  assert.equal(readFileSync(binary, 'utf8'), 'old binary');
+});
+
+test('later puts off a newer binary another factory installed', async () => {
+  const { binary, checker, updater, world } = setUp({ tags: ['v0.5.0'] });
+  await checker.check();
+  world.onDisk = '0.6.0';
+  writeFileSync(binary, 'binary from another factory');
+  await updater.probe();
+  const putOff = checker.later();
+  assert.deepEqual(
+    { later: putOff?.later, latest: putOff?.latest },
+    { later: true, latest: '0.6.0' },
+  );
+  assert.equal(checker.view()?.later, true);
+});
+
+test('a background poll that fails is reported, and never ends the server', async () => {
+  const { factoryRoot, updater, world } = setUp({
+    idle: () => {
+      throw new Error('database is locked');
+    },
+  });
+  writeUpdateState(factoryRoot, { ...readUpdateState(factoryRoot), pending: true });
+  updater.start();
+  for (let tries = 0; tries < 50 && world.reports.length === 0; tries += 1) {
+    await settle();
+  }
+  updater.close();
+  assert.deepEqual(world.reports, ['Update poll failed: database is locked']);
+});
+
+test('an update that throws is a failed update, not a rejection', async () => {
+  const { updater } = setUp({
+    idle: () => {
+      throw new Error('database is locked');
+    },
+  });
+  assert.deepEqual(await updater.update({ whenIdle: true }), {
+    kind: 'failed',
+    message: 'The update failed: database is locked',
+  });
+  // Nothing is left marked as under way.
+  assert.equal((await updater.update({ whenIdle: true })).kind, 'failed');
 });

@@ -109,7 +109,15 @@ export async function installRelease(input: {
         message: `factory ${input.version} came without its checksum: ${messageOf(error)}`,
       };
     }
-    const actual = await sha256Of(downloaded);
+    let actual: string;
+    try {
+      actual = await sha256Of(downloaded);
+    } catch (error: unknown) {
+      return {
+        kind: 'error',
+        message: `factory ${input.version} did not download whole: ${messageOf(error)}`,
+      };
+    }
     if (actual !== expected.toLowerCase()) {
       return {
         kind: 'error',

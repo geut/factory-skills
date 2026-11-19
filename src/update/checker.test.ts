@@ -140,3 +140,19 @@ test('a restart soon after a check does not ask GitHub again', async () => {
   restarted.close();
   assert.equal(calls, 0);
 });
+
+test('a check that throws anywhere is a failed check, so the daily timer never ends the server', async () => {
+  const checker = createUpdateChecker({
+    current: '0.4.0',
+    enabled: () => {
+      throw new Error('FACTORY.json is unreadable');
+    },
+    factoryRoot: mkdtempSync(path.join(tmpdir(), 'factory-update-')),
+    gh: newest,
+    now: () => '2026-11-19T10:00:00.000Z',
+  });
+  assert.deepEqual(await checker.check(), {
+    kind: 'failed',
+    message: 'FACTORY.json is unreadable',
+  });
+});
