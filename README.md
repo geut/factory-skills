@@ -80,7 +80,7 @@ The wrap-up agent returns the `factory.wrapup.v2` handoff. The controller keeps 
 - `## Issue checklist` has one line per open checklist item of the ticket's issue, `B1`..`Bn`: `met` cites a task criterion (`Task 01 AC2`) that review verified or QA's test plan covers, or a worktree file, and is refused while an open review finding, minor included, names that criterion; `not_met` gives a reason. `## Decisions` is `none` or bullet points;
 - every heading is present; `## Files` lists every changed path and no other; `## Tests` names the `validation.work.commands`; `## Merge commands` holds a pull-request URL or commands with the real worktree and branch;
 - wrap-up changed no product code: a change it makes must be documentation, or a generated artifact listed in `validation.wrapup.generated`, and must be named in `## Files`;
-- in the factory root only `CONTEXT.md`, `PRD.md`, and `learnings/` may change; no `wrapup.md` or `visuals/`. OS metadata (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`), which a host's file browser can write through a mounted repository, is never compared, here or among the worktree's untracked files, and an untracked one is not part of the work diff;
+- in the factory root only `CONTEXT.md`, `PRD.md`, and `learnings/` may change; no `wrapup.md` or `visuals/`. Other tickets' directories, the controller's own files (`db/`, `runtime/`, `local.token`, …), and validators' artifacts in [`validation-logs/`](#factory-root) are not compared, so tickets running beside this one never fail its wrap-up; a wrap-up paused on such a change before completes on its stored baseline. OS metadata (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`), which a host's file browser can write through a mounted repository, is never compared, here or among the worktree's untracked files, and an untracked one is not part of the work diff;
 - nothing was merged, the base branch did not move, and the branch still exists;
 - with `codeHost.pullRequests` off, nothing was committed or pushed, and `## Merge commands` prints the commands;
 - with it on, wrap-up commits the approved work on the ticket branch. Its commits sit on top of the commit wrap-up started from, with no merge and no rewritten history, and hold only paths `## Files` lists. Once anything is committed the worktree must be clean, and with a clean worktree the pull request must exist for the branch with the local HEAD as its head and the title `codeHost.pullRequestTitle` gives. If committing fails, the worktree stays uncommitted, nothing is pushed, and the commands are printed instead.
@@ -436,8 +436,11 @@ The server refuses to start without the key, or when a team, label, project, or 
     ├── db/state.sqlite
     ├── tickets/<slug>/
     ├── worktrees/<slug>/
+    ├── validation-logs/
     └── sessions/
 ```
+
+`validation-logs/` is where project validators keep their run artifacts: logs, and pointers to the latest one, such as `<ticket>.latest`. Tickets run in parallel under one factory root, so one ticket's validation may write there while another ticket wraps up. Wrap-up never compares it, only `validation-logs/` at the factory root itself: a log anywhere else under `.factory/`, a ticket's own directory included, is still a change wrap-up must not make. The factory never writes or cleans it.
 
 `FACTORY.json` example:
 
