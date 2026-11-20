@@ -461,6 +461,8 @@ test('a malformed or missing selection is corrected before any command runs', as
 });
 
 test('parallel validations of different tickets each give their commands only their own selection', async () => {
+  // Set when Factory validates this repository with a selection.
+  const inherited = process.env[SELECTION_ENV];
   const [one, two, none] = await Promise.all([
     validateReply('## Validation selection\n\n- `tests/filter.test.ts`: ticket one\n'),
     validateReply('## Validation selection\n\n- `README.md`: ticket two\n'),
@@ -475,8 +477,8 @@ test('parallel validations of different tickets each give their commands only th
     version: 1,
   });
   assert.equal(none.seen, 'unset');
-  // The server's own environment never carries a selection.
-  assert.equal(process.env[SELECTION_ENV], undefined);
+  // The server's own environment is never changed.
+  assert.equal(process.env[SELECTION_ENV], inherited);
 });
 
 test('every work command is told where to keep its logs, and the directory is there', async () => {

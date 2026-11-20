@@ -16,15 +16,16 @@ export function validationLogsDir(factoryRoot: string): string {
   return path.join(factoryRoot, VALIDATION_LOGS);
 }
 
-// Makes the logs directory, so a validator can write to it at once. Only in
-// a factory root that exists; a validator that needs it and finds none fails
-// on its own.
+// Makes the logs directory, so a validator can write to it at once: private
+// to the owner, as logs may hold secrets a test printed. A directory that is
+// already there keeps its mode. Only in a factory root that exists; a
+// validator that needs it and finds none fails on its own.
 export function ensureValidationLogs(factoryRoot: string): void {
   if (!existsSync(factoryRoot)) {
     return;
   }
   try {
-    mkdirSync(validationLogsDir(factoryRoot), { recursive: true });
+    mkdirSync(validationLogsDir(factoryRoot), { mode: 0o700, recursive: true });
   } catch {
     // A root the server cannot write: the validator reports it.
   }
