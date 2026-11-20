@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../../config.ts';
-import { addTasks, task } from '../../stories/fixtures.ts';
+import { addTasks, run, session, task } from '../../stories/fixtures.ts';
 import { validationContext } from '../../validation/fixture.ts';
 import type { ValidationCheck } from '../../validation/report.ts';
+import { SELECTION_ENV } from '../../validation/selection.ts';
 import { collectWorkDiff } from '../../validation/work.ts';
 import { qaPaths } from './criteria.ts';
 import { qaBaseline, qaValidator } from './effects.ts';
@@ -77,6 +78,8 @@ function validate(
     // Collects the commands the validator reports as it starts each one.
     reported?: Array<string>;
     typecheck?: WorkCommand;
+    // The reply of the task's last work run.
+    workReply?: string;
   },
 ) {
   const factoryDir = temp('factory-qa-ticket-');
@@ -118,6 +121,9 @@ function validate(
             ? work
             : work.filter((item) => input.again?.includes(item.name));
         finished.baseline = input.baseline === false ? null : baseline;
+        if (input.workReply !== undefined) {
+          run(snapshot, session(snapshot, 'work', '01'), { output: input.workReply });
+        }
       },
       {
         reportCommand: (progress) => {
@@ -213,4 +219,35 @@ test('QA reports each command as it starts, its own then the validation ones, on
   const reported: Array<string> = [];
   await validate(worktree(), { again: ['lint'], reported });
   assert.deepEqual(reported, ['e2e 1/4', 'test 2/4', 'check 3/4', 'lint 4/4']);
+});
+
+// A command that writes the selection it was given to `file`.
+function recorder(name: string, file: string): WorkCommand {
+  return {
+    argv: [
+      'node',
+      '-e',
+      `require('node:fs').writeFileSync(${JSON.stringify(file)}, process.env.${SELECTION_ENV} ?? 'unset')`,
+    ],
+    name,
+    timeoutMs: 10_000,
+  };
+}
+
+test('the work commands QA runs again get the task’s latest work selection; QA’s own do not', async () => {
+  const cwd = worktree();
+  mkdirSync(path.join(cwd, 'tests'));
+  writeFileSync(path.join(cwd, 'tests/app.test.ts'), 'test\n');
+  const out = temp('factory-qa-seen-');
+  const report = await validate(cwd, {
+    e2e: recorder('e2e', path.join(out, 'e2e.txt')),
+    typecheck: recorder('check', path.join(out, 'check.txt')),
+    workReply: '## Validation selection\n\n- `tests/app.test.ts`: the app shows 2\n',
+  });
+  assert.equal(report.status, 'passed', JSON.stringify(report));
+  assert.deepEqual(JSON.parse(readFileSync(path.join(out, 'check.txt'), 'utf8')), {
+    tests: [{ path: 'tests/app.test.ts', reason: 'the app shows 2' }],
+    version: 1,
+  });
+  assert.equal(readFileSync(path.join(out, 'e2e.txt'), 'utf8'), 'unset');
 });

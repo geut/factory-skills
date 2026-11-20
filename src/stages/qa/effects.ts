@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { WorkCommand } from '../../config.ts';
 import type { CommandReporter } from '../../controller/command-progress.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
+import type { FactorySnapshot } from '../../domain.ts';
 import { sha256 } from '../../hash.ts';
 import {
   errorReport,
@@ -11,6 +12,7 @@ import {
   type ValidationCheck,
   type Validator,
 } from '../../validation/report.ts';
+import { selectionEnv, taskSelection, type SelectedTest } from '../../validation/selection.ts';
 import {
   collectWorkDiff,
   commandCheck,
@@ -151,6 +153,8 @@ async function validateQa(input: {
   commands: ReturnType<typeof qaSettings>['commands'];
   factoryDir: string;
   reportCommand: CommandReporter;
+  // The task's latest work selection, for the validation commands.
+  selection: Array<SelectedTest>;
   taskFile: string;
   taskId: string;
   validationCommands: Array<WorkCommand>;
@@ -253,7 +257,7 @@ async function validateQa(input: {
       index: input.commands.length + index + 1,
       total,
     });
-    const result = await runCommand(command, input.worktree);
+    const result = await runCommand(command, input.worktree, selectionEnv(input.selection));
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
     }
@@ -292,6 +296,12 @@ async function validateQa(input: {
   });
 }
 
+// What work last proposed for this task; work validation already checked it.
+function latestSelection(snapshot: FactorySnapshot, taskId: string): Array<SelectedTest> {
+  const selection = taskSelection(snapshot, taskId);
+  return selection.kind === 'listed' ? selection.tests : [];
+}
+
 export const qaValidator: Validator<'qa'> = {
   leaseMs: (snapshot) =>
     validationLeaseMs([
@@ -319,6 +329,7 @@ export const qaValidator: Validator<'qa'> = {
       commands: qaSettings(snapshot.execution.policy).commands,
       factoryDir: snapshot.execution.factoryDir,
       reportCommand: deps.reportCommand,
+      selection: latestSelection(snapshot, task.taskId),
       taskFile: task.taskFile,
       taskId: task.taskId,
       validationCommands: qaValidationCommands(snapshot.execution.policy),
