@@ -99,6 +99,17 @@ function linear(): Linear {
     },
     inventory: async () => inventory,
     issue: async (idOrKey) => find(idOrKey),
+    linked: async (key) => {
+      throw new Error(`Entity not found: Issue ${key}`);
+    },
+    links: async (issueId) => ({
+      children: [],
+      description: find(issueId).description,
+      identifier: find(issueId).identifier,
+      inverseRelations: [],
+      parent: null,
+      relations: [],
+    }),
     setDescription: async () => undefined,
     setState: async (issueId, stateId) => {
       const current = find(issueId);

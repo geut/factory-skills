@@ -7,8 +7,12 @@ import {
   childrenQuery,
   commentQuery,
   issueQuery,
+  linkedQuery,
+  linksQuery,
   type LinearBacklogIssue,
   type LinearIssue,
+  type LinearLinked,
+  type LinearLinks,
   type LinearLabel,
   type LinearQuery,
   type LinearRelated,
@@ -23,7 +27,15 @@ import {
   teamsQuery,
 } from './linear-graphql.ts';
 import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
-import type { BacklogIssue, IssueLink, Resolved, Tracker, TrackerIssue } from './tracker.ts';
+import type {
+  BacklogIssue,
+  IssueLink,
+  LinkedIssue,
+  LinkRelation,
+  Resolved,
+  Tracker,
+  TrackerIssue,
+} from './tracker.ts';
 
 // Linear as a tracker, through the Linear SDK and a personal API key. The
 // factory only uses the teams, labels, projects, and workflow states the
@@ -33,6 +45,8 @@ export type {
   LinearBacklogIssue,
   LinearIssue,
   LinearLabel,
+  LinearLinked,
+  LinearLinks,
   LinearRelated,
   LinearState,
 } from './linear-graphql.ts';
@@ -73,6 +87,10 @@ export type LinearApi = {
   inventory: () => Promise<LinearInventory>;
   // By UUID or key; rejects when Linear has no such issue.
   issue: (idOrKey: string) => Promise<LinearIssue>;
+  // One issue as a link, by key; rejects when Linear has no such issue.
+  linked: (key: string) => Promise<LinearLinked>;
+  // The issue's parent, sub-issues, relations both ways, and description.
+  links: (issueId: string) => Promise<LinearLinks>;
   setDescription: (issueId: string, description: string) => Promise<void>;
   setState: (issueId: string, stateId: string) => Promise<void>;
   teamStates: (teamId: string) => Promise<Array<LinearState>>;
@@ -195,6 +213,8 @@ export function linearSdkApi(apiKey: string): LinearApi {
       };
     },
     issue: (idOrKey) => request(issueQuery, { id: idOrKey }),
+    linked: (key) => request(linkedQuery, { id: key }),
+    links: (issueId) => request(linksQuery, { id: issueId }),
     setDescription: async (issueId, description) => {
       succeeded(
         await plainly(() => sdk().updateIssue(issueId, { description })),
@@ -322,10 +342,108 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Linear request failed';
 }
 
+// The Linear issue keys a description names, in order: keys such as ENG-42
+// and issue URLs. A key-shaped word that is no issue, such as UTF-8, is
+// looked up and dropped.
+export function linearMentions(text: string): Array<string> {
+  const keys = new Set<string>();
+  for (const match of text.matchAll(
+    /linear\.app\/[^/\s]+\/issue\/([A-Za-z][A-Za-z0-9_]*-\d+)|(?<![\w/-])([A-Z][A-Z0-9_]*-\d+)(?![\w-])/g,
+  )) {
+    const key = match[1] ?? match[2];
+    if (key !== undefined) {
+      keys.add(key.toUpperCase());
+    }
+  }
+  return [...keys];
+}
+
+// How many refs in a description are looked up at most, and how many at once.
+const MENTION_LIMIT = 50;
+const MENTION_BATCH = 5;
+
+// A relation's type as seen from the issue that has it (`out`) or from the
+// other end (`in`). Linear's `similar` is a suggestion, read as related.
+function relationOf(type: string, direction: 'in' | 'out'): LinkRelation {
+  switch (type) {
+    case 'blocks':
+      return direction === 'out' ? 'blocks' : 'blocked by';
+    case 'duplicate':
+      return 'duplicate';
+    default:
+      return 'related';
+  }
+}
+
+function linkedIssue(linked: LinearLinked, relation: LinkRelation): LinkedIssue {
+  return {
+    comments: linked.comments,
+    displayRef: linked.identifier,
+    pullRequests: linked.attachments,
+    relation,
+    state: linked.state?.name ?? null,
+    stateType: linked.state?.type ?? null,
+    title: linked.title,
+    url: linked.url,
+  };
+}
+
+// The issue's links, each once: parent, sub-issues, relations, then the
+// issues its description names that it has no native link to.
+async function relatedOf(api: LinearApi, issueId: string): Promise<Array<LinkedIssue>> {
+  const links = await api.links(issueId);
+  const found = new Map<string, LinkedIssue>();
+  const add = (linked: LinearLinked, relation: LinkRelation): void => {
+    if (linked.identifier !== links.identifier && !found.has(linked.identifier)) {
+      found.set(linked.identifier, linkedIssue(linked, relation));
+    }
+  };
+  if (links.parent !== null) {
+    add(links.parent, 'parent');
+  }
+  for (const child of links.children) {
+    add(child, 'sub-issue');
+  }
+  for (const relation of links.relations) {
+    add(relation.issue, relationOf(relation.type, 'out'));
+  }
+  for (const relation of links.inverseRelations) {
+    add(relation.issue, relationOf(relation.type, 'in'));
+  }
+  const mentioned = linearMentions(links.description)
+    .filter((key) => key !== links.identifier && !found.has(key))
+    .slice(0, MENTION_LIMIT);
+  for (let at = 0; at < mentioned.length; at += MENTION_BATCH) {
+    const batch = await Promise.all(
+      mentioned.slice(at, at + MENTION_BATCH).map((key) =>
+        api.linked(key).then(
+          (linked) => linked,
+          // A key-shaped word that names no issue.
+          () => null,
+        ),
+      ),
+    );
+    for (const linked of batch) {
+      if (linked !== null) {
+        add(linked, 'mentioned');
+      }
+    }
+  }
+  return [...found.values()];
+}
+
 export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi): Tracker {
   return {
     blockedBy: async (issue) => openBlockers(await api.blockers(uuidOf(issue))),
-    capabilities: new Set(['backlog', 'blockedBy', 'checklist', 'children', 'comment', 'status']),
+    capabilities: new Set([
+      'backlog',
+      'blockedBy',
+      'checklist',
+      'children',
+      'comment',
+      'related',
+      'status',
+    ]),
     // Linear keeps an issue's checklist as Markdown boxes in its description.
     checklistItems: async (issue) =>
       markdownChecklist((await api.issue(uuidOf(issue))).description),
@@ -361,6 +479,7 @@ export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi)
         links: { blockedBy: openBlockers(issue.blockers), children: issue.children.map(linkOf) },
       })),
     refHint: 'a Linear issue key such as ENG-42, or its URL',
+    related: (issue) => relatedOf(api, uuidOf(issue)),
     resolve: async (ref): Promise<Resolved | null> => {
       const target = linearTarget(ref, config);
       if (target === null) {

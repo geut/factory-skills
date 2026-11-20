@@ -37,6 +37,7 @@ import type { FactorySubagentRuntime, LaunchSpec, ProjectConfig } from '../runti
 import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
 import { contextGaps } from '../stages/plan/context.ts';
+import { readPlanLinks, type PlanLinks } from '../stages/plan/links.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -127,6 +128,8 @@ export async function dispatchPending(input: {
   ids: IdSource;
   leaseOwner: string;
   liveValidations: Set<string>;
+  // A line for the server log, for what fails without stopping a ticket.
+  log: (line: string) => void;
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
@@ -184,6 +187,7 @@ async function perform(
     factoryRoot: string;
     findPullRequest: PullRequestLookup;
     ids: IdSource;
+    log: (line: string) => void;
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
@@ -406,7 +410,14 @@ async function launch(
 }
 
 async function worktree(
-  input: { commands: CommandBoard; db: DatabaseSync; ids: IdSource; now: () => string },
+  input: {
+    commands: CommandBoard;
+    db: DatabaseSync;
+    ids: IdSource;
+    log: (line: string) => void;
+    now: () => string;
+    tracker: () => ConfiguredTracker | null;
+  },
   action: Extract<ActionRecord, { kind: 'prepare_worktree' }>,
   snapshot: FactorySnapshot,
 ): Promise<RunId | null> {
@@ -447,6 +458,21 @@ async function worktree(
     );
     return null;
   }
+  // Only the plan reads the linked issues, once: a worktree prepared again
+  // after the plan, as on a retry, needs none.
+  const configured = input.tracker();
+  const links: PlanLinks =
+    snapshot.execution.planPath === null
+      ? await readPlanLinks({
+          issue: trackerIssueOf(snapshot.ticket),
+          limit: snapshot.execution.policy.limits.linkedIssues,
+          log: input.log,
+          tracker:
+            configured === null || trackerMismatch(snapshot, configured.tracker.kind) !== null
+              ? null
+              : configured.tracker,
+        })
+      : { kind: 'none' };
   applyActionEvent(
     input,
     {
@@ -456,6 +482,7 @@ async function worktree(
       branch: prepared.branch,
       context: contextGaps(factoryRoot),
       kind: 'worktree_ready',
+      links,
       worktreePath: prepared.path,
     },
     `worktree-ready:${action.id}`,

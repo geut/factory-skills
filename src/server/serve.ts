@@ -518,6 +518,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     ...(input.github === undefined ? {} : { github: input.github }),
     leaseOwner: instanceId,
     linear,
+    log: input.out,
     notify: input.out,
     runtime,
   });

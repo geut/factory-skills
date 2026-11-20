@@ -32,6 +32,7 @@ function fake(capabilities: Array<TrackerCapability>, changed: Array<string> = [
     kind: 'github',
     listBacklog: async () => [],
     refHint: 'a GitHub ref',
+    related: async () => [],
     resolve: async () => null,
     setStatus: async (_issue, status) => {
       calls.push(['status', status]);

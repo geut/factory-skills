@@ -243,6 +243,8 @@ export function createFactoryService(input: {
   leaseOwner?: string;
   // Linear for a Linear tracker; the SDK with the key from the environment by default.
   linear?: TrackerClients['linear'];
+  // A line for the server log; nothing by default.
+  log?: (line: string) => void;
   notify?: (message: string) => void;
   now?: () => string;
   onActivity?: () => void;
@@ -509,6 +511,7 @@ export function createFactoryService(input: {
           ids,
           leaseOwner: input.leaseOwner ?? 'factory-controller',
           liveValidations,
+          log: input.log ?? (() => undefined),
           notify,
           now,
           runtime,

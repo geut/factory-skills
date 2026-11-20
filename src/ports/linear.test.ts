@@ -11,6 +11,8 @@ import {
   type LinearBacklogQuery,
   type LinearInventory,
   type LinearIssue,
+  type LinearLinked,
+  type LinearLinks,
   type LinearRelated,
   type LinearState,
 } from './linear.ts';
@@ -59,6 +61,9 @@ type Fake = {
   children: Array<LinearRelated>;
   comments: Map<string, string>;
   issue: LinearIssue;
+  // Issues by key, as links; a key with none is not found.
+  linked: Map<string, LinearLinked>;
+  links: Omit<LinearLinks, 'description' | 'identifier'>;
   writes: Array<Array<unknown>>;
 };
 
@@ -71,6 +76,8 @@ function fake(issue = linearIssue()): Fake {
     children: [],
     comments: new Map(),
     issue,
+    linked: new Map(),
+    links: { children: [], inverseRelations: [], parent: null, relations: [] },
     writes: [],
   };
   state.api = {
@@ -106,6 +113,18 @@ function fake(issue = linearIssue()): Fake {
       }
       return state.issue;
     },
+    linked: async (key) => {
+      const found = state.linked.get(key);
+      if (found === undefined) {
+        throw new Error(`Entity not found: Issue ${key}`);
+      }
+      return found;
+    },
+    links: async () => ({
+      ...state.links,
+      description: state.issue.description,
+      identifier: state.issue.identifier,
+    }),
     setDescription: async (_issueId, description) => {
       state.writes.push(['setDescription', description]);
       state.issue = { ...state.issue, description };
@@ -229,6 +248,92 @@ test('sub-issues are children, and only an unfinished blocker blocks', async () 
   assert.deepEqual(await tracker.blockedBy(issue), [
     { displayRef: 'ENG-32', title: 'Schema first', url: 'https://l/32' },
   ]);
+});
+
+// An issue as a link, in the Done state unless it says otherwise.
+function linked(identifier: string, overrides: Partial<LinearLinked> = {}): LinearLinked {
+  return {
+    attachments: [],
+    comments: { count: 0, more: false },
+    identifier,
+    state: { name: 'Done', type: 'completed' },
+    title: `Issue ${identifier}`,
+    url: `https://linear.app/acme/issue/${identifier}`,
+    ...overrides,
+  };
+}
+
+test('linked issues: parent, sub-issue, relations both ways, then keys the description names, each once', async () => {
+  const linear = fake(
+    linearIssue({
+      description:
+        'Follow-up to ENG-30 (same fix shape). See https://linear.app/acme/issue/ENG-31/x, UTF-8, ENG-42 and ENG-40 again.',
+    }),
+  );
+  linear.links = {
+    children: [linked('ENG-43', { state: { name: 'Todo', type: 'unstarted' } })],
+    inverseRelations: [
+      {
+        issue: linked('BUG-7', {
+          attachments: ['https://github.com/acme/app/pull/11850'],
+          comments: { count: 4, more: false },
+          state: { name: 'In Review', type: 'started' },
+        }),
+        type: 'blocks',
+      },
+    ],
+    parent: linked('ENG-40', { state: { name: 'In Progress', type: 'started' } }),
+    relations: [{ issue: linked('ENG-12'), type: 'related' }],
+  };
+  linear.linked.set(
+    'ENG-30',
+    linked('ENG-30', {
+      attachments: ['https://github.com/acme/app/pull/11844'],
+      comments: { count: 50, more: true },
+    }),
+  );
+  linear.linked.set('ENG-31', linked('ENG-31'));
+  const tracker = createLinearTracker(config, linear.api);
+  assert.ok(tracker.capabilities.has('related'));
+  const found = await tracker.related(await resolved(tracker));
+  assert.deepEqual(
+    found.map((item) => [item.relation, item.displayRef, item.state, item.pullRequests]),
+    [
+      ['parent', 'ENG-40', 'In Progress', []],
+      ['sub-issue', 'ENG-43', 'Todo', []],
+      ['related', 'ENG-12', 'Done', []],
+      ['blocked by', 'BUG-7', 'In Review', ['https://github.com/acme/app/pull/11850']],
+      ['mentioned', 'ENG-30', 'Done', ['https://github.com/acme/app/pull/11844']],
+      ['mentioned', 'ENG-31', 'Done', []],
+    ],
+  );
+  assert.deepEqual(found[4]?.comments, { count: 50, more: true });
+  assert.equal(found[3]?.title, 'Issue BUG-7');
+});
+
+test('the issue’s own blocks and duplicate relations read from its side', async () => {
+  const linear = fake();
+  linear.links = {
+    children: [],
+    inverseRelations: [{ issue: linked('ENG-9'), type: 'duplicate' }],
+    parent: null,
+    relations: [
+      { issue: linked('ENG-50'), type: 'blocks' },
+      { issue: linked('ENG-51'), type: 'similar' },
+    ],
+  };
+  const tracker = createLinearTracker(config, linear.api);
+  assert.deepEqual(
+    (await tracker.related(await resolved(tracker))).map((item) => [
+      item.relation,
+      item.displayRef,
+    ]),
+    [
+      ['blocks', 'ENG-50'],
+      ['related', 'ENG-51'],
+      ['duplicate', 'ENG-9'],
+    ],
+  );
 });
 
 test('the checklist is the description’s boxes, ticked in the description as it is now', async () => {

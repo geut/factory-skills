@@ -54,14 +54,19 @@ test('a stage has FACTORY.json settings exactly when it is optional', () => {
   }
 });
 
-// The plan's first prompt for ticket #7, given what CONTEXT.md lacks.
-function initial(context: PlanInput['context']): string {
+// The plan's first prompt for ticket #7, given what CONTEXT.md lacks and
+// its linked issues.
+function initial(
+  context: PlanInput['context'],
+  links: PlanInput['links'] = { kind: 'none' },
+): string {
   return stages.plan.turn({
     input: {
       body: 'Remember the filter.',
       context,
       displayRef: '#7',
       factoryDir: '/repo/.factory/tickets/7',
+      links,
       title: 'Filter',
     },
     kind: 'initial',
@@ -87,6 +92,33 @@ test('the first plan in a factory root is asked to create CONTEXT.md', () => {
   const partial = initial({ kind: 'read', missingSections: ['Known flakes'] });
   assert.doesNotMatch(partial, /Create .*CONTEXT\.md/);
   assert.match(partial, /Add the ## Known flakes section to \/repo\/\.factory\/CONTEXT\.md/);
+});
+
+test('the plan prompt lists the linked issues after the ticket body, and nothing without them', () => {
+  const read: PlanInput['context'] = { kind: 'read', missingSections: [] };
+  const withLinks = initial(read, {
+    issues: [
+      {
+        comments: null,
+        displayRef: '#3',
+        pullRequests: [],
+        relation: 'parent',
+        state: 'open',
+        stateType: 'open',
+        title: 'Filters everywhere',
+        url: null,
+      },
+    ],
+    kind: 'read',
+    omitted: 0,
+  });
+  assert.ok(
+    withLinks.endsWith(
+      'Remember the filter.\n\nLinked issues (one level; read one with the project’s tools when it matters):\n- parent #3 [open] Filters everywhere',
+    ),
+  );
+  assert.ok(initial(read).endsWith('Remember the filter.'));
+  assert.equal(initial(read, { issues: [], kind: 'read', omitted: 0 }), initial(read));
 });
 
 // Work's first prompt for task 01, with QA on or off for the project and the task.

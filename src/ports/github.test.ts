@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createGithubTracker, type GithubClient, type GithubIssue } from './github.ts';
+import {
+  createGithubTracker,
+  githubMentions,
+  type GithubClient,
+  type GithubIssue,
+  type GithubLinked,
+} from './github.ts';
 import type { TrackerIssue } from './tracker.ts';
 
 const config = {
@@ -135,4 +141,94 @@ test('only an open blocker blocks: GitHub keeps the link after the blocker close
       url: 'https://github.com/geut/factory-skills/issues/40',
     },
   ]);
+});
+
+// An issue in geut/factory-skills as a link, closed as completed unless it
+// says otherwise.
+function linked(number: number, overrides: Partial<GithubLinked> = {}): GithubLinked {
+  return {
+    comments: 0,
+    kind: 'issue',
+    number,
+    owner: 'geut',
+    pullRequests: [],
+    repo: 'factory-skills',
+    state: 'CLOSED',
+    stateReason: 'COMPLETED',
+    title: `Issue ${number}`,
+    url: `https://github.com/geut/factory-skills/issues/${number}`,
+    ...overrides,
+  };
+}
+
+test('linked issues: parent, sub-issue, and the issues the body names, each once', async () => {
+  const looked: Array<string> = [];
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    issueLinks: () => ({
+      blockedBy: [],
+      blocking: [],
+      parent: linked(3, { state: 'OPEN', stateReason: null }),
+      subIssues: [linked(8, { state: 'OPEN', stateReason: null })],
+    }),
+    listSubIssues: () => [],
+    lookupRef: (at) => {
+      looked.push(`${at.owner}/${at.repo}#${at.number}`);
+      if (at.number === 99) {
+        return null;
+      }
+      return at.number === 5
+        ? linked(5, {
+            comments: 16,
+            pullRequests: ['https://github.com/geut/factory-skills/pull/6'],
+          })
+        : linked(at.number, { owner: at.owner, repo: at.repo });
+    },
+  });
+  assert.ok(tracker.capabilities.has('related'));
+  const found = await tracker.related({
+    ...issue,
+    body: 'Same fix shape as #5. Not #99. Parent is #3, see also acme/app#12 and #7 (this one).',
+  });
+  assert.deepEqual(
+    found.map((item) => [item.relation, item.displayRef, item.state, item.stateType]),
+    [
+      ['parent', 'geut/factory-skills#3', 'open', 'open'],
+      ['sub-issue', 'geut/factory-skills#8', 'open', 'open'],
+      ['mentioned', 'geut/factory-skills#5', 'closed', 'completed'],
+      ['mentioned', 'acme/app#12', 'closed', 'completed'],
+    ],
+  );
+  assert.deepEqual(found[2]?.pullRequests, ['https://github.com/geut/factory-skills/pull/6']);
+  assert.deepEqual(found[2]?.comments, { count: 16, more: false });
+  // #3 is the parent already, and #7 is the issue itself: neither is looked up.
+  assert.deepEqual(looked, ['geut/factory-skills#5', 'geut/factory-skills#99', 'acme/app#12']);
+});
+
+test('refs in a body: URLs, owner/repo#n, and #n, never an anchor or an entity', () => {
+  assert.deepEqual(
+    githubMentions(
+      [
+        'https://github.com/geut/factory-skills/issues/4 and https://github.com/acme/app/pull/9',
+        'acme/app#12, #5, and #5 again.',
+        'Not https://github.com/geut/factory-skills/pull/4#issuecomment-1, x#6, or &#123;.',
+      ].join('\n'),
+      { owner: 'geut', repo: 'factory-skills' },
+      'github.com',
+    ),
+    [
+      { number: 4, owner: 'geut', repo: 'factory-skills' },
+      { number: 9, owner: 'acme', repo: 'app' },
+      { number: 12, owner: 'acme', repo: 'app' },
+      { number: 5, owner: 'geut', repo: 'factory-skills' },
+    ],
+  );
+});
+
+test('a client that cannot read links has no related capability', () => {
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    listSubIssues: () => [],
+  });
+  assert.equal(tracker.capabilities.has('related'), false);
 });
