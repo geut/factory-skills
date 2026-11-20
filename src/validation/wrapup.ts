@@ -27,6 +27,7 @@ import {
   titleExample,
   titleMatches,
 } from '../stages/wrapup/title.ts';
+import { VALIDATION_LOGS } from './command-env.ts';
 import {
   errorReport,
   failedReport,
@@ -57,13 +58,6 @@ const factoryInternal = new Set([
   '.git',
 ]);
 
-// Where project validators keep their run artifacts, such as logs and the
-// pointers to the latest one: `validation-logs/` at the factory root. Any
-// ticket's validation may write there while another ticket wraps up, so
-// wrap-up never compares it. Anything else under the factory root stays
-// guarded.
-export const VALIDATION_ARTIFACTS = 'validation-logs';
-
 // Whether wrap-up compares a path under the factory root (`tickets/a/plan.md`):
 // not the controller's own files, nor validation artifacts, nor another
 // ticket's directory, nor OS metadata. New snapshots and a stored baseline
@@ -72,7 +66,9 @@ export const VALIDATION_ARTIFACTS = 'validation-logs';
 function comparedFactoryPath(relative: string, ownTicket: string): boolean {
   const parts = relative.split('/');
   const [top] = parts;
-  if (top === undefined || factoryInternal.has(top) || top === VALIDATION_ARTIFACTS) {
+  // Validators' artifacts: any ticket's validation may write there while
+  // another ticket wraps up. Anything else under the root stays guarded.
+  if (top === undefined || factoryInternal.has(top) || top === VALIDATION_LOGS) {
     return false;
   }
   if (parts.some((part) => isOsMetadata(part))) {
@@ -402,10 +398,7 @@ export async function validateWrapup(input: {
   const factoryPrefix = path.relative(input.codeRoot, input.factoryRoot).split(path.sep).join('/');
   // A baseline stored before a path left the compared scope still holds it.
   const ownTicket = ownTicketOf(input.factoryRoot, input.ticketDir);
-  const factoryChanges = changed(
-    inScope(input.baseline.factory, ownTicket),
-    inScope(current.factory, ownTicket),
-  );
+  const factoryChanges = changed(inScope(input.baseline.factory, ownTicket), current.factory);
   const actual = new Set(Object.keys(current.worktree));
   const listed = listedPaths(section('Files'));
   const knownFactory = new Set(factoryChanges.map((file) => `${factoryPrefix}/${file}`));

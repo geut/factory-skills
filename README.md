@@ -440,7 +440,7 @@ The server refuses to start without the key, or when a team, label, project, or 
     └── sessions/
 ```
 
-`validation-logs/` is where project validators keep their run artifacts: logs, and pointers to the latest one, such as `<ticket>.latest`. Tickets run in parallel under one factory root, so one ticket's validation may write there while another ticket wraps up. Wrap-up never compares it, only `validation-logs/` at the factory root itself: a log anywhere else under `.factory/`, a ticket's own directory included, is still a change wrap-up must not make. The factory never writes or cleans it.
+`validation-logs/` is where project validators keep their run artifacts: logs, and pointers to the latest one, such as `<ticket>.latest`. Tickets run in parallel under one factory root, so one ticket's validation may write there while another ticket wraps up. Wrap-up never compares it, only `validation-logs/` at the factory root itself: a log anywhere else under `.factory/`, a ticket's own directory included, is still a change wrap-up must not make. Every validation command (work's, QA's, and QA's run of the work commands) gets the directory's absolute path as `FACTORY_VALIDATION_LOGS`, and the factory makes the directory before the commands run, so a validator writes there without knowing where the factory root is. The factory writes no files there and never cleans it.
 
 `FACTORY.json` example:
 

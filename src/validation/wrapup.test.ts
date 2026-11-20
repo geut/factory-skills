@@ -18,6 +18,7 @@ import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
 import { parseTitleTemplate } from '../stages/wrapup/title.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
+import { VALIDATION_LOGS } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { captureWrapupState, wrapupValidator, type PullRequestLookup } from './wrapup.ts';
 
@@ -495,7 +496,7 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', a
 // while this ticket wraps up: it appends to its log, starts a new one, and
 // replaces its pointer to the latest.
 function siblingValidates(value: Fixture): void {
-  const logs = path.join(value.factoryRoot, 'validation-logs');
+  const logs = path.join(value.factoryRoot, VALIDATION_LOGS);
   appendFileSync(path.join(logs, 'proj-2-1.log'), 'still running\n');
   writeFileSync(path.join(logs, 'proj-2-2.log'), 'a new run\n');
   writeFileSync(path.join(logs, 'proj-2.latest.tmp'), 'proj-2-2.log\n');
@@ -504,7 +505,7 @@ function siblingValidates(value: Fixture): void {
 
 // A sibling ticket's validator already logging when this wrap-up starts.
 function siblingLogging(value: Fixture): void {
-  const logs = path.join(value.factoryRoot, 'validation-logs');
+  const logs = path.join(value.factoryRoot, VALIDATION_LOGS);
   mkdirSync(logs);
   writeFileSync(path.join(logs, 'proj-2-1.log'), 'started\n');
   writeFileSync(path.join(logs, 'proj-2.latest'), 'proj-2-1.log\n');
@@ -536,7 +537,7 @@ test('a baseline stored before the fix, holding validation logs, still validates
   };
   siblingValidates(value);
   assert.equal((await validate(value, stored, handoff(value))).status, 'passed');
-  rmSync(path.join(value.factoryRoot, 'validation-logs'), { force: true, recursive: true });
+  rmSync(path.join(value.factoryRoot, VALIDATION_LOGS), { force: true, recursive: true });
   assert.equal((await validate(value, stored, handoff(value))).status, 'passed');
 });
 

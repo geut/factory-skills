@@ -170,14 +170,3 @@ export function taskSelection(
   }
   return { kind: 'absent' };
 }
-
-// A fresh environment for one command: the server's own, with the selection
-// when there is one, so parallel tickets never see each other's.
-export function selectionEnv(tests: Array<SelectedTest> | null): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env[SELECTION_ENV];
-  if (tests !== null && tests.length > 0) {
-    env[SELECTION_ENV] = JSON.stringify({ tests, version: 1 } satisfies ValidationSelection);
-  }
-  return env;
-}

@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../../config.ts';
 import type { CommandReporter } from '../../controller/command-progress.ts';
+import { factoryRootOf } from '../../controller/keys.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { sha256 } from '../../hash.ts';
+import { commandEnv, ensureValidationLogs } from '../../validation/command-env.ts';
 import {
   errorReport,
   failedReport,
@@ -12,7 +14,7 @@ import {
   type ValidationCheck,
   type Validator,
 } from '../../validation/report.ts';
-import { selectionEnv, taskSelection, type SelectedTest } from '../../validation/selection.ts';
+import { taskSelection, type SelectedTest } from '../../validation/selection.ts';
 import {
   collectWorkDiff,
   commandCheck,
@@ -161,6 +163,7 @@ async function validateQa(input: {
   worktree: string;
 }): Promise<QaValidationReport> {
   const paths = qaPaths(input.factoryDir, input.taskId);
+  const factoryRoot = factoryRootOf(input.factoryDir);
   const taskText = readText(path.join(input.factoryDir, input.taskFile));
   if (taskText === null) {
     return errorReport(QA_VALIDATOR_VERSION, `Task file ${input.taskFile} cannot be read.`);
@@ -220,11 +223,16 @@ async function validateQa(input: {
     return failedReport(QA_VALIDATOR_VERSION, checks, incomplete, { reason: 'incomplete' });
   }
   const failing: Array<string> = [];
+  ensureValidationLogs(factoryRoot);
   // QA's commands, then the validation commands: one count for the step.
   const total = input.commands.length + input.validationCommands.length;
   for (const [index, command] of input.commands.entries()) {
     input.reportCommand({ command: command.name, index: index + 1, total });
-    const result = await runCommand(command, input.worktree);
+    const result = await runCommand(
+      command,
+      input.worktree,
+      commandEnv({ factoryRoot, tests: null }),
+    );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
     }
@@ -257,7 +265,11 @@ async function validateQa(input: {
       index: input.commands.length + index + 1,
       total,
     });
-    const result = await runCommand(command, input.worktree, selectionEnv(input.selection));
+    const result = await runCommand(
+      command,
+      input.worktree,
+      commandEnv({ factoryRoot, tests: input.selection }),
+    );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
     }

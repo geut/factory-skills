@@ -6,6 +6,7 @@ import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
 import { taskId } from '../domain.ts';
 import { addTasks } from '../stories/fixtures.ts';
+import { VALIDATION_LOGS, VALIDATION_LOGS_ENV } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { SELECTION_ENV } from './selection.ts';
 import { collectWorkDiff, COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
@@ -381,9 +382,13 @@ async function validateReply(output: string) {
   writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
   const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-selection-')), 'seen.txt');
   roots.push(path.dirname(seen));
+  // A factory root beside the worktree, as in a real factory.
+  const factoryRoot = path.join(path.dirname(seen), '.factory');
+  mkdirSync(factoryRoot);
   const report = await workValidator.validate(
     validationContext('work', (snapshot, finished) => {
       addTasks(snapshot, 1);
+      snapshot.execution.factoryDir = path.join(factoryRoot, 'tickets/demo');
       snapshot.execution.worktreePath = cwd;
       snapshot.execution.worktreeBaseSha = baseSha;
       snapshot.execution.policy.validation.work.commands = [
@@ -391,7 +396,7 @@ async function validateReply(output: string) {
           argv: [
             'node',
             '-e',
-            `require('node:fs').writeFileSync(${JSON.stringify(seen)}, process.env.${SELECTION_ENV} ?? 'unset')`,
+            `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(seen)}, process.env.${SELECTION_ENV} ?? 'unset'); fs.writeFileSync(${JSON.stringify(`${seen}.logs`)}, String(process.env.${VALIDATION_LOGS_ENV}) + ' ' + fs.existsSync(process.env.${VALIDATION_LOGS_ENV} ?? ''))`,
           ],
           name: 'tests',
           timeoutMs: 5000,
@@ -400,7 +405,12 @@ async function validateReply(output: string) {
       finished.resultJson = JSON.stringify({ output });
     }),
   );
-  return { report, seen: existsSync(seen) ? readFileSync(seen, 'utf8') : null };
+  return {
+    factoryRoot,
+    logs: existsSync(`${seen}.logs`) ? readFileSync(`${seen}.logs`, 'utf8') : null,
+    report,
+    seen: existsSync(seen) ? readFileSync(seen, 'utf8') : null,
+  };
 }
 
 test('the worker’s selection reaches the commands as JSON, and the report lists it', async () => {
@@ -467,4 +477,9 @@ test('parallel validations of different tickets each give their commands only th
   assert.equal(none.seen, 'unset');
   // The server's own environment never carries a selection.
   assert.equal(process.env[SELECTION_ENV], undefined);
+});
+
+test('every work command is told where to keep its logs, and the directory is there', async () => {
+  const { factoryRoot, logs } = await validateReply('## Status\n\nready_for_review\n');
+  assert.equal(logs, `${path.join(factoryRoot, VALIDATION_LOGS)} true`);
 });
