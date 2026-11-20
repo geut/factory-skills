@@ -138,7 +138,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
         input.qaRuns
           ? "QA runs for this task and owns its end-to-end tests: write unit tests (and component tests where the project has them), keep the existing end-to-end suite passing, and leave every end-to-end test of this task's acceptance criteria, API requests included, to QA."
           : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
-        `Optionally, under ## ${SELECTION_HEADING}, list the focused regression tests you found for this change, one line each, \`\` - \`path/to/test_file\`: why it covers this change \`\`, so the validation commands below can run just those: they get them as ${SELECTION_ENV} JSON and decide how. Leave the section out, or write \`none\`, to have them run in full. A correction keeps this round's selection unless you write the section again. ## Tests stays your report of what you ran.`,
+        `Optionally, under ## ${SELECTION_HEADING}, list the focused regression tests you found for this change, one line each, \`\` - \`path/to/test_file\`: why it covers this change \`\`, and the validation commands below get them as ${SELECTION_ENV} JSON; the project's validator decides how to run them. To propose none, leave the section out or write \`none\` alone under it: ${SELECTION_ENV} is then unset, and the validator uses its default behavior. A correction keeps this round's selection unless you write the section again. ## Tests stays your report of what you ran.`,
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',
         // A round may decline every item and change nothing.

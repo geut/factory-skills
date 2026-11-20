@@ -439,7 +439,7 @@ test('a malformed or missing selection is corrected before any command runs', as
   // The section is optional: the correction says how to drop it.
   assert.match(
     malformed.report.status === 'failed' ? malformed.report.failures.join('\n') : '',
-    /The selection is optional: write the section again with the lines fixed, or with `none`/,
+    /The selection is optional: write the section again with the lines fixed, or with `none` alone, so the validator uses its default behavior/,
   );
 
   const missing = await validateReply('## Validation selection\n\n- `tests/gone.test.ts`: gone\n');

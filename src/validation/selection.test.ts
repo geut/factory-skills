@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -174,4 +174,15 @@ test('each command gets a fresh environment, with the selection only when there 
       process.env[SELECTION_ENV] = before;
     }
   }
+});
+
+test('the template in factory-work’s output reference parses as a selection, as a worker would copy it', () => {
+  const reference = readFileSync(
+    new URL('../../skills/factory-work/references/output.md', import.meta.url),
+    'utf8',
+  );
+  assert.deepEqual(parseSelection(reference), {
+    kind: 'listed',
+    tests: [{ path: 'tests/filter.test.ts', reason: 'checks that disabled entries are excluded' }],
+  });
 });

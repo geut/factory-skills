@@ -38,7 +38,7 @@ export const SELECTION_FORMAT =
 // reply that leaves it out keeps the round's selection, so it is written
 // again.
 export const SELECTION_FIX =
-  'The selection is optional: write the section again with the lines fixed, or with `none` to run the commands in full.';
+  'The selection is optional: write the section again with the lines fixed, or with `none` alone, so the validator uses its default behavior.';
 
 // `none`, as people write it: `none`, `- none`, `` `none` ``, `None.`, or
 // `none (no focused tests)`.
