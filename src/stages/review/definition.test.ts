@@ -113,6 +113,13 @@ function prompt(
             stage: 'Work',
             status: 'passed',
           },
+          {
+            details: 'FACTORY_VALIDATION_SELECTION lists 1 test file: tests/filter.test.ts',
+            kind: 'policy',
+            name: 'validation selection',
+            stage: 'Work',
+            status: 'passed',
+          },
           { details: 'AC1', kind: 'schema', name: 'AC1 covered', stage: 'QA', status: 'passed' },
         ],
         criteria: [
@@ -144,10 +151,10 @@ test('the first review lists the criteria to verify', () => {
   assert.doesNotMatch(text, /Earlier blocking findings/);
 });
 
-test('the validation block groups the work checks and the QA checks', () => {
+test('the validation block groups the work checks and the QA checks, naming the tests the worker chose', () => {
   assert.match(
     prompt(1, []),
-    /Validation:\nWork:\n- check: passed\n- lint: passed\nQA:\n- AC1 covered: passed\n/,
+    /Validation:\nWork:\n- check: passed\n- lint: passed\n- validation selection: passed \(FACTORY_VALIDATION_SELECTION lists 1 test file: tests\/filter\.test\.ts\)\nQA:\n- AC1 covered: passed\n/,
   );
 });
 

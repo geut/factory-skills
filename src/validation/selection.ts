@@ -11,6 +11,8 @@ import { runOutput } from '../stages/output.ts';
 
 export const SELECTION_ENV = 'FACTORY_VALIDATION_SELECTION';
 export const SELECTION_HEADING = 'Validation selection';
+// The work check that shows what the commands got.
+export const SELECTION_CHECK = 'validation selection';
 
 // Bounds that keep the variable well under the size an environment allows.
 const MAX_TESTS = 100;
@@ -30,7 +32,25 @@ export type ParsedSelection =
 const ENTRY = /^- `([^`]+)`:\s*(.+)$/;
 
 export const SELECTION_FORMAT =
-  'Under ## Validation selection, write one line per test file, `` - `path/to/test_file`: why it covers this change ``, with the path relative to the repository root, or `none`.';
+  'Under ## Validation selection, write one line per test file, `` - `path/to/test_file`: why it covers this change ``, with the path relative to the repository root.';
+
+// What every selection problem ends with: the section is optional, and a
+// reply that leaves it out keeps the round's selection, so it is written
+// again.
+export const SELECTION_FIX =
+  'The selection is optional: write the section again with the lines fixed, or with `none` to run the commands in full.';
+
+// `none`, as people write it: `none`, `- none`, `` `none` ``, `None.`, or
+// `none (no focused tests)`.
+function saysNone(line: string): boolean {
+  const bare = line
+    .replace(/^[-*]\s+/, '')
+    .replace(/\s*\(.*\)\s*$/, '')
+    .replaceAll('`', '')
+    .replace(/\.$/, '')
+    .trim();
+  return bare.toLowerCase() === 'none';
+}
 
 // The section's lines, or null when the reply has none. The section ends at
 // the next heading of its level or higher.
@@ -56,7 +76,7 @@ export function parseSelection(output: string): ParsedSelection {
   if (lines === null) {
     return { kind: 'absent' };
   }
-  if (lines.length === 0 || (lines.length === 1 && lines[0]?.toLowerCase() === 'none')) {
+  if (lines.length === 0 || (lines.length === 1 && saysNone(lines[0] ?? ''))) {
     return { kind: 'listed', tests: [] };
   }
   const problems: Array<string> = [];
@@ -109,10 +129,16 @@ export function missingTests(tests: Array<SelectedTest>, worktree: string): Arra
     );
 }
 
-// The task's selection: from the latest finished work run that wrote the
-// section, up to `upTo` when given. A correction that leaves the section out
-// keeps the one before; `none` clears it. Older replies with no section
-// select nothing.
+// The runs that start a round of work on a task: its first run, and each
+// return from a later stage. A correction, an answer to a question, a manual
+// continue, or a retry carries on the round.
+const ROUND_STARTS: ReadonlySet<RunRecord['purpose']> = new Set(['initial', 'return_to_work']);
+
+// The task's selection in its current round, as of `upTo` when given: from
+// the round's latest finished reply that wrote the section. A correction
+// that leaves the section out keeps the round's; `none` clears it. A new
+// round starts with none, so an earlier round's paths never come back; the
+// reviewer reads the same round's replies.
 export function taskSelection(
   snapshot: FactorySnapshot,
   taskId: string,
@@ -123,11 +149,20 @@ export function taskSelection(
       .filter((session) => session.stage === 'work' && session.taskId === taskId)
       .map((session) => session.id),
   );
-  const last = upTo === null ? snapshot.runs.length : snapshot.runs.indexOf(upTo) + 1;
-  const runs = snapshot.runs
-    .slice(0, last <= 0 ? snapshot.runs.length : last)
-    .filter((run) => sessions.has(run.sessionId) && run.terminalKind === 'subagent_done');
-  for (const run of runs.toReversed()) {
+  const at = upTo === null ? -1 : snapshot.runs.indexOf(upTo);
+  const runs = (at === -1 ? snapshot.runs : snapshot.runs.slice(0, at + 1)).filter((run) =>
+    sessions.has(run.sessionId),
+  );
+  const round = runs.slice(
+    Math.max(
+      0,
+      runs.findLastIndex((run) => ROUND_STARTS.has(run.purpose)),
+    ),
+  );
+  for (const run of round.toReversed()) {
+    if (run.terminalKind !== 'subagent_done') {
+      continue;
+    }
     const parsed = parseSelection(runOutput(run));
     if (parsed.kind !== 'absent') {
       return parsed;

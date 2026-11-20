@@ -436,6 +436,11 @@ test('a malformed or missing selection is corrected before any command runs', as
     /is not an entry\. Under ## Validation selection, write one line per test file/,
   );
   assert.equal(malformed.seen, null);
+  // The section is optional: the correction says how to drop it.
+  assert.match(
+    malformed.report.status === 'failed' ? malformed.report.failures.join('\n') : '',
+    /The selection is optional: write the section again with the lines fixed, or with `none`/,
+  );
 
   const missing = await validateReply('## Validation selection\n\n- `tests/gone.test.ts`: gone\n');
   assert.match(
@@ -443,4 +448,23 @@ test('a malformed or missing selection is corrected before any command runs', as
     /tests\/gone\.test\.ts is not a file in the worktree/,
   );
   assert.equal(missing.seen, null);
+});
+
+test('parallel validations of different tickets each give their commands only their own selection', async () => {
+  const [one, two, none] = await Promise.all([
+    validateReply('## Validation selection\n\n- `tests/filter.test.ts`: ticket one\n'),
+    validateReply('## Validation selection\n\n- `README.md`: ticket two\n'),
+    validateReply('## Status\n\nready_for_review\n'),
+  ]);
+  assert.deepEqual(JSON.parse(one.seen ?? ''), {
+    tests: [{ path: 'tests/filter.test.ts', reason: 'ticket one' }],
+    version: 1,
+  });
+  assert.deepEqual(JSON.parse(two.seen ?? ''), {
+    tests: [{ path: 'README.md', reason: 'ticket two' }],
+    version: 1,
+  });
+  assert.equal(none.seen, 'unset');
+  // The server's own environment never carries a selection.
+  assert.equal(process.env[SELECTION_ENV], undefined);
 });

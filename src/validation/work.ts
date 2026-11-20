@@ -17,7 +17,9 @@ import {
 import {
   missingTests,
   selectionEnv,
+  SELECTION_CHECK,
   SELECTION_ENV,
+  SELECTION_FIX,
   taskSelection,
   type ParsedSelection,
 } from './selection.ts';
@@ -235,7 +237,7 @@ function selectionCheck(input: {
     durationMs: null,
     exitCode: null,
     kind: 'policy',
-    name: 'validation selection',
+    name: SELECTION_CHECK,
     outputExcerpt: null,
     status: input.status,
   };
@@ -287,7 +289,9 @@ async function validateWork(input: {
         : [];
   const tests = selection.kind === 'listed' ? selection.tests : [];
   if (problems.length > 0) {
-    checks.push(selectionCheck({ details: problems.join('\n'), status: 'failed' }));
+    checks.push(
+      selectionCheck({ details: [...problems, SELECTION_FIX].join('\n'), status: 'failed' }),
+    );
     return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
   }
   if (tests.length > 0) {
