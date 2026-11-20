@@ -60,6 +60,7 @@ function pendingPlanValidation() {
       branch: 'factory/demo',
       context: { kind: 'read', missingSections: [] },
       kind: 'worktree_ready',
+      links: { kind: 'none' },
       worktreePath: path.join(root, 'worktrees/demo'),
     },
     'worktree',

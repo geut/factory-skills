@@ -5,6 +5,7 @@ import type { PullRequestInfo } from './ports/code-host.ts';
 import type { StageSettings } from './stages/definition.ts';
 import type { InputStage, PreparedInput, StageReports } from './stages/index.ts';
 import type { ContextGaps } from './stages/plan/context.ts';
+import type { PlanLinks } from './stages/plan/links.ts';
 import type { Criterion } from './stages/qa/criteria.ts';
 import type { IssueBox, IssueChecklist } from './stages/wrapup/checklist.ts';
 import type { PrFormatInUse } from './stages/wrapup/pr-format.ts';
@@ -400,6 +401,8 @@ export type ControllerEvent =
       // What the factory root's CONTEXT.md lacks; the plan launched here fills it in.
       context: ContextGaps;
       kind: 'worktree_ready';
+      // The ticket's linked issues, for the plan launched here.
+      links: PlanLinks;
       worktreePath: string;
     }
   | { actionId: ActionId; kind: 'worktree_failed'; message: string }

@@ -27,6 +27,7 @@ import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts'
 import { isInputStage, stages, type InputStage, type PreparedInput } from '../stages/index.ts';
 import { runOutput } from '../stages/output.ts';
 import type { ContextGaps } from '../stages/plan/context.ts';
+import type { PlanLinks } from '../stages/plan/links.ts';
 import { latestReviews } from '../stages/review/parse.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { pullRequestBody } from '../stages/wrapup/pr-body.ts';
@@ -822,7 +823,12 @@ function reduceStart(
 }
 
 // Plan's first run, in the worktree the ticket starts from.
-function launchPlan(snapshot: FactorySnapshot, ids: IdSource, context: ContextGaps): string {
+function launchPlan(
+  snapshot: FactorySnapshot,
+  ids: IdSource,
+  context: ContextGaps,
+  links: PlanLinks,
+): string {
   const session = snapshot.sessions.find((item) => item.stage === 'plan') ?? null;
   if (session === null || snapshot.runs.some((run) => run.sessionId === session.id)) {
     return 'Planning already started.';
@@ -833,6 +839,7 @@ function launchPlan(snapshot: FactorySnapshot, ids: IdSource, context: ContextGa
       context,
       displayRef: snapshot.ticket.displayRef,
       factoryDir: snapshot.execution.factoryDir,
+      links,
       title: snapshot.ticket.title,
     },
     kind: 'initial',
@@ -1626,7 +1633,7 @@ export function reduce(input: {
       snapshot.execution.worktreeBaseSha = event.baseSha;
       snapshot.execution.worktreeStatus = 'ready';
       if (snapshot.execution.planPath === null) {
-        return finish(snapshot, launchPlan(snapshot, ids, event.context));
+        return finish(snapshot, launchPlan(snapshot, ids, event.context, event.links));
       }
       const step = nextStep(snapshot, 'plan', null);
       if (step.kind !== 'stage' || step.taskId === null) {

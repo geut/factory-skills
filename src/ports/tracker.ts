@@ -11,6 +11,7 @@ export type TrackerCapability =
   | 'checklist'
   | 'children'
   | 'comment'
+  | 'related'
   | 'status';
 
 // A factory status shown on an issue, or `clear` to remove it.
@@ -50,6 +51,35 @@ export type ChecklistItem = { done: boolean; key: string; text: string };
 // A linked issue: a sub-issue or an issue that blocks another.
 export type IssueLink = { displayRef: string; title: string; url: string | null };
 
+// How a linked issue relates to the issue that links it: `blocks` and
+// `blocked by` read from the issue's side, `duplicate` either way, and
+// `mentioned` is a ref in its description with no native link.
+export type LinkRelation =
+  | 'blocked by'
+  | 'blocks'
+  | 'duplicate'
+  | 'mentioned'
+  | 'parent'
+  | 'related'
+  | 'sub-issue';
+
+// An issue another one links to or mentions, as the plan stage sees it.
+export type LinkedIssue = {
+  // How many comments it has, or at least, when `more`; null when the
+  // tracker does not say.
+  comments: { count: number; more: boolean } | null;
+  displayRef: string;
+  // Pull requests attached to it or closing it.
+  pullRequests: Array<string>;
+  relation: LinkRelation;
+  // The state as people read it, such as `Done` or `open`, and the kind of
+  // state, such as `completed` or `closed`.
+  state: string | null;
+  stateType: string | null;
+  title: string;
+  url: string | null;
+};
+
 export type Resolved =
   | { issue: TrackerIssue; kind: 'issue' }
   | { kind: 'error'; message: string; reason?: 'tracker_unavailable' };
@@ -81,6 +111,15 @@ export type Tracker = {
   // The refs this tracker understands, for a message about one it does not,
   // such as `a Linear issue key such as ENG-42, or its URL`.
   refHint: string;
+  // The issues `issue` links to or mentions, one level deep, each once:
+  // parent, sub-issues, native relations, then refs in its description.
+  // Refs are looked up only while fewer than `room` links are found; the
+  // rest are counted in `unread`. A lookup that finds nothing drops the ref;
+  // any other failure rejects.
+  related: (
+    issue: TrackerIssue,
+    room: number,
+  ) => Promise<{ issues: Array<LinkedIssue>; unread: number }>;
   // Null when `ref` is not a ref this tracker understands.
   resolve: (ref: string) => Promise<Resolved | null>;
   // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a

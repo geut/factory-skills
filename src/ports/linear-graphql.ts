@@ -224,6 +224,106 @@ export const childrenQuery = linearQuery(
     .transform((data) => data.issue.children.nodes),
 );
 
+// An issue another one links to, with what the plan stage shows of it.
+export type LinearLinked = {
+  // GitHub pull requests attached to it.
+  attachments: Array<string>;
+  // Its comments, counted up to a page; `more` when there are others.
+  comments: { count: number; more: boolean };
+  identifier: string;
+  state: { name: string; type: string } | null;
+  title: string;
+  url: string;
+};
+
+// An issue's links, one level deep, and its description, for the refs in it.
+export type LinearLinks = {
+  children: Array<LinearLinked>;
+  description: string;
+  identifier: string;
+  // Relations from other issues to this one: `blocks` means it blocks this.
+  inverseRelations: Array<{ issue: LinearLinked; type: string }>;
+  parent: LinearLinked | null;
+  // Relations from this issue to others: `blocks` means this blocks it.
+  relations: Array<{ issue: LinearLinked; type: string }>;
+};
+
+// The page sizes of a links read. Linear prices a query by its page sizes
+// multiplied, so a linked issue reads a few attachments and counts its
+// comments up to a page.
+export const LINKED_PAGE = 20;
+const ATTACHMENTS_PAGE = 10;
+export const COMMENTS_PAGE = 50;
+
+const LINKED_FIELDS = `identifier title url state { name type }
+  attachments(first: ${ATTACHMENTS_PAGE}) { nodes { url } }
+  comments(first: ${COMMENTS_PAGE}) { nodes { id } pageInfo { hasNextPage } }`;
+
+const Linked = z
+  .object({
+    attachments: nodesOf(z.object({ url: z.string() })),
+    comments: z.object({
+      nodes: z.array(z.object({ id: z.string() })),
+      pageInfo: z.object({ hasNextPage: z.boolean() }),
+    }),
+    identifier: z.string(),
+    state: z.object({ name: z.string(), type: z.string() }).nullable(),
+    title: z.string(),
+    url: z.string(),
+  })
+  .transform((value): LinearLinked => ({
+    attachments: value.attachments.nodes
+      .map((node) => node.url)
+      .filter((url) => /^https?:\/\/[^/]+\/[^/]+\/[^/]+\/pull\/\d+/.test(url)),
+    comments: {
+      count: value.comments.nodes.length,
+      more: value.comments.pageInfo.hasNextPage,
+    },
+    identifier: value.identifier,
+    state: value.state,
+    title: value.title,
+    url: value.url,
+  }));
+
+export const linksQuery = linearQuery(
+  `query FactoryLinks($id: String!) {
+    issue(id: $id) {
+      identifier description
+      parent { ${LINKED_FIELDS} }
+      children(first: ${LINKED_PAGE}) { nodes { ${LINKED_FIELDS} } }
+      relations(first: ${LINKED_PAGE}) { nodes { type relatedIssue { ${LINKED_FIELDS} } } }
+      inverseRelations(first: ${LINKED_PAGE}) { nodes { type issue { ${LINKED_FIELDS} } } }
+    }
+  }`,
+  z
+    .object({
+      issue: z.object({
+        children: nodesOf(Linked),
+        description: z.string().nullable(),
+        identifier: z.string(),
+        inverseRelations: nodesOf(z.object({ issue: Linked, type: z.string() })),
+        parent: Linked.nullable(),
+        relations: nodesOf(z.object({ relatedIssue: Linked, type: z.string() })),
+      }),
+    })
+    .transform(({ issue }): LinearLinks => ({
+      children: issue.children.nodes,
+      description: issue.description ?? '',
+      identifier: issue.identifier,
+      inverseRelations: issue.inverseRelations.nodes,
+      parent: issue.parent,
+      relations: issue.relations.nodes.map((node) => ({
+        issue: node.relatedIssue,
+        type: node.type,
+      })),
+    })),
+);
+
+export const linkedQuery = linearQuery(
+  `query FactoryLinked($id: String!) { issue(id: $id) { ${LINKED_FIELDS} } }`,
+  z.object({ issue: Linked }).transform((data) => data.issue),
+);
+
 // A deleted comment is left out, as if it never was.
 export const commentQuery = linearQuery(
   `query FactoryComment($id: String!, $commentId: ID) {

@@ -11,8 +11,15 @@ Turn one ticket into the smallest plan that another agent can execute without re
 
 1. Find the factory root. A controller run names it in the prompt (`Factory root:`) and starts you in the ticket's worktree, a fresh checkout of the remote's default branch that has no `.factory/` of its own; read the code there. Otherwise use a `--factory-root` or `FACTORY_ROOT` override, or `<code-root>/.factory`, deriving the code root with `git rev-parse --show-toplevel`. Below, `.factory/` means the factory root.
 2. Read `.factory/FACTORY.json`. Obtain the ticket ID from the source or `ticketIdPattern`; if neither determines it, ask the user before creating artifacts.
-3. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions. When `.factory/CONTEXT.md` does not exist, or lacks a section [references/context.md](references/context.md) requires, create it or add the section from what you learn exploring. A controller prompt names what is missing.
-4. When `github.cli` is true and the ticket is a GitHub issue, do not create `.factory/tickets/<ticket-id>/` as a copy of the issue. Keep acceptance criteria on the issue. A local execution note may point at the issue URL. When GitHub is not the source, create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
+3. When the prompt has a `Linked issues` section, read it before exploring. It lists the ticket's linked issues one level deep, without descriptions; read one with the project's tools (`gh`, the tracker's CLI) when it matters:
+   - A done issue the ticket calls the same fix, or the source of a follow-up: read its merged pull request (`gh pr view`, `gh pr diff`, and its review comments) and reuse its shape.
+   - An open issue: check whether its pull request touches the code this ticket changes, a conflict or ordering risk.
+   - A link the ticket calls out of scope: its title and state are enough.
+
+   Add a bullet to `plan.md` under `Discoveries` for each link that changed the plan, saying what it changed.
+
+4. Read `.factory/CONTEXT.md`, optional `.factory/PRD.md`, relevant code and tests, and project instructions. When `.factory/CONTEXT.md` does not exist, or lacks a section [references/context.md](references/context.md) requires, create it or add the section from what you learn exploring. A controller prompt names what is missing.
+5. When `github.cli` is true and the ticket is a GitHub issue, do not create `.factory/tickets/<ticket-id>/` as a copy of the issue. Keep acceptance criteria on the issue. A local execution note may point at the issue URL. When GitHub is not the source, create or reuse `.factory/tickets/<ticket-id>/` and read [references/artifacts.md](references/artifacts.md).
 
 A parent issue is coordination only. If it has related concrete issues, stop and tell the controller to register those issues as separate tickets. Do not turn them into numbered tasks under the parent. A concrete ticket gets local task files only when its own implementation needs more than one slice, and only in filesystem mode. In tracker mode, ask the user before creating local tasks (`caller_ping` in a controller session). Do not comment on the issue or edit it: only the controller writes to the tracker.
 

@@ -2,13 +2,16 @@ import { factoryRootOf } from '../../controller/keys.ts';
 import { defineStage, type LimitSpec } from '../definition.ts';
 import { childInstructions } from '../prompt.ts';
 import { contextInstruction, type ContextGaps } from './context.ts';
+import { linkedIssuesSection, type PlanLinks } from './links.ts';
 
-// `context`: what the factory root's CONTEXT.md still lacks.
+// `context`: what the factory root's CONTEXT.md still lacks; `links`: the
+// ticket's linked issues, as read when its worktree was ready.
 export type PlanInput = {
   body: string;
   context: ContextGaps;
   displayRef: string;
   factoryDir: string;
+  links: PlanLinks;
   title: string;
 };
 
@@ -17,11 +20,12 @@ const contract = 'factory.plan.v3';
 // The plan is the files the planner writes; its reply is only a summary.
 const handoff = `Write plan.md and the task files. The ${contract} template in the skill is a suggested summary, not a requirement. Then call subagent_done once.`;
 
-// The FACTORY.json limits this stage reads.
-export const planLimits = { planCorrections: { default: 3, min: 0 } } as const satisfies Record<
-  string,
-  LimitSpec
->;
+// The FACTORY.json limits this stage reads. `linkedIssues` bounds the
+// linked issues its prompt lists; 0 reads none.
+export const planLimits = {
+  linkedIssues: { default: 20, min: 0 },
+  planCorrections: { default: 3, min: 0 },
+} as const satisfies Record<string, LimitSpec>;
 
 export const plan = defineStage<PlanInput, 'plan'>({
   conclude: (_view, _run, report) =>
@@ -63,6 +67,7 @@ export const plan = defineStage<PlanInput, 'plan'>({
         ),
         '',
         input.body,
+        ...linkedIssuesSection(input.links),
       ].join('\n'),
   },
   scope: 'ticket',

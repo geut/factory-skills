@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
-import { createGithubTracker, type GithubClient, type GithubIssue } from './github.ts';
+import {
+  createGithubTracker,
+  githubCliClient,
+  githubMentions,
+  type GithubClient,
+  type GithubIssue,
+  type GithubLinked,
+} from './github.ts';
 import type { TrackerIssue } from './tracker.ts';
 
 const config = {
@@ -135,4 +145,172 @@ test('only an open blocker blocks: GitHub keeps the link after the blocker close
       url: 'https://github.com/geut/factory-skills/issues/40',
     },
   ]);
+});
+
+// An issue in geut/factory-skills as a link, closed as completed unless it
+// says otherwise.
+function linked(number: number, overrides: Partial<GithubLinked> = {}): GithubLinked {
+  return {
+    comments: 0,
+    kind: 'issue',
+    number,
+    owner: 'geut',
+    pullRequests: [],
+    repo: 'factory-skills',
+    state: 'CLOSED',
+    stateReason: 'COMPLETED',
+    title: `Issue ${number}`,
+    url: `https://github.com/geut/factory-skills/issues/${number}`,
+    ...overrides,
+  };
+}
+
+test('linked issues: parent, sub-issue, and the issues the body names, each once', async () => {
+  const looked: Array<string> = [];
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    issueLinks: () => ({
+      blockedBy: [],
+      blocking: [],
+      parent: linked(3, { state: 'OPEN', stateReason: null }),
+      subIssues: [linked(8, { state: 'OPEN', stateReason: null })],
+    }),
+    listSubIssues: () => [],
+    lookupRef: (at) => {
+      looked.push(`${at.owner}/${at.repo}#${at.number}`);
+      if (at.number === 99) {
+        return null;
+      }
+      return at.number === 5
+        ? linked(5, {
+            comments: 16,
+            pullRequests: ['https://github.com/geut/factory-skills/pull/6'],
+          })
+        : linked(at.number, { owner: at.owner, repo: at.repo });
+    },
+  });
+  assert.ok(tracker.capabilities.has('related'));
+  const { issues: found, unread } = await tracker.related(
+    {
+      ...issue,
+      body: 'Same fix shape as #5. Not #99. Parent is #3, see also acme/app#12 and #7 (this one).',
+    },
+    20,
+  );
+  assert.equal(unread, 0);
+  assert.deepEqual(
+    found.map((item) => [item.relation, item.displayRef, item.state, item.stateType]),
+    [
+      ['parent', 'geut/factory-skills#3', 'open', 'open'],
+      ['sub-issue', 'geut/factory-skills#8', 'open', 'open'],
+      ['mentioned', 'geut/factory-skills#5', 'closed', 'completed'],
+      ['mentioned', 'acme/app#12', 'closed', 'completed'],
+    ],
+  );
+  assert.deepEqual(found[2]?.pullRequests, ['https://github.com/geut/factory-skills/pull/6']);
+  assert.deepEqual(found[2]?.comments, { count: 16, more: false });
+  // #3 is the parent already, and #7 is the issue itself: neither is looked up.
+  assert.deepEqual(looked, ['geut/factory-skills#5', 'geut/factory-skills#99', 'acme/app#12']);
+});
+
+test('refs in a body: URLs, owner/repo#n, and #n, never an anchor or an entity', () => {
+  assert.deepEqual(
+    githubMentions(
+      [
+        'https://github.com/geut/factory-skills/issues/4 and https://github.com/acme/app/pull/9',
+        'acme/app#12, #5, and #5 again.',
+        'Not https://github.com/geut/factory-skills/pull/4#issuecomment-1, x#6, or &#123;.',
+      ].join('\n'),
+      { owner: 'geut', repo: 'factory-skills' },
+      'github.com',
+    ),
+    [
+      { number: 4, owner: 'geut', repo: 'factory-skills' },
+      { number: 9, owner: 'acme', repo: 'app' },
+      { number: 12, owner: 'acme', repo: 'app' },
+      { number: 5, owner: 'geut', repo: 'factory-skills' },
+    ],
+  );
+});
+
+test('a client that cannot read links has no related capability', () => {
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    listSubIssues: () => [],
+  });
+  assert.equal(tracker.capabilities.has('related'), false);
+});
+
+test('refs are looked up only while there is room; the rest count as unread', async () => {
+  const looked: Array<number> = [];
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    issueLinks: () => ({ blockedBy: [], blocking: [], parent: linked(3), subIssues: [] }),
+    listSubIssues: () => [],
+    lookupRef: (at) => {
+      looked.push(at.number);
+      return linked(at.number);
+    },
+  });
+  const found = await tracker.related({ ...issue, body: 'See #4, #5, and #6.' }, 2);
+  assert.deepEqual(
+    found.issues.map((item) => item.displayRef),
+    ['geut/factory-skills#3', 'geut/factory-skills#4'],
+  );
+  assert.deepEqual(looked, [4]);
+  assert.equal(found.unread, 2);
+});
+
+test('links are read on the ticket’s own host, which may not be FACTORY.json’s', async () => {
+  const hosts: Array<string> = [];
+  const tracker = createGithubTracker(config, {
+    fetchIssue: () => fetched(''),
+    issueLinks: (at) => {
+      hosts.push(at.host);
+      return { blockedBy: [], blocking: [], parent: null, subIssues: [] };
+    },
+    listSubIssues: () => [],
+    lookupRef: (at) => {
+      hosts.push(at.host);
+      return linked(at.number);
+    },
+  });
+  await tracker.related(
+    {
+      ...issue,
+      body: 'Like https://ghe.corp/geut/factory-skills/issues/4.',
+      id: 'github:ghe.corp:I_7',
+    },
+    20,
+  );
+  assert.deepEqual(hosts, ['ghe.corp', 'ghe.corp']);
+});
+
+test('a ref GitHub cannot resolve is no link; any other gh failure is a failure', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'factory-gh-'));
+  const stub = (file: string, message: string): string => {
+    const bin = path.join(dir, file);
+    writeFileSync(bin, `#!/bin/sh\necho '${message}' >&2\nexit 1\n`);
+    chmodSync(bin, 0o755);
+    return bin;
+  };
+  const before = process.env['FACTORY_GH_BIN'];
+  const at = { host: 'github.com', number: 99, owner: 'geut', repo: 'factory-skills' };
+  const lookupRef = githubCliClient().lookupRef;
+  assert.ok(lookupRef);
+  try {
+    process.env['FACTORY_GH_BIN'] = stub(
+      'missing',
+      'GraphQL: Could not resolve to an IssueOrPullRequest with the number of 99.',
+    );
+    assert.equal(await lookupRef(at), null);
+    process.env['FACTORY_GH_BIN'] = stub('limited', 'HTTP 403: API rate limit exceeded');
+    await assert.rejects(async () => lookupRef(at), /rate limit/);
+  } finally {
+    if (before === undefined) {
+      delete process.env['FACTORY_GH_BIN'];
+    } else {
+      process.env['FACTORY_GH_BIN'] = before;
+    }
+  }
 });

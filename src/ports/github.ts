@@ -1,9 +1,12 @@
+import { z } from 'zod';
 import type { GithubTrackerConfig } from '../config.ts';
 import { ghJson, ghRun, type MaybePromise } from './gh.ts';
 import { markdownChecklist, tickMarkdown } from './markdown-checklist.ts';
 import {
   UnsupportedOperation,
   type IssueLink,
+  type LinkedIssue,
+  type LinkRelation,
   type TrackerCapability,
   type Resolved,
   type Tracker,
@@ -39,6 +42,30 @@ export type GithubIssue = {
 
 type IssueLocator = { host: string; number: number; owner: string; repo: string };
 
+// An issue or pull request another issue links to or mentions.
+export type GithubLinked = {
+  comments: number;
+  kind: 'issue' | 'pull_request';
+  number: number;
+  owner: string;
+  // Pull requests that close it; a pull request is its own.
+  pullRequests: Array<string>;
+  repo: string;
+  // OPEN, CLOSED, or MERGED; why an issue closed, such as COMPLETED.
+  state: string;
+  stateReason: string | null;
+  title: string;
+  url: string;
+};
+
+// An issue's native links, one level deep.
+export type GithubLinks = {
+  blockedBy: Array<GithubLinked>;
+  blocking: Array<GithubLinked>;
+  parent: GithubLinked | null;
+  subIssues: Array<GithubLinked>;
+};
+
 // The calls the adapter makes. Tests pass a stand-in, which may answer at
 // once; githubCliClient runs gh without blocking the server.
 export type GithubClient = {
@@ -51,6 +78,8 @@ export type GithubClient = {
     remove: Array<string>,
   ) => MaybePromise<void>;
   fetchIssue: (input: IssueLocator) => MaybePromise<GithubIssue>;
+  // The issue's parent, sub-issues, and blocking links.
+  issueLinks?: (input: IssueLocator) => MaybePromise<GithubLinks>;
   listBlockedBy?: (input: Omit<IssueLocator, 'host'>) => MaybePromise<Array<RelatedIssue>>;
   listComments?: (
     input: Omit<IssueLocator, 'host'>,
@@ -63,6 +92,8 @@ export type GithubClient = {
     repo: string;
   }) => MaybePromise<Array<GithubIssue>>;
   listSubIssues: (input: Omit<IssueLocator, 'host'>) => MaybePromise<Array<RelatedIssue>>;
+  // The issue or pull request a ref names; null when there is none.
+  lookupRef?: (input: IssueLocator) => MaybePromise<GithubLinked | null>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -102,6 +133,95 @@ async function relatedIssues(path: string): Promise<Array<RelatedIssue>> {
 
 async function gh(args: Array<string>, input = ''): Promise<void> {
   await ghRun(args, input);
+}
+
+const LINKED_FIELDS = `number title url state stateReason repository { nameWithOwner }
+  comments { totalCount }
+  closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { url } }`;
+
+// How many of each kind of link one read takes.
+const LINKS_PAGE = 50;
+
+const LinkedNode = z.object({
+  closedByPullRequestsReferences: z.object({ nodes: z.array(z.object({ url: z.string() })) }),
+  comments: z.object({ totalCount: z.number() }),
+  number: z.number(),
+  repository: z.object({ nameWithOwner: z.string() }),
+  state: z.string(),
+  stateReason: z.string().nullable(),
+  title: z.string(),
+  url: z.string(),
+});
+
+function linkedOf(
+  node: z.output<typeof LinkedNode>,
+  kind: GithubLinked['kind'] = 'issue',
+): GithubLinked {
+  const [owner = '', repo = ''] = node.repository.nameWithOwner.split('/');
+  return {
+    comments: node.comments.totalCount,
+    kind,
+    number: node.number,
+    owner,
+    pullRequests:
+      kind === 'pull_request'
+        ? [node.url]
+        : node.closedByPullRequestsReferences.nodes.map((item) => item.url),
+    repo,
+    state: node.state,
+    stateReason: node.stateReason,
+    title: node.title,
+    url: node.url,
+  };
+}
+
+const page = z.object({ nodes: z.array(LinkedNode) });
+
+const LinksResponse = z.object({
+  data: z.object({
+    repository: z.object({
+      issue: z.object({
+        blockedBy: page,
+        blocking: page,
+        parent: LinkedNode.nullable(),
+        subIssues: page,
+      }),
+    }),
+  }),
+});
+
+// A pull request has no closing references or state reason of its own.
+const RefResponse = z.object({
+  data: z.object({
+    repository: z
+      .object({
+        issueOrPullRequest: z
+          .discriminatedUnion('__typename', [
+            LinkedNode.extend({ __typename: z.literal('Issue') }),
+            LinkedNode.omit({ closedByPullRequestsReferences: true, stateReason: true }).extend({
+              __typename: z.literal('PullRequest'),
+            }),
+          ])
+          .nullable(),
+      })
+      .nullable(),
+  }),
+});
+
+function graphqlArgs(host: string, query: string, at: Omit<IssueLocator, 'host'>): Array<string> {
+  return [
+    'api',
+    'graphql',
+    ...(host === 'github.com' ? [] : ['--hostname', host]),
+    '-f',
+    `query=${query}`,
+    '-f',
+    `owner=${at.owner}`,
+    '-f',
+    `name=${at.repo}`,
+    '-F',
+    `number=${at.number}`,
+  ];
 }
 
 export function githubCliClient(): GithubClient {
@@ -198,6 +318,24 @@ export function githubCliClient(): GithubClient {
         url: typeof payload['url'] === 'string' ? payload['url'] : '',
       };
     },
+    issueLinks: async (input) => {
+      const query = `query FactoryLinks($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) { issue(number: $number) {
+          parent { ${LINKED_FIELDS} }
+          subIssues(first: ${LINKS_PAGE}) { nodes { ${LINKED_FIELDS} } }
+          blockedBy(first: ${LINKS_PAGE}) { nodes { ${LINKED_FIELDS} } }
+          blocking(first: ${LINKS_PAGE}) { nodes { ${LINKED_FIELDS} } }
+        } }
+      }`;
+      const parsed = LinksResponse.parse(await ghJson(graphqlArgs(input.host, query, input)));
+      const { issue } = parsed.data.repository;
+      return {
+        blockedBy: issue.blockedBy.nodes.map((node) => linkedOf(node)),
+        blocking: issue.blocking.nodes.map((node) => linkedOf(node)),
+        parent: issue.parent === null ? null : linkedOf(issue.parent),
+        subIssues: issue.subIssues.nodes.map((node) => linkedOf(node)),
+      };
+    },
     listBlockedBy: (input) =>
       relatedIssues(
         `repos/${input.owner}/${input.repo}/issues/${input.number}/dependencies/blocked_by`,
@@ -267,6 +405,37 @@ export function githubCliClient(): GithubClient {
     },
     listSubIssues: (input) =>
       relatedIssues(`repos/${input.owner}/${input.repo}/issues/${input.number}/sub_issues`),
+    // gh exits non-zero when the number names nothing: that is no link.
+    lookupRef: async (input) => {
+      const query = `query FactoryRef($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) {
+          __typename
+          ... on Issue { ${LINKED_FIELDS} }
+          ... on PullRequest { number title url state repository { nameWithOwner } comments { totalCount } }
+        } }
+      }`;
+      let payload: unknown;
+      try {
+        payload = await ghJson(graphqlArgs(input.host, query, input));
+      } catch (error: unknown) {
+        // GitHub's answer for a repository or number that names nothing;
+        // anything else, such as a rate limit, is a failure.
+        if (/Could not resolve to/i.test(error instanceof Error ? error.message : String(error))) {
+          return null;
+        }
+        throw error;
+      }
+      const found = RefResponse.parse(payload).data.repository?.issueOrPullRequest ?? null;
+      if (found === null) {
+        return null;
+      }
+      return found.__typename === 'Issue'
+        ? linkedOf(found)
+        : linkedOf(
+            { ...found, closedByPullRequestsReferences: { nodes: [] }, stateReason: null },
+            'pull_request',
+          );
+    },
   };
 }
 
@@ -338,6 +507,105 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'GitHub request failed';
 }
 
+// The issues and pull requests a body names, in order: issue and pull
+// request URLs on `host`, owner/repo#n, and #n in the issue's own repository.
+export function githubMentions(
+  text: string,
+  at: { owner: string; repo: string },
+  host: string,
+): Array<Omit<IssueLocator, 'host'>> {
+  const site = host.replaceAll('.', String.raw`\.`);
+  const pattern = new RegExp(
+    `https?://${site}/([\\w.-]+)/([\\w.-]+)/(?:issues|pull)/(\\d+)|(?<![\\w/.-])([\\w.-]+)/([\\w.-]+)#(\\d+)\\b|(?<![\\w/#&])#(\\d+)\\b`,
+    'g',
+  );
+  const found = new Map<string, Omit<IssueLocator, 'host'>>();
+  for (const match of text.matchAll(pattern)) {
+    const owner = match[1] ?? match[4] ?? at.owner;
+    const repo = match[2] ?? match[5] ?? at.repo;
+    const number = Number(match[3] ?? match[6] ?? match[7]);
+    found.set(`${owner}/${repo}#${number}`.toLowerCase(), { number, owner, repo });
+  }
+  return [...found.values()];
+}
+
+// How many refs in a body are looked up at once.
+const MENTION_BATCH = 5;
+
+// The host an issue lives on, from its id (`github:<host>:<node id>`): a
+// ticket may come from a URL on another host than FACTORY.json's.
+function hostOf(issue: TrackerIssue, fallback: string): string {
+  const [kind, host] = issue.id.split(':');
+  return kind === 'github' && host !== undefined && host.length > 0 ? host : fallback;
+}
+
+function linkedIssue(linked: GithubLinked, relation: LinkRelation): LinkedIssue {
+  return {
+    comments: { count: linked.comments, more: false },
+    displayRef: `${linked.owner}/${linked.repo}#${linked.number}`,
+    pullRequests: linked.pullRequests,
+    relation,
+    state: linked.state.toLowerCase(),
+    stateType: (linked.stateReason ?? linked.state).toLowerCase(),
+    title: linked.title,
+    url: linked.url,
+  };
+}
+
+// The issue's links, each once: parent, sub-issues, blocking links, then the
+// issues and pull requests its body names.
+async function relatedOf(
+  client: GithubClient,
+  issueLinks: NonNullable<GithubClient['issueLinks']>,
+  issue: TrackerIssue,
+  host: string,
+  room: number,
+): Promise<{ issues: Array<LinkedIssue>; unread: number }> {
+  const at = locate(issue);
+  const self = `${at.owner}/${at.repo}#${at.number}`.toLowerCase();
+  const links = await issueLinks({ ...at, host });
+  const found = new Map<string, LinkedIssue>();
+  const add = (linked: GithubLinked, relation: LinkRelation): void => {
+    const key = `${linked.owner}/${linked.repo}#${linked.number}`.toLowerCase();
+    if (key !== self && !found.has(key)) {
+      found.set(key, linkedIssue(linked, relation));
+    }
+  };
+  if (links.parent !== null) {
+    add(links.parent, 'parent');
+  }
+  for (const item of links.subIssues) {
+    add(item, 'sub-issue');
+  }
+  for (const item of links.blockedBy) {
+    add(item, 'blocked by');
+  }
+  for (const item of links.blocking) {
+    add(item, 'blocks');
+  }
+  const { lookupRef } = client;
+  const mentioned = githubMentions(issue.body, at, host).filter((ref) => {
+    const key = `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
+    return key !== self && !found.has(key);
+  });
+  if (lookupRef === undefined) {
+    return { issues: [...found.values()], unread: mentioned.length };
+  }
+  // Refs are looked up only while there is room for them.
+  let looked = 0;
+  while (looked < mentioned.length && found.size < room) {
+    const refs = mentioned.slice(looked, looked + Math.min(MENTION_BATCH, room - found.size));
+    const batch = await Promise.all(refs.map(async (ref) => lookupRef({ ...ref, host })));
+    looked += refs.length;
+    for (const linked of batch) {
+      if (linked !== null) {
+        add(linked, 'mentioned');
+      }
+    }
+  }
+  return { issues: [...found.values()], unread: mentioned.length - looked };
+}
+
 function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
   return {
     author: issue.author,
@@ -376,6 +644,10 @@ export function createGithubTracker(
   if (listIssues !== undefined && config !== null) {
     capabilities.push('backlog');
   }
+  const { issueLinks } = client;
+  if (issueLinks !== undefined) {
+    capabilities.push('related');
+  }
   return {
     blockedBy: async (issue) => {
       if (listBlockedBy === undefined) {
@@ -392,7 +664,8 @@ export function createGithubTracker(
     checklistItems: async (issue) => {
       const at = locate(issue);
       return markdownChecklist(
-        (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body,
+        (await client.fetchIssue({ ...at, host: hostOf(issue, config?.host ?? 'github.com') }))
+          .body,
       );
     },
     children: async (issue) => {
@@ -435,6 +708,18 @@ export function createGithubTracker(
       ).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
     },
     refHint: 'a GitHub URL, owner/repo#number, or #number',
+    related: async (issue, room) => {
+      if (issueLinks === undefined) {
+        throw new UnsupportedOperation('github', 'linked issues');
+      }
+      return relatedOf(
+        client,
+        issueLinks,
+        issue,
+        hostOf(issue, config?.host ?? 'github.com'),
+        room,
+      );
+    },
     resolve: async (ref): Promise<Resolved | null> => {
       const target = githubTarget(ref, config);
       if (target === null) {
@@ -471,7 +756,9 @@ export function createGithubTracker(
       }
       const at = locate(issue);
       // The body as it is now: people may have edited it since it was read.
-      const current = (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body;
+      const current = (
+        await client.fetchIssue({ ...at, host: hostOf(issue, config?.host ?? 'github.com') })
+      ).body;
       const ticked = tickMarkdown(current, keys);
       if (ticked.body !== current) {
         await editBody(at, ticked.body);
