@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
 import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { piAgentDir } from '../actions/review-rules.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
@@ -27,6 +31,7 @@ import {
   renderReloadFooter,
   type ReloadNotice,
 } from './reload-notice.ts';
+import { createRetirement } from './retire.ts';
 import { factoryStatusPayload, factoryStatusRenderer } from './status-message.ts';
 import { FactoryTicketView } from './ticket-view.ts';
 import { renderUpdateFooter, updateNoticeRenderer } from './update-notice.ts';
@@ -85,24 +90,26 @@ function refreshReload(service: FactoryClient): void {
   void service
     .serverVersion()
     .then((server) => {
-      // A server that is up but cannot say (a bad FACTORY.json, a revoked
-      // token, an older server) is asked again in a minute, or on a restart.
-      versionAsks.answered(server !== null);
-      if (server === null) {
-        return;
-      }
-      const notice = reloadNeeded({ pi: factoryVersion(), server });
-      const ctx = latest;
-      if (notice !== null && reloadPostedFor !== notice.server) {
-        reloadPostedFor = notice.server;
-        publishReload(notice);
-      }
-      if (ctx !== null && ctx.hasUI) {
-        ctx.ui.setStatus(
-          'factory-reload',
-          notice === null ? undefined : renderReloadFooter({ notice, theme: ctx.ui.theme }),
-        );
-      }
+      guarded(() => {
+        // A server that is up but cannot say (a bad FACTORY.json, a revoked
+        // token, an older server) is asked again in a minute, or on a restart.
+        versionAsks.answered(server !== null);
+        if (server === null) {
+          return;
+        }
+        const notice = reloadNeeded({ pi: factoryVersion(), server });
+        const ctx = latest;
+        if (notice !== null && reloadPostedFor !== notice.server) {
+          reloadPostedFor = notice.server;
+          publishReload(notice);
+        }
+        if (ctx !== null && ctx.hasUI) {
+          ctx.ui.setStatus(
+            'factory-reload',
+            notice === null ? undefined : renderReloadFooter({ notice, theme: ctx.ui.theme }),
+          );
+        }
+      });
     })
     .catch(() => {
       versionAsks.answered(false);
@@ -207,8 +214,43 @@ function refreshWidget(service: FactoryClient): void {
   }
   tick = setInterval(() => {
     frame += 1;
-    widgetTui?.requestRender();
+    guarded(() => widgetTui?.requestRender());
   }, 80);
+}
+
+// Stops everything that runs on its own, and lets go of the session's
+// context: Pi marks it stale once the session reloads, quits, or switches.
+function stopWatching(): void {
+  if (poll !== null) {
+    clearInterval(poll);
+    poll = null;
+  }
+  stopTick();
+  latest = null;
+  widgetTui = null;
+  liveCommands = new Map();
+  // A command or view still running keeps its client until it finishes; a
+  // new session gets clients of its own.
+  retirement.retire([...clients.values()]);
+  clients.clear();
+}
+
+// Clients of a session that ended, closed once no command uses them.
+const retirement = createRetirement<FactoryClient>();
+const { tracked } = retirement;
+
+// Runs work a timer or a callback started. Nothing it throws may reach Pi,
+// which exits on an uncaught exception. A context gone stale means the
+// session is gone, so the timers stop; anything else skips this round, and
+// the next tick tries again.
+function guarded(work: () => void): void {
+  try {
+    work();
+  } catch (error: unknown) {
+    if (/\bstale\b/i.test(error instanceof Error ? error.message : String(error))) {
+      stopWatching();
+    }
+  }
 }
 
 // Asks the server which commands long steps are running, once a second and
@@ -229,9 +271,13 @@ function refreshCommands(service: FactoryClient): void {
   void service
     .stepCommands()
     .then((found) => {
-      liveCommands = found;
-      widgetTui?.requestRender();
+      guarded(() => {
+        liveCommands = found;
+        widgetTui?.requestRender();
+      });
     })
+    // The steps show without their commands until the next look.
+    .catch(() => undefined)
     .finally(() => {
       fetchingCommands = false;
     });
@@ -264,22 +310,28 @@ function watch(service: FactoryClient): void {
   refreshUpdate(service);
   refreshReload(service);
   refreshWidget(service);
+  // Each step on its own: one that fails leaves the others running.
   poll = setInterval(() => {
-    refreshCommands(service);
-    refreshUpdate(service);
-    refreshReload(service);
-    const revision = service.revision();
-    // A controller step starts and ends with no event, only an action change.
-    const actions = service.actionsVersion();
-    if (revision === seenRevision && actions === seenActions) {
-      return;
-    }
-    for (const { card } of service.cardsSince(seenRevision)) {
-      publishStatus(card);
-    }
-    seenRevision = revision;
-    seenActions = actions;
-    refreshWidget(service);
+    guarded(() => refreshCommands(service));
+    guarded(() => refreshUpdate(service));
+    guarded(() => refreshReload(service));
+    guarded(() => {
+      const revision = service.revision();
+      // A controller step starts and ends with no event, only an action change.
+      const actions = service.actionsVersion();
+      if (revision === seenRevision && actions === seenActions) {
+        return;
+      }
+      // Each card counts as seen once posted, so a failure partway posts
+      // none of them twice.
+      for (const posted of service.cardsSince(seenRevision)) {
+        publishStatus(posted.card);
+        seenRevision = posted.revision;
+      }
+      seenRevision = revision;
+      seenActions = actions;
+      refreshWidget(service);
+    });
   }, POLL_MS);
   poll.unref();
 }
@@ -446,85 +498,87 @@ export default function factoryExtension(pi: ExtensionAPI): void {
   pi.registerMessageRenderer('factory-reload', reloadNoticeRenderer);
   pi.registerCommand('factory', {
     description: 'Start or continue a factory ticket',
-    handler: async (args, ctx) => {
-      latest = ctx;
-      const parsed = parseFactoryCommand(args);
-      if (parsed.kind === 'agents') {
-        await toggleAgents(ctx);
-        return;
-      }
-      if (parsed.kind === 'ticket') {
-        const service = serviceFor(ctx.cwd);
-        const detail = service.ticketDetail(parsed.ref);
-        if (typeof detail === 'string') {
-          publishStatus(detail);
-          return;
-        }
-        await openTicket(ctx, () => {
-          const next = service.ticketDetail(parsed.ref);
-          return typeof next === 'string' ? null : next;
-        });
-        return;
-      }
-      if (parsed.kind === 'update' && parsed.mode === 'rollback') {
-        const service = serviceFor(ctx.cwd);
-        const reply = await service.rollback(parsed.yes);
-        if (reply.kind !== 'confirm') {
-          publishStatus(reply.text);
-          return;
-        }
-        // Restoring the database loses what was recorded since: ask first.
-        if (ctx.mode !== 'tui' || !ctx.hasUI) {
-          publishStatus(`${reply.text}\n${ROLLBACK_CONFIRM_HINT}`);
-          return;
-        }
-        const confirmed = await ctx.ui.confirm('Roll back the factory?', reply.text);
-        publishStatus(
-          confirmed ? (await service.rollback(true)).text : 'Rollback cancelled; nothing changed.',
-        );
-        return;
-      }
-      if (parsed.kind === 'update') {
-        const service = serviceFor(ctx.cwd);
-        const reply = await service.update(parsed.mode);
-        if (reply.kind === 'notice') {
-          publishUpdate(reply.notice);
-        } else {
-          publishStatus(reply.text);
-        }
-        // The reply already showed what the check found.
-        seenAnnounced = service.updateState().announcedAt;
-        refreshUpdate(service);
-        return;
-      }
-      // In the terminal, --list opens the picker; elsewhere it posts the card.
-      if (parsed.kind === 'feedback' && parsed.list && ctx.mode === 'tui' && ctx.hasUI) {
-        const service = serviceFor(ctx.cwd);
-        const listed = await service.pendingFeedback(parsed.ref);
-        if (typeof listed === 'string') {
-          publishStatus(listed);
-          return;
-        }
-        const picked = await pickFeedback(ctx, listed, parsed.note);
-        if (picked === false) {
-          return;
-        }
-        publishStatus(await service.command({ ...parsed, list: false, only: picked.only }));
-        refreshWidget(service);
-        return;
-      }
-      const service = serviceFor(ctx.cwd);
-      publishStatus(await service.command(parsed));
-      refreshWidget(service);
-    },
+    handler: (args, ctx) => tracked(() => runCommand(args, ctx)),
   });
+
+  async function runCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
+    latest = ctx;
+    const parsed = parseFactoryCommand(args);
+    if (parsed.kind === 'agents') {
+      await toggleAgents(ctx);
+      return;
+    }
+    if (parsed.kind === 'ticket') {
+      const service = serviceFor(ctx.cwd);
+      const detail = service.ticketDetail(parsed.ref);
+      if (typeof detail === 'string') {
+        publishStatus(detail);
+        return;
+      }
+      await openTicket(ctx, () => {
+        const next = service.ticketDetail(parsed.ref);
+        return typeof next === 'string' ? null : next;
+      });
+      return;
+    }
+    if (parsed.kind === 'update' && parsed.mode === 'rollback') {
+      const service = serviceFor(ctx.cwd);
+      const reply = await service.rollback(parsed.yes);
+      if (reply.kind !== 'confirm') {
+        publishStatus(reply.text);
+        return;
+      }
+      // Restoring the database loses what was recorded since: ask first.
+      if (ctx.mode !== 'tui' || !ctx.hasUI) {
+        publishStatus(`${reply.text}\n${ROLLBACK_CONFIRM_HINT}`);
+        return;
+      }
+      const confirmed = await ctx.ui.confirm('Roll back the factory?', reply.text);
+      publishStatus(
+        confirmed ? (await service.rollback(true)).text : 'Rollback cancelled; nothing changed.',
+      );
+      return;
+    }
+    if (parsed.kind === 'update') {
+      const service = serviceFor(ctx.cwd);
+      const reply = await service.update(parsed.mode);
+      if (reply.kind === 'notice') {
+        publishUpdate(reply.notice);
+      } else {
+        publishStatus(reply.text);
+      }
+      // The reply already showed what the check found.
+      seenAnnounced = service.updateState().announcedAt;
+      refreshUpdate(service);
+      return;
+    }
+    // In the terminal, --list opens the picker; elsewhere it posts the card.
+    if (parsed.kind === 'feedback' && parsed.list && ctx.mode === 'tui' && ctx.hasUI) {
+      const service = serviceFor(ctx.cwd);
+      const listed = await service.pendingFeedback(parsed.ref);
+      if (typeof listed === 'string') {
+        publishStatus(listed);
+        return;
+      }
+      const picked = await pickFeedback(ctx, listed, parsed.note);
+      if (picked === false) {
+        return;
+      }
+      publishStatus(await service.command({ ...parsed, list: false, only: picked.only }));
+      refreshWidget(service);
+      return;
+    }
+    const service = serviceFor(ctx.cwd);
+    publishStatus(await service.command(parsed));
+    refreshWidget(service);
+  }
 
   try {
     pi.registerShortcut('alt+s', {
       description: 'Toggle factory agents',
       handler: (ctx) => {
         latest = ctx;
-        void toggleAgents(ctx);
+        void tracked(() => toggleAgents(ctx));
       },
     });
   } catch {
@@ -534,5 +588,11 @@ export default function factoryExtension(pi: ExtensionAPI): void {
   pi.on('session_start', (_event, ctx) => {
     latest = ctx;
     watch(serviceFor(ctx.cwd));
+  });
+
+  // On /reload, quit, or a switch to another session, Pi replaces this
+  // extension's context; the next session_start watches again.
+  pi.on('session_shutdown', () => {
+    stopWatching();
   });
 }
