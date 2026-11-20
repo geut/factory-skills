@@ -113,7 +113,13 @@ export type Tracker = {
   refHint: string;
   // The issues `issue` links to or mentions, one level deep, each once:
   // parent, sub-issues, native relations, then refs in its description.
-  related: (issue: TrackerIssue) => Promise<Array<LinkedIssue>>;
+  // Refs are looked up only while fewer than `room` links are found; the
+  // rest are counted in `unread`. A lookup that finds nothing drops the ref;
+  // any other failure rejects.
+  related: (
+    issue: TrackerIssue,
+    room: number,
+  ) => Promise<{ issues: Array<LinkedIssue>; unread: number }>;
   // Null when `ref` is not a ref this tracker understands.
   resolve: (ref: string) => Promise<Resolved | null>;
   // Shows `status` on `issue` the way FACTORY.json maps it; unmapped is a

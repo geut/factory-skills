@@ -89,6 +89,8 @@ type ServeInput = {
   github?: GithubClient;
   // Tests pass a stand-in; a Linear tracker uses the SDK otherwise.
   linear?: TrackerClients['linear'];
+  // The pauses between retries of a linked-issues read; tests shorten them.
+  linksRetryDelaysMs?: Array<number>;
   // Called when the server loses its lease and has shut itself down.
   onLost?: (message: string) => void;
   // Called when an update started a new server and this one has shut down.
@@ -518,6 +520,9 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     ...(input.github === undefined ? {} : { github: input.github }),
     leaseOwner: instanceId,
     linear,
+    ...(input.linksRetryDelaysMs === undefined
+      ? {}
+      : { linksRetryDelaysMs: input.linksRetryDelaysMs }),
     log: input.out,
     notify: input.out,
     runtime,

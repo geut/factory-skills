@@ -295,7 +295,8 @@ test('linked issues: parent, sub-issue, relations both ways, then keys the descr
   linear.linked.set('ENG-31', linked('ENG-31'));
   const tracker = createLinearTracker(config, linear.api);
   assert.ok(tracker.capabilities.has('related'));
-  const found = await tracker.related(await resolved(tracker));
+  const { issues: found, unread } = await tracker.related(await resolved(tracker), 20);
+  assert.equal(unread, 0);
   assert.deepEqual(
     found.map((item) => [item.relation, item.displayRef, item.state, item.pullRequests]),
     [
@@ -311,6 +312,37 @@ test('linked issues: parent, sub-issue, relations both ways, then keys the descr
   assert.equal(found[3]?.title, 'Issue BUG-7');
 });
 
+test('a key Linear does not know is dropped; any other failure fails the read', async () => {
+  const linear = fake(linearIssue({ description: 'After ENG-30 and UTF-8.' }));
+  const tracker = createLinearTracker(config, linear.api);
+  const issue = await resolved(tracker);
+  // ENG-30 and UTF-8 name no issue: both are dropped.
+  assert.deepEqual(await tracker.related(issue, 20), { issues: [], unread: 0 });
+  linear.api = {
+    ...linear.api,
+    linked: () => Promise.reject(new Error('Rate limit exceeded')),
+  };
+  await assert.rejects(
+    () => createLinearTracker(config, linear.api).related(issue, 20),
+    /Rate limit exceeded/,
+  );
+});
+
+test('keys are looked up only while there is room; the rest count as unread', async () => {
+  const linear = fake(linearIssue({ description: 'See ENG-30, ENG-31, and ENG-32.' }));
+  for (const key of ['ENG-30', 'ENG-31', 'ENG-32']) {
+    linear.linked.set(key, linked(key));
+  }
+  linear.links = { children: [], inverseRelations: [], parent: linked('ENG-40'), relations: [] };
+  const tracker = createLinearTracker(config, linear.api);
+  const found = await tracker.related(await resolved(tracker), 2);
+  assert.deepEqual(
+    found.issues.map((item) => item.displayRef),
+    ['ENG-40', 'ENG-30'],
+  );
+  assert.equal(found.unread, 2);
+});
+
 test('the issue’s own blocks and duplicate relations read from its side', async () => {
   const linear = fake();
   linear.links = {
@@ -324,7 +356,7 @@ test('the issue’s own blocks and duplicate relations read from its side', asyn
   };
   const tracker = createLinearTracker(config, linear.api);
   assert.deepEqual(
-    (await tracker.related(await resolved(tracker))).map((item) => [
+    (await tracker.related(await resolved(tracker), 20)).issues.map((item) => [
       item.relation,
       item.displayRef,
     ]),

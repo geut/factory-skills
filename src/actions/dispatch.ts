@@ -118,7 +118,7 @@ function taskLabel(snapshot: FactorySnapshot, session: SessionRecord): string | 
 }
 
 export async function dispatchPending(input: {
-  afterValidation: () => void;
+  afterDetached: () => void;
   arm: (runId: RunId) => void;
   // The commands long actions are running, for their controller steps.
   commands: CommandBoard;
@@ -127,7 +127,9 @@ export async function dispatchPending(input: {
   findPullRequest: PullRequestLookup;
   ids: IdSource;
   leaseOwner: string;
-  liveValidations: Set<string>;
+  // The pauses between retries of a linked-issues read; tests shorten them.
+  linksRetryDelaysMs?: Array<number>;
+  liveActions: Set<string>;
   // A line for the server log, for what fails without stopping a ticket.
   log: (line: string) => void;
   notify: (message: string) => void;
@@ -158,14 +160,14 @@ export async function dispatchPending(input: {
       validatorFor(snapshot, claimed.action.runId)?.leaseMs !== undefined
     ) {
       const action = claimed.action;
-      input.liveValidations.add(action.id);
+      input.liveActions.add(action.id);
       void runValidation(input, action, snapshot)
         .catch((error: unknown) => {
           finishLeasedAction(input.db, action.id, input.now(), 'failed', messageOf(error));
         })
         .finally(() => {
-          input.liveValidations.delete(action.id);
-          input.afterValidation();
+          input.liveActions.delete(action.id);
+          input.afterDetached();
         });
       continue;
     }
@@ -182,15 +184,19 @@ export async function dispatchPending(input: {
 
 async function perform(
   input: {
+    afterDetached: () => void;
     commands: CommandBoard;
     db: DatabaseSync;
     factoryRoot: string;
     findPullRequest: PullRequestLookup;
     ids: IdSource;
+    linksRetryDelaysMs?: Array<number>;
+    liveActions: Set<string>;
     log: (line: string) => void;
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    stopped: () => boolean;
     tracker: () => ConfiguredTracker | null;
     updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
   },
@@ -411,11 +417,15 @@ async function launch(
 
 async function worktree(
   input: {
+    afterDetached: () => void;
     commands: CommandBoard;
     db: DatabaseSync;
     ids: IdSource;
+    linksRetryDelaysMs?: Array<number>;
+    liveActions: Set<string>;
     log: (line: string) => void;
     now: () => string;
+    stopped: () => boolean;
     tracker: () => ConfiguredTracker | null;
   },
   action: Extract<ActionRecord, { kind: 'prepare_worktree' }>,
@@ -458,35 +468,57 @@ async function worktree(
     );
     return null;
   }
+  const recordReady = (links: PlanLinks): void => {
+    applyActionEvent(
+      input,
+      {
+        actionId: action.id,
+        baseBranch: prepared.baseBranch,
+        baseSha: prepared.baseSha,
+        branch: prepared.branch,
+        context: contextGaps(factoryRoot),
+        kind: 'worktree_ready',
+        links,
+        worktreePath: prepared.path,
+      },
+      `worktree-ready:${action.id}`,
+    );
+  };
   // Only the plan reads the linked issues, once: a worktree prepared again
   // after the plan, as on a retry, needs none.
+  if (snapshot.execution.planPath !== null) {
+    recordReady({ kind: 'none' });
+    return null;
+  }
+  // The tracker may be slow and the read retries, so it runs off the
+  // dispatch loop: other tickets' actions go on, and this one stays leased
+  // until the links are in. A restart requeues it.
   const configured = input.tracker();
-  const links: PlanLinks =
-    snapshot.execution.planPath === null
-      ? await readPlanLinks({
-          issue: trackerIssueOf(snapshot.ticket),
-          limit: snapshot.execution.policy.limits.linkedIssues,
-          log: input.log,
-          tracker:
-            configured === null || trackerMismatch(snapshot, configured.tracker.kind) !== null
-              ? null
-              : configured.tracker,
-        })
-      : { kind: 'none' };
-  applyActionEvent(
-    input,
-    {
-      actionId: action.id,
-      baseBranch: prepared.baseBranch,
-      baseSha: prepared.baseSha,
-      branch: prepared.branch,
-      context: contextGaps(factoryRoot),
-      kind: 'worktree_ready',
-      links,
-      worktreePath: prepared.path,
-    },
-    `worktree-ready:${action.id}`,
-  );
+  input.liveActions.add(action.id);
+  void readPlanLinks({
+    issue: trackerIssueOf(snapshot.ticket),
+    limit: snapshot.execution.policy.limits.linkedIssues,
+    log: input.log,
+    ...(input.linksRetryDelaysMs === undefined ? {} : { retryDelaysMs: input.linksRetryDelaysMs }),
+    tracker:
+      configured === null || trackerMismatch(snapshot, configured.tracker.kind) !== null
+        ? null
+        : configured.tracker,
+  })
+    .then((links) => {
+      if (!input.stopped()) {
+        recordReady(links);
+      }
+    })
+    .catch((error: unknown) => {
+      if (!input.stopped()) {
+        finishLeasedAction(input.db, action.id, input.now(), 'failed', messageOf(error));
+      }
+    })
+    .finally(() => {
+      input.liveActions.delete(action.id);
+      input.afterDetached();
+    });
   return null;
 }
 

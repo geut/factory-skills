@@ -11,12 +11,23 @@ export type PlanLinks =
   // The tracker failed; the plan goes on without them.
   | { kind: 'failed' };
 
-// The links of `issue`, at most `limit`. A tracker that fails is logged and
-// the plan goes on.
+// The pauses before each retry of a failed read: three retries, waiting a
+// little longer each time.
+export const LINKS_RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+const pause = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+// The links of `issue`, at most `limit`. A read that fails is retried after
+// each delay; one that still fails is logged and the plan goes on.
 export async function readPlanLinks(input: {
   issue: TrackerIssue;
   limit: number;
   log: (line: string) => void;
+  retryDelaysMs?: Array<number>;
+  sleep?: (ms: number) => Promise<void>;
   // The tracker the ticket came from, or null.
   tracker: Tracker | null;
 }): Promise<PlanLinks> {
@@ -24,20 +35,30 @@ export async function readPlanLinks(input: {
   if (input.limit <= 0 || tracker === null || !tracker.capabilities.has('related')) {
     return { kind: 'none' };
   }
-  let issues: Array<LinkedIssue>;
-  try {
-    issues = await tracker.related(input.issue);
-  } catch (error: unknown) {
-    input.log(
-      `Could not read the linked issues of ${input.issue.displayRef}; planning without them: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return { kind: 'failed' };
+  const delays = input.retryDelaysMs ?? LINKS_RETRY_DELAYS_MS;
+  const sleep = input.sleep ?? pause;
+  let failure = '';
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(delays[attempt - 1] ?? 0);
+    }
+    let found: { issues: Array<LinkedIssue>; unread: number };
+    try {
+      found = await tracker.related(input.issue, input.limit);
+    } catch (error: unknown) {
+      failure = error instanceof Error ? error.message : String(error);
+      continue;
+    }
+    return {
+      issues: found.issues.slice(0, input.limit),
+      kind: 'read',
+      omitted: Math.max(0, found.issues.length - input.limit) + found.unread,
+    };
   }
-  return {
-    issues: issues.slice(0, input.limit),
-    kind: 'read',
-    omitted: Math.max(0, issues.length - input.limit),
-  };
+  input.log(
+    `Could not read the linked issues of ${input.issue.displayRef} after ${delays.length + 1} attempts; planning without them: ${failure}`,
+  );
+  return { kind: 'failed' };
 }
 
 // `- blocked by BUG-1351 [In Review] Restrict the audit view · PR <url> · 4 comments`

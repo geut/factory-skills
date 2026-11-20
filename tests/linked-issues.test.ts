@@ -77,12 +77,12 @@ function repository(limits: Record<string, number> = {}): string {
   return codeRoot;
 }
 
-async function startTicket(input: {
+async function serveFor(input: {
   codeRoot: string;
   github: GithubClient;
   log: Array<string>;
   runtime: FakeRuntime;
-}): Promise<void> {
+}): Promise<{ server: RunningServer; token: string }> {
   const result = await serve({
     cwd: input.codeRoot,
     env: {
@@ -91,6 +91,7 @@ async function startTicket(input: {
       HERDR_SOCKET_PATH: '/tmp/herdr.sock',
     },
     github: input.github,
+    linksRetryDelaysMs: [1, 1, 1],
     out: (line) => input.log.push(line),
     port: 0,
     releases: async () => [],
@@ -101,12 +102,26 @@ async function startTicket(input: {
   }
   servers.push(result.server);
   const token = readFileSync(path.join(input.codeRoot, '.factory', 'local.token'), 'utf8').trim();
-  const response = await fetch(`${result.server.url}/v1/tickets`, {
-    body: JSON.stringify({ ref: 'geut/factory-skills#7' }),
+  return { server: result.server, token };
+}
+
+async function post(server: RunningServer, token: string, ref: string): Promise<void> {
+  const response = await fetch(`${server.url}/v1/tickets`, {
+    body: JSON.stringify({ ref }),
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     method: 'POST',
   });
   assert.equal(response.status, 202);
+}
+
+async function startTicket(input: {
+  codeRoot: string;
+  github: GithubClient;
+  log: Array<string>;
+  runtime: FakeRuntime;
+}): Promise<void> {
+  const { server, token } = await serveFor(input);
+  await post(server, token, 'geut/factory-skills#7');
 }
 
 async function until(check: () => boolean, tries = 300): Promise<void> {
@@ -189,7 +204,7 @@ test('a tracker that fails to read the links is logged, and the plan still start
   assert.match(runtime.launches[0]?.prompt ?? '', /Linked issues: the tracker could not be read/);
   assert.ok(
     log.includes(
-      'Could not read the linked issues of geut/factory-skills#7; planning without them: gh: HTTP 502',
+      'Could not read the linked issues of geut/factory-skills#7 after 4 attempts; planning without them: gh: HTTP 502',
     ),
     log.join('\n'),
   );
@@ -214,4 +229,76 @@ test('limits.linkedIssues of 0 reads no links, and the prompt is as before', asy
   await until(() => runtime.launches.length === 1);
   assert.ok((runtime.launches[0]?.prompt ?? '').endsWith('Same fix shape as #5.'));
   assert.equal(reads, 0);
+});
+
+test('a slow links read holds up only its own ticket: another ticket plans meanwhile', async () => {
+  const runtime = new FakeRuntime();
+  const slow = Promise.withResolvers<void>();
+  const { server, token } = await serveFor({
+    codeRoot: repository(),
+    github: {
+      fetchIssue: (at) => ({
+        ...issue,
+        nodeId: `I_${at.number}`,
+        number: at.number,
+        title: `Issue ${at.number}`,
+        url: `https://github.com/geut/factory-skills/issues/${at.number}`,
+      }),
+      issueLinks: async (at) => {
+        if (at.number === 7) {
+          await slow.promise;
+        }
+        return { blockedBy: [], blocking: [], parent: null, subIssues: [] };
+      },
+      listSubIssues: () => [],
+    },
+    log: [],
+    runtime,
+  });
+  await post(server, token, 'geut/factory-skills#7');
+  await post(server, token, 'geut/factory-skills#8');
+  await until(() => runtime.launches.length === 1);
+  assert.match(runtime.launches[0]?.prompt ?? '', /Ticket: geut\/factory-skills#8/);
+  slow.resolve();
+  await until(() => runtime.launches.length === 2);
+  assert.match(runtime.launches[1]?.prompt ?? '', /Ticket: geut\/factory-skills#7/);
+});
+
+test('a server stopped while reading the links prepares the worktree again on restart', async () => {
+  const codeRoot = repository();
+  const stuck = new FakeRuntime();
+  const { server, token } = await serveFor({
+    codeRoot,
+    github: {
+      fetchIssue: () => issue,
+      // Never answers.
+      issueLinks: () => new Promise(() => undefined),
+      listSubIssues: () => [],
+    },
+    log: [],
+    runtime: stuck,
+  });
+  await post(server, token, 'geut/factory-skills#7');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(stuck.launches.length, 0);
+  await servers.pop()?.close();
+
+  const runtime = new FakeRuntime();
+  await serveFor({
+    codeRoot,
+    github: {
+      fetchIssue: () => issue,
+      issueLinks: () => ({
+        blockedBy: [],
+        blocking: [],
+        parent: linked(3, 'Filters everywhere', { state: 'OPEN', stateReason: null }),
+        subIssues: [],
+      }),
+      listSubIssues: () => [],
+    },
+    log: [],
+    runtime,
+  });
+  await until(() => runtime.launches.length === 1);
+  assert.match(runtime.launches[0]?.prompt ?? '', /- parent geut\/factory-skills#3 \[open\]/);
 });

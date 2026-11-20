@@ -35,6 +35,7 @@ const unused = () => Promise.reject(new Error('unused'));
 // A tracker whose related links are `related`, which may throw.
 function trackerWith(
   related: () => Promise<Array<LinkedIssue>>,
+  unread = 0,
   capabilities: Array<TrackerCapability> = ['related'],
 ): Tracker {
   return {
@@ -46,7 +47,7 @@ function trackerWith(
     kind: 'linear',
     listBacklog: unused,
     refHint: 'a Linear key',
-    related,
+    related: async () => ({ issues: await related(), unread }),
     resolve: unused,
     setStatus: unused,
     tickBoxes: unused,
@@ -82,7 +83,7 @@ test('no tracker, a tracker that cannot read links, or a limit of 0 reads nothin
       issue,
       limit: 20,
       log: quiet,
-      tracker: trackerWith(async () => [link('PLT-1')], []),
+      tracker: trackerWith(async () => [link('PLT-1')], 0, []),
     }),
     { kind: 'none' },
   );
@@ -94,17 +95,27 @@ test('no tracker, a tracker that cannot read links, or a limit of 0 reads nothin
   assert.deepEqual(linkedIssuesSection({ issues: [], kind: 'read', omitted: 0 }), []);
 });
 
-test('a tracker that fails is logged, and the plan is told the links could not be read', async () => {
+test('a read that keeps failing is retried three times, then logged, and the plan is told', async () => {
   const lines: Array<string> = [];
+  const paused: Array<number> = [];
+  let attempts = 0;
   const read = await readPlanLinks({
     issue,
     limit: 20,
     log: (line) => lines.push(line),
-    tracker: trackerWith(() => Promise.reject(new Error('Authentication required'))),
+    sleep: async (ms) => {
+      paused.push(ms);
+    },
+    tracker: trackerWith(() => {
+      attempts += 1;
+      return Promise.reject(new Error('Authentication required'));
+    }),
   });
   assert.deepEqual(read, { kind: 'failed' });
+  assert.equal(attempts, 4);
+  assert.deepEqual(paused, [1000, 2000, 4000]);
   assert.deepEqual(lines, [
-    'Could not read the linked issues of PLT-2842; planning without them: Authentication required',
+    'Could not read the linked issues of PLT-2842 after 4 attempts; planning without them: Authentication required',
   ]);
   assert.match(
     linkedIssuesSection(read).join('\n'),
@@ -148,4 +159,34 @@ test('one line per link: relation, ref, state, title, pull requests, and comment
       '- mentioned PLT-2483 Out of scope · 1 comment',
     ],
   );
+});
+
+test('a read that fails once is retried and its links are kept, with nothing logged', async () => {
+  const lines: Array<string> = [];
+  let attempts = 0;
+  const read = await readPlanLinks({
+    issue,
+    limit: 20,
+    log: (line) => lines.push(line),
+    sleep: async () => undefined,
+    tracker: trackerWith(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('Rate limit exceeded');
+      }
+      return [link('PLT-1')];
+    }),
+  });
+  assert.equal(read.kind === 'read' ? read.issues.length : 0, 1);
+  assert.deepEqual(lines, []);
+});
+
+test('refs the tracker did not look up for lack of room count as left out', async () => {
+  const read = await readPlanLinks({
+    issue,
+    limit: 2,
+    log: quiet,
+    tracker: trackerWith(async () => [link('PLT-1'), link('PLT-2')], 5),
+  });
+  assert.equal(read.kind === 'read' ? read.omitted : 0, 5);
 });

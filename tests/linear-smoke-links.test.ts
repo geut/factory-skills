@@ -55,7 +55,7 @@ before(async () => {
   issue = resolved?.kind === 'issue' ? resolved.issue : (undefined as never);
   // The real queries: a response Linear shapes differently fails here, with
   // the query and the field.
-  links = await tracker.related(issue);
+  links = (await tracker.related(issue, 50)).issues;
 });
 
 test(

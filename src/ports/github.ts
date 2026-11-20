@@ -417,8 +417,13 @@ export function githubCliClient(): GithubClient {
       let payload: unknown;
       try {
         payload = await ghJson(graphqlArgs(input.host, query, input));
-      } catch {
-        return null;
+      } catch (error: unknown) {
+        // GitHub's answer for a repository or number that names nothing;
+        // anything else, such as a rate limit, is a failure.
+        if (/Could not resolve to/i.test(error instanceof Error ? error.message : String(error))) {
+          return null;
+        }
+        throw error;
       }
       const found = RefResponse.parse(payload).data.repository?.issueOrPullRequest ?? null;
       if (found === null) {
@@ -524,9 +529,15 @@ export function githubMentions(
   return [...found.values()];
 }
 
-// How many refs in a body are looked up at most, and how many at once.
-const MENTION_LIMIT = 50;
+// How many refs in a body are looked up at once.
 const MENTION_BATCH = 5;
+
+// The host an issue lives on, from its id (`github:<host>:<node id>`): a
+// ticket may come from a URL on another host than FACTORY.json's.
+function hostOf(issue: TrackerIssue, fallback: string): string {
+  const [kind, host] = issue.id.split(':');
+  return kind === 'github' && host !== undefined && host.length > 0 ? host : fallback;
+}
 
 function linkedIssue(linked: GithubLinked, relation: LinkRelation): LinkedIssue {
   return {
@@ -548,7 +559,8 @@ async function relatedOf(
   issueLinks: NonNullable<GithubClient['issueLinks']>,
   issue: TrackerIssue,
   host: string,
-): Promise<Array<LinkedIssue>> {
+  room: number,
+): Promise<{ issues: Array<LinkedIssue>; unread: number }> {
   const at = locate(issue);
   const self = `${at.owner}/${at.repo}#${at.number}`.toLowerCase();
   const links = await issueLinks({ ...at, host });
@@ -572,26 +584,26 @@ async function relatedOf(
     add(item, 'blocks');
   }
   const { lookupRef } = client;
+  const mentioned = githubMentions(issue.body, at, host).filter((ref) => {
+    const key = `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
+    return key !== self && !found.has(key);
+  });
   if (lookupRef === undefined) {
-    return [...found.values()];
+    return { issues: [...found.values()], unread: mentioned.length };
   }
-  const mentioned = githubMentions(issue.body, at, host)
-    .filter((ref) => {
-      const key = `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
-      return key !== self && !found.has(key);
-    })
-    .slice(0, MENTION_LIMIT);
-  for (let index = 0; index < mentioned.length; index += MENTION_BATCH) {
-    const batch = await Promise.all(
-      mentioned.slice(index, index + MENTION_BATCH).map(async (ref) => lookupRef({ ...ref, host })),
-    );
+  // Refs are looked up only while there is room for them.
+  let looked = 0;
+  while (looked < mentioned.length && found.size < room) {
+    const refs = mentioned.slice(looked, looked + Math.min(MENTION_BATCH, room - found.size));
+    const batch = await Promise.all(refs.map(async (ref) => lookupRef({ ...ref, host })));
+    looked += refs.length;
     for (const linked of batch) {
       if (linked !== null) {
         add(linked, 'mentioned');
       }
     }
   }
-  return [...found.values()];
+  return { issues: [...found.values()], unread: mentioned.length - looked };
 }
 
 function trackerIssue(issue: GithubIssue, ref: string): TrackerIssue {
@@ -652,7 +664,8 @@ export function createGithubTracker(
     checklistItems: async (issue) => {
       const at = locate(issue);
       return markdownChecklist(
-        (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body,
+        (await client.fetchIssue({ ...at, host: hostOf(issue, config?.host ?? 'github.com') }))
+          .body,
       );
     },
     children: async (issue) => {
@@ -695,11 +708,17 @@ export function createGithubTracker(
       ).map((issue) => trackerIssue(issue, `${issue.owner}/${issue.repo}#${issue.number}`));
     },
     refHint: 'a GitHub URL, owner/repo#number, or #number',
-    related: async (issue) => {
+    related: async (issue, room) => {
       if (issueLinks === undefined) {
         throw new UnsupportedOperation('github', 'linked issues');
       }
-      return relatedOf(client, issueLinks, issue, config?.host ?? 'github.com');
+      return relatedOf(
+        client,
+        issueLinks,
+        issue,
+        hostOf(issue, config?.host ?? 'github.com'),
+        room,
+      );
     },
     resolve: async (ref): Promise<Resolved | null> => {
       const target = githubTarget(ref, config);
@@ -737,7 +756,9 @@ export function createGithubTracker(
       }
       const at = locate(issue);
       // The body as it is now: people may have edited it since it was read.
-      const current = (await client.fetchIssue({ ...at, host: config?.host ?? 'github.com' })).body;
+      const current = (
+        await client.fetchIssue({ ...at, host: hostOf(issue, config?.host ?? 'github.com') })
+      ).body;
       const ticked = tickMarkdown(current, keys);
       if (ticked.body !== current) {
         await editBody(at, ticked.body);

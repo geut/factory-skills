@@ -2117,6 +2117,17 @@ export function claimNextAction(
 // Tracker and pull request updates a previous server leased and never
 // finished go back to pending. A comment marker keeps a second attempt from
 // posting twice, and setting the same body again changes nothing.
+// A worktree left leased by a server that stopped, as while it read the
+// ticket's linked issues: prepared again from the start.
+export function requeueOrphanedWorktrees(db: DatabaseSync, now: string): void {
+  db.prepare(
+    `UPDATE actions
+     SET status = 'pending', lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+         updated_at = ?
+     WHERE kind = 'prepare_worktree' AND status = 'leased'`,
+  ).run(now);
+}
+
 export function requeueOrphanedTrackerUpdates(db: DatabaseSync, now: string): void {
   db.prepare(
     `UPDATE actions

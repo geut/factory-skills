@@ -85,6 +85,7 @@ import {
   recordCard,
   requeueOrphanedPanes,
   requeueOrphanedTrackerUpdates,
+  requeueOrphanedWorktrees,
   requeueOrphanedValidations,
   ticketKeyOf,
   type ApplyResult,
@@ -243,6 +244,8 @@ export function createFactoryService(input: {
   leaseOwner?: string;
   // Linear for a Linear tracker; the SDK with the key from the environment by default.
   linear?: TrackerClients['linear'];
+  // The pauses between retries of a linked-issues read; tests shorten them.
+  linksRetryDelaysMs?: Array<number>;
   // A line for the server log; nothing by default.
   log?: (line: string) => void;
   notify?: (message: string) => void;
@@ -265,7 +268,7 @@ export function createFactoryService(input: {
   const onActivity = input.onActivity ?? (() => undefined);
   const now = input.now ?? (() => new Date().toISOString());
   const ids = input.ids ?? randomIds();
-  const liveValidations = new Set<string>();
+  const liveActions = new Set<string>();
   let dispatching = false;
   let rerun = false;
   let stopped = false;
@@ -500,7 +503,7 @@ export function createFactoryService(input: {
       do {
         rerun = false;
         await dispatchPending({
-          afterValidation: () => {
+          afterDetached: () => {
             void drain();
           },
           arm,
@@ -510,7 +513,10 @@ export function createFactoryService(input: {
           findPullRequest: input.findPullRequest ?? findPullRequest,
           ids,
           leaseOwner: input.leaseOwner ?? 'factory-controller',
-          liveValidations,
+          ...(input.linksRetryDelaysMs === undefined
+            ? {}
+            : { linksRetryDelaysMs: input.linksRetryDelaysMs }),
+          liveActions,
           log: input.log ?? (() => undefined),
           notify,
           now,
@@ -569,7 +575,7 @@ export function createFactoryService(input: {
       if (action.status === 'pending') {
         return true;
       }
-      return action.status === 'leased' && liveValidations.has(action.id);
+      return action.status === 'leased' && liveActions.has(action.id);
     });
   }
 
@@ -592,9 +598,10 @@ export function createFactoryService(input: {
         arm(applied.armRunId);
       }
     }
-    requeueOrphanedValidations(db, now(), liveValidations);
+    requeueOrphanedValidations(db, now(), liveActions);
     requeueOrphanedPanes(db, now());
     requeueOrphanedTrackerUpdates(db, now());
+    requeueOrphanedWorktrees(db, now());
     await drain();
     for (const run of listActiveRuns(db)) {
       if (run.paneId !== null) {

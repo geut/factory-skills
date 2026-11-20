@@ -358,9 +358,14 @@ export function linearMentions(text: string): Array<string> {
   return [...keys];
 }
 
-// How many refs in a description are looked up at most, and how many at once.
-const MENTION_LIMIT = 50;
+// How many refs in a description are looked up at once.
 const MENTION_BATCH = 5;
+
+// Linear's answer for a key that names no issue, such as UTF-8. Anything
+// else, such as a rate limit, is a failure.
+function notFound(error: unknown): boolean {
+  return /not found/i.test(error instanceof Error ? error.message : String(error));
+}
 
 // A relation's type as seen from the issue that has it (`out`) or from the
 // other end (`in`). Linear's `similar` is a suggestion, read as related.
@@ -390,7 +395,11 @@ function linkedIssue(linked: LinearLinked, relation: LinkRelation): LinkedIssue 
 
 // The issue's links, each once: parent, sub-issues, relations, then the
 // issues its description names that it has no native link to.
-async function relatedOf(api: LinearApi, issueId: string): Promise<Array<LinkedIssue>> {
+async function relatedOf(
+  api: LinearApi,
+  issueId: string,
+  room: number,
+): Promise<{ issues: Array<LinkedIssue>; unread: number }> {
   const links = await api.links(issueId);
   const found = new Map<string, LinkedIssue>();
   const add = (linked: LinearLinked, relation: LinkRelation): void => {
@@ -410,26 +419,31 @@ async function relatedOf(api: LinearApi, issueId: string): Promise<Array<LinkedI
   for (const relation of links.inverseRelations) {
     add(relation.issue, relationOf(relation.type, 'in'));
   }
-  const mentioned = linearMentions(links.description)
-    .filter((key) => key !== links.identifier && !found.has(key))
-    .slice(0, MENTION_LIMIT);
-  for (let at = 0; at < mentioned.length; at += MENTION_BATCH) {
+  // Refs are looked up only while there is room for them.
+  const mentioned = linearMentions(links.description).filter(
+    (key) => key !== links.identifier && !found.has(key),
+  );
+  let looked = 0;
+  while (looked < mentioned.length && found.size < room) {
+    const keys = mentioned.slice(looked, looked + Math.min(MENTION_BATCH, room - found.size));
     const batch = await Promise.all(
-      mentioned.slice(at, at + MENTION_BATCH).map((key) =>
-        api.linked(key).then(
-          (linked) => linked,
-          // A key-shaped word that names no issue.
-          () => null,
-        ),
+      keys.map((key) =>
+        api.linked(key).catch((error: unknown) => {
+          if (notFound(error)) {
+            return null;
+          }
+          throw error;
+        }),
       ),
     );
+    looked += keys.length;
     for (const linked of batch) {
       if (linked !== null) {
         add(linked, 'mentioned');
       }
     }
   }
-  return [...found.values()];
+  return { issues: [...found.values()], unread: mentioned.length - looked };
 }
 
 export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi): Tracker {
@@ -479,7 +493,7 @@ export function createLinearTracker(config: LinearTrackerConfig, api: LinearApi)
         links: { blockedBy: openBlockers(issue.blockers), children: issue.children.map(linkOf) },
       })),
     refHint: 'a Linear issue key such as ENG-42, or its URL',
-    related: (issue) => relatedOf(api, uuidOf(issue)),
+    related: (issue, room) => relatedOf(api, uuidOf(issue), room),
     resolve: async (ref): Promise<Resolved | null> => {
       const target = linearTarget(ref, config);
       if (target === null) {
