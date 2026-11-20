@@ -85,24 +85,26 @@ function refreshReload(service: FactoryClient): void {
   void service
     .serverVersion()
     .then((server) => {
-      // A server that is up but cannot say (a bad FACTORY.json, a revoked
-      // token, an older server) is asked again in a minute, or on a restart.
-      versionAsks.answered(server !== null);
-      if (server === null) {
-        return;
-      }
-      const notice = reloadNeeded({ pi: factoryVersion(), server });
-      const ctx = latest;
-      if (notice !== null && reloadPostedFor !== notice.server) {
-        reloadPostedFor = notice.server;
-        publishReload(notice);
-      }
-      if (ctx !== null && ctx.hasUI) {
-        ctx.ui.setStatus(
-          'factory-reload',
-          notice === null ? undefined : renderReloadFooter({ notice, theme: ctx.ui.theme }),
-        );
-      }
+      guarded(() => {
+        // A server that is up but cannot say (a bad FACTORY.json, a revoked
+        // token, an older server) is asked again in a minute, or on a restart.
+        versionAsks.answered(server !== null);
+        if (server === null) {
+          return;
+        }
+        const notice = reloadNeeded({ pi: factoryVersion(), server });
+        const ctx = latest;
+        if (notice !== null && reloadPostedFor !== notice.server) {
+          reloadPostedFor = notice.server;
+          publishReload(notice);
+        }
+        if (ctx !== null && ctx.hasUI) {
+          ctx.ui.setStatus(
+            'factory-reload',
+            notice === null ? undefined : renderReloadFooter({ notice, theme: ctx.ui.theme }),
+          );
+        }
+      });
     })
     .catch(() => {
       versionAsks.answered(false);
@@ -207,8 +209,39 @@ function refreshWidget(service: FactoryClient): void {
   }
   tick = setInterval(() => {
     frame += 1;
-    widgetTui?.requestRender();
+    guarded(() => widgetTui?.requestRender());
   }, 80);
+}
+
+// Stops everything that runs on its own, and lets go of the session's
+// context: Pi marks it stale once the session reloads, quits, or switches.
+function stopWatching(): void {
+  if (poll !== null) {
+    clearInterval(poll);
+    poll = null;
+  }
+  stopTick();
+  latest = null;
+  widgetTui = null;
+  liveCommands = new Map();
+  for (const client of clients.values()) {
+    client.close();
+  }
+  clients.clear();
+}
+
+// Runs work a timer or a callback started. Nothing it throws may reach Pi,
+// which exits on an uncaught exception. A context gone stale means the
+// session is gone, so the timers stop; anything else skips this round, and
+// the next tick tries again.
+function guarded(work: () => void): void {
+  try {
+    work();
+  } catch (error: unknown) {
+    if (/\bstale\b/i.test(error instanceof Error ? error.message : String(error))) {
+      stopWatching();
+    }
+  }
 }
 
 // Asks the server which commands long steps are running, once a second and
@@ -229,8 +262,10 @@ function refreshCommands(service: FactoryClient): void {
   void service
     .stepCommands()
     .then((found) => {
-      liveCommands = found;
-      widgetTui?.requestRender();
+      guarded(() => {
+        liveCommands = found;
+        widgetTui?.requestRender();
+      });
     })
     .finally(() => {
       fetchingCommands = false;
@@ -265,21 +300,23 @@ function watch(service: FactoryClient): void {
   refreshReload(service);
   refreshWidget(service);
   poll = setInterval(() => {
-    refreshCommands(service);
-    refreshUpdate(service);
-    refreshReload(service);
-    const revision = service.revision();
-    // A controller step starts and ends with no event, only an action change.
-    const actions = service.actionsVersion();
-    if (revision === seenRevision && actions === seenActions) {
-      return;
-    }
-    for (const { card } of service.cardsSince(seenRevision)) {
-      publishStatus(card);
-    }
-    seenRevision = revision;
-    seenActions = actions;
-    refreshWidget(service);
+    guarded(() => {
+      refreshCommands(service);
+      refreshUpdate(service);
+      refreshReload(service);
+      const revision = service.revision();
+      // A controller step starts and ends with no event, only an action change.
+      const actions = service.actionsVersion();
+      if (revision === seenRevision && actions === seenActions) {
+        return;
+      }
+      for (const { card } of service.cardsSince(seenRevision)) {
+        publishStatus(card);
+      }
+      seenRevision = revision;
+      seenActions = actions;
+      refreshWidget(service);
+    });
   }, POLL_MS);
   poll.unref();
 }
@@ -534,5 +571,11 @@ export default function factoryExtension(pi: ExtensionAPI): void {
   pi.on('session_start', (_event, ctx) => {
     latest = ctx;
     watch(serviceFor(ctx.cwd));
+  });
+
+  // On /reload, quit, or a switch to another session, Pi replaces this
+  // extension's context; the next session_start watches again.
+  pi.on('session_shutdown', () => {
+    stopWatching();
   });
 }
