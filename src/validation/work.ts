@@ -2,10 +2,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { CommandReporter } from '../controller/command-progress.ts';
+import { factoryRootOf } from '../controller/keys.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
+import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
   errorReport,
   failedReport,
@@ -16,7 +18,6 @@ import {
 } from './report.ts';
 import {
   missingTests,
-  selectionEnv,
   SELECTION_CHECK,
   SELECTION_ENV,
   SELECTION_FIX,
@@ -251,6 +252,8 @@ async function validateWork(input: {
   commands: Array<WorkCommand>;
   criteria: Array<Criterion>;
   cwd: string;
+  // Where the commands are told to keep their logs.
+  factoryRoot: string;
   reportCommand: CommandReporter;
   // The tests the worker proposed, for the commands.
   selection: ParsedSelection;
@@ -302,9 +305,14 @@ async function validateWork(input: {
       }),
     );
   }
+  ensureValidationLogs(input.factoryRoot);
   for (const [index, command] of input.commands.entries()) {
     input.reportCommand({ command: command.name, index: index + 1, total: input.commands.length });
-    const result = await runCommand(command, input.cwd, selectionEnv(tests));
+    const result = await runCommand(
+      command,
+      input.cwd,
+      commandEnv({ factoryRoot: input.factoryRoot, tests }),
+    );
     if (result.spawnError !== null) {
       return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
     }
@@ -345,6 +353,7 @@ export const workValidator: Validator<'work'> = {
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
+      factoryRoot: factoryRootOf(factoryDir),
       reportCommand: deps.reportCommand,
       // The selection as of the run validated: a retry of it gets the same.
       selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),

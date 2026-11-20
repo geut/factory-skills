@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -10,6 +18,7 @@ import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
 import { parseTitleTemplate } from '../stages/wrapup/title.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
+import { VALIDATION_LOGS } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { captureWrapupState, wrapupValidator, type PullRequestLookup } from './wrapup.ts';
 
@@ -483,6 +492,77 @@ test('only CONTEXT.md, PRD.md, and learnings/ may change in the factory root', a
   assert.match(text, /changed \.factory\/wrapup\.md/);
 });
 
+// What a sibling ticket's work validator writes under validation-logs/
+// while this ticket wraps up: it appends to its log, starts a new one, and
+// replaces its pointer to the latest.
+function siblingValidates(value: Fixture): void {
+  const logs = path.join(value.factoryRoot, VALIDATION_LOGS);
+  appendFileSync(path.join(logs, 'proj-2-1.log'), 'still running\n');
+  writeFileSync(path.join(logs, 'proj-2-2.log'), 'a new run\n');
+  writeFileSync(path.join(logs, 'proj-2.latest.tmp'), 'proj-2-2.log\n');
+  renameSync(path.join(logs, 'proj-2.latest.tmp'), path.join(logs, 'proj-2.latest'));
+}
+
+// A sibling ticket's validator already logging when this wrap-up starts.
+function siblingLogging(value: Fixture): void {
+  const logs = path.join(value.factoryRoot, VALIDATION_LOGS);
+  mkdirSync(logs);
+  writeFileSync(path.join(logs, 'proj-2-1.log'), 'started\n');
+  writeFileSync(path.join(logs, 'proj-2.latest'), 'proj-2-1.log\n');
+}
+
+test('another ticket’s validation logs, written while this one wraps up, are not wrap-up’s change', async () => {
+  const value = fixture();
+  siblingLogging(value);
+  const baseline = value.baseline();
+  siblingValidates(value);
+  assert.equal((await validate(value, baseline, handoff(value))).status, 'passed');
+  // The artifacts stay for the other ticket and the operator.
+  assert.equal(
+    readFileSync(path.join(value.factoryRoot, 'validation-logs/proj-2.latest'), 'utf8'),
+    'proj-2-2.log\n',
+  );
+});
+
+test('a baseline stored before the fix, holding validation logs, still validates once they change or go', async () => {
+  const value = fixture();
+  siblingLogging(value);
+  // A paused wrap-up's baseline, taken when validation logs were compared:
+  // a reply or a retry validates against it.
+  const stored = value.baseline();
+  stored.factory = {
+    ...stored.factory,
+    'validation-logs/proj-2-1.log': 'hash before',
+    'validation-logs/proj-2.latest': 'hash before',
+  };
+  siblingValidates(value);
+  assert.equal((await validate(value, stored, handoff(value))).status, 'passed');
+  rmSync(path.join(value.factoryRoot, VALIDATION_LOGS), { force: true, recursive: true });
+  assert.equal((await validate(value, stored, handoff(value))).status, 'passed');
+});
+
+test('while another ticket logs its validation, a real edit to this ticket, a protected file, or anything else under the factory root still fails', async () => {
+  const value = fixture();
+  siblingLogging(value);
+  const baseline = value.baseline();
+  siblingValidates(value);
+  writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/plan.md'), '# Edited plan\n');
+  writeFileSync(path.join(value.factoryRoot, 'FACTORY.json'), '{"edited":true}\n');
+  mkdirSync(path.join(value.factoryRoot, 'notes'));
+  writeFileSync(path.join(value.factoryRoot, 'notes/run.log'), 'not a validation artifact\n');
+  // Only validation-logs/ at the factory root is the validators' place.
+  mkdirSync(path.join(value.factoryRoot, 'tickets/proj-1/validation-logs'));
+  writeFileSync(path.join(value.factoryRoot, 'tickets/proj-1/validation-logs/a.log'), 'x\n');
+  writeFileSync(path.join(value.worktree, 'src/extra.ts'), 'export const extra = 1;\n');
+  const text = failures(await validate(value, baseline, handoff(value)));
+  assert.match(text, /changed \.factory\/tickets\/proj-1\/plan\.md/);
+  assert.match(text, /changed \.factory\/FACTORY\.json/);
+  assert.match(text, /changed \.factory\/notes\/run\.log/);
+  assert.match(text, /changed \.factory\/tickets\/proj-1\/validation-logs\/a\.log/);
+  assert.match(text, /src\/extra\.ts/);
+  assert.doesNotMatch(text, /proj-2/);
+});
+
 test('OS metadata a host writes or removes is not a wrap-up change, unless the repository tracks it', async () => {
   const value = fixture();
   // Finder wrote one before wrap-up started, and rewrites it while it runs.
@@ -884,4 +964,28 @@ test('Files paths come from backticks or the first word of a list item', () => {
     [...listedPaths('- `src/a.ts`, `src/b.ts` — both call `api/client.ts` now\n')],
     ['src/a.ts', 'src/b.ts'],
   );
+});
+
+test('a paused wrap-up that pushed and opened its pull request completes on its stored baseline while another ticket logs', async () => {
+  const value = fixture();
+  addRemote(value);
+  siblingLogging(value);
+  // The baseline the first pass stored, from before the fix.
+  const stored = value.baseline();
+  stored.factory = { ...stored.factory, 'validation-logs/proj-2-1.log': 'hash before' };
+  // The first pass committed, pushed, and opened the pull request, then
+  // paused on the other ticket's log; the operator replied.
+  const head = commit(value, ['src/filter.ts', 'src/store.ts']);
+  git(value.worktree, ['push', '-u', 'origin', branch]);
+  siblingValidates(value);
+  const outcome = await validate(value, stored, handoff(value, { merge: url }), {
+    findPullRequest: openPullRequest(head),
+    pullRequests: true,
+  });
+  assert.equal(outcome.status, 'passed', failures(outcome));
+  if (outcome.status === 'passed') {
+    // The same commit and pull request, not new ones.
+    assert.equal(outcome.detail.pullRequest?.headSha, head);
+    assert.equal(outcome.detail.pullRequest?.url, url);
+  }
 });

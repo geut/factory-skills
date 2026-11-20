@@ -27,6 +27,7 @@ import {
   titleExample,
   titleMatches,
 } from '../stages/wrapup/title.ts';
+import { VALIDATION_LOGS } from './command-env.ts';
 import {
   errorReport,
   failedReport,
@@ -57,6 +58,42 @@ const factoryInternal = new Set([
   '.git',
 ]);
 
+// Whether wrap-up compares a path under the factory root (`tickets/a/plan.md`):
+// not the controller's own files, nor validation artifacts, nor another
+// ticket's directory, nor OS metadata. New snapshots and a stored baseline
+// go through the same scope, so a baseline taken before a path left it never
+// shows that path as deleted.
+function comparedFactoryPath(relative: string, ownTicket: string): boolean {
+  const parts = relative.split('/');
+  const [top] = parts;
+  // Validators' artifacts: any ticket's validation may write there while
+  // another ticket wraps up. Anything else under the root stays guarded.
+  if (top === undefined || factoryInternal.has(top) || top === VALIDATION_LOGS) {
+    return false;
+  }
+  if (parts.some((part) => isOsMetadata(part))) {
+    return false;
+  }
+  // Other tickets keep running beside this one.
+  return (
+    top !== 'tickets' ||
+    parts.length === 1 ||
+    relative === ownTicket ||
+    relative.startsWith(`${ownTicket}/`)
+  );
+}
+
+// The entries of a factory snapshot wrap-up compares.
+function inScope(files: Record<string, string>, ownTicket: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(files).filter(([file]) => comparedFactoryPath(file, ownTicket)),
+  );
+}
+
+function ownTicketOf(root: string, ticketDir: string): string {
+  return path.relative(root, ticketDir).split(path.sep).join('/');
+}
+
 type Git = { code: number; stderr: string; stdout: string };
 
 function git(cwd: string, args: Array<string>): Git {
@@ -80,12 +117,12 @@ function hashFile(file: string): string {
   }
 }
 
-// Other tickets keep running beside this one, so only this ticket's
-// directory under `tickets/` is compared. OS metadata, such as a `.DS_Store`
-// a host's Finder writes through the mount, is not compared.
+// The factory root's files wrap-up compares, each with its content hash; see
+// comparedFactoryPath. OS metadata, such as a `.DS_Store` a host's Finder
+// writes through the mount, is not compared.
 function factoryFiles(root: string, ticketDir: string): Record<string, string> {
   const files: Record<string, string> = {};
-  const ownTicket = path.relative(root, ticketDir).split(path.sep).join('/');
+  const ownTicket = ownTicketOf(root, ticketDir);
   const walk = (directory: string, prefix: string) => {
     let entries: Array<string>;
     try {
@@ -94,15 +131,9 @@ function factoryFiles(root: string, ticketDir: string): Record<string, string> {
       return;
     }
     for (const entry of entries) {
-      if (prefix === '' && factoryInternal.has(entry)) {
-        continue;
-      }
-      if (isOsMetadata(entry)) {
-        continue;
-      }
       const absolute = path.join(directory, entry);
       const relative = prefix === '' ? entry : `${prefix}/${entry}`;
-      if (prefix === 'tickets' && relative !== ownTicket) {
+      if (!comparedFactoryPath(relative, ownTicket)) {
         continue;
       }
       const stats = statSync(absolute, { throwIfNoEntry: false });
@@ -365,7 +396,9 @@ export async function validateWrapup(input: {
 
   // Files lists every changed path, and only changed paths.
   const factoryPrefix = path.relative(input.codeRoot, input.factoryRoot).split(path.sep).join('/');
-  const factoryChanges = changed(input.baseline.factory, current.factory);
+  // A baseline stored before a path left the compared scope still holds it.
+  const ownTicket = ownTicketOf(input.factoryRoot, input.ticketDir);
+  const factoryChanges = changed(inScope(input.baseline.factory, ownTicket), current.factory);
   const actual = new Set(Object.keys(current.worktree));
   const listed = listedPaths(section('Files'));
   const knownFactory = new Set(factoryChanges.map((file) => `${factoryPrefix}/${file}`));

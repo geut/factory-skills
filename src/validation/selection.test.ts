@@ -4,13 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { addTasks, blank, run, session } from '../stories/fixtures.ts';
-import {
-  missingTests,
-  parseSelection,
-  SELECTION_ENV,
-  selectionEnv,
-  taskSelection,
-} from './selection.ts';
+import { missingTests, parseSelection, taskSelection } from './selection.ts';
 
 const dirs: Array<string> = [];
 after(() => {
@@ -153,27 +147,6 @@ test('none is none however it is written', () => {
     assert.deepEqual(parseSelection(reply(line)), { kind: 'listed', tests: [] }, line);
   }
   assert.equal(parseSelection(reply('nothing')).kind, 'invalid');
-});
-
-test('each command gets a fresh environment, with the selection only when there is one', () => {
-  const before = process.env[SELECTION_ENV];
-  process.env[SELECTION_ENV] = 'left over from the server';
-  try {
-    const tests = [{ path: 'tests/a.test.ts', reason: 'covers it' }];
-    const env = selectionEnv(tests);
-    assert.notEqual(env, process.env);
-    assert.deepEqual(JSON.parse(env[SELECTION_ENV] ?? ''), { tests, version: 1 });
-    assert.equal(env['PATH'], process.env['PATH']);
-    assert.equal(SELECTION_ENV in selectionEnv([]), false);
-    assert.equal(SELECTION_ENV in selectionEnv(null), false);
-    assert.notEqual(selectionEnv(tests), env);
-  } finally {
-    if (before === undefined) {
-      delete process.env[SELECTION_ENV];
-    } else {
-      process.env[SELECTION_ENV] = before;
-    }
-  }
 });
 
 test('the template in factory-work’s output reference parses as a selection, as a worker would copy it', () => {
