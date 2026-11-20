@@ -14,6 +14,15 @@ import {
   type ValidationCheck,
   type Validator,
 } from './report.ts';
+import {
+  missingTests,
+  selectionEnv,
+  SELECTION_CHECK,
+  SELECTION_ENV,
+  SELECTION_FIX,
+  taskSelection,
+  type ParsedSelection,
+} from './selection.ts';
 
 export const WORK_VALIDATOR_VERSION = 'work.v1';
 
@@ -122,7 +131,13 @@ type CommandResult = {
   timedOut: boolean;
 };
 
-export function runCommand(command: WorkCommand, cwd: string): Promise<CommandResult> {
+// `env` is the command's own environment, made for it alone; the server's
+// when not given.
+export function runCommand(
+  command: WorkCommand,
+  cwd: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<CommandResult> {
   const started = Date.now();
   return new Promise((resolve) => {
     let output = '';
@@ -145,6 +160,7 @@ export function runCommand(command: WorkCommand, cwd: string): Promise<CommandRe
     try {
       child = spawn(command.argv[0] ?? '', command.argv.slice(1), {
         cwd,
+        ...(env === undefined ? {} : { env }),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error: unknown) {
@@ -209,6 +225,24 @@ export function commandCheck(
   };
 }
 
+// The worker's selection as the report shows it: what the commands got, or
+// what to fix.
+function selectionCheck(input: {
+  details: string;
+  status: ValidationCheck['status'];
+}): ValidationCheck {
+  return {
+    command: null,
+    details: input.details,
+    durationMs: null,
+    exitCode: null,
+    kind: 'policy',
+    name: SELECTION_CHECK,
+    outputExcerpt: null,
+    status: input.status,
+  };
+}
+
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
   // The commit work leaves its changes uncommitted on: the ticket's base, or
@@ -218,6 +252,8 @@ async function validateWork(input: {
   criteria: Array<Criterion>;
   cwd: string;
   reportCommand: CommandReporter;
+  // The tests the worker proposed, for the commands.
+  selection: ParsedSelection;
 }): Promise<WorkValidationReport> {
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -242,9 +278,33 @@ async function validateWork(input: {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
+  // A selection the worker got wrong is corrected before the commands run
+  // on it.
+  const { selection } = input;
+  const problems =
+    selection.kind === 'invalid'
+      ? selection.problems
+      : selection.kind === 'listed'
+        ? missingTests(selection.tests, input.cwd)
+        : [];
+  const tests = selection.kind === 'listed' ? selection.tests : [];
+  if (problems.length > 0) {
+    checks.push(
+      selectionCheck({ details: [...problems, SELECTION_FIX].join('\n'), status: 'failed' }),
+    );
+    return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
+  }
+  if (tests.length > 0) {
+    checks.push(
+      selectionCheck({
+        details: `${SELECTION_ENV} lists ${tests.length} test file${tests.length === 1 ? '' : 's'}: ${tests.map((test) => test.path).join(', ')}`,
+        status: 'passed',
+      }),
+    );
+  }
   for (const [index, command] of input.commands.entries()) {
     input.reportCommand({ command: command.name, index: index + 1, total: input.commands.length });
-    const result = await runCommand(command, input.cwd);
+    const result = await runCommand(command, input.cwd, selectionEnv(tests));
     if (result.spawnError !== null) {
       return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
     }
@@ -269,7 +329,7 @@ async function validateWork(input: {
 
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
-  validate: ({ deps, session, snapshot }) => {
+  validate: ({ deps, run, session, snapshot }) => {
     const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
     if (worktreePath === null || worktreeBaseSha === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
@@ -286,6 +346,8 @@ export const workValidator: Validator<'work'> = {
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
       reportCommand: deps.reportCommand,
+      // The selection as of the run validated: a retry of it gets the same.
+      selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),
     });
   },
   version: WORK_VALIDATOR_VERSION,

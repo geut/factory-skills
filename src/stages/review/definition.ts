@@ -1,5 +1,6 @@
 import { diffPaths, fileDiffHashes } from '../../diff.ts';
 import type { FactorySnapshot, ReviewFinding, ReviewResult, TaskId } from '../../domain.ts';
+import { SELECTION_CHECK } from '../../validation/selection.ts';
 import {
   defineStage,
   type LimitSpec,
@@ -112,9 +113,11 @@ function verdictOutcome(
 function validationGroups(checks: Array<StageCheck>): string {
   const groups = new Map<string, Array<string>>();
   for (const check of checks) {
+    // The tests the worker chose, to compare with the commands' results.
+    const chosen = check.name === SELECTION_CHECK ? ` (${check.details})` : '';
     groups.set(check.stage, [
       ...(groups.get(check.stage) ?? []),
-      `- ${check.name}: ${check.status}`,
+      `- ${check.name}: ${check.status}${chosen}`,
     ]);
   }
   return [...groups].flatMap(([stage, lines]) => [`${stage}:`, ...lines]).join('\n');

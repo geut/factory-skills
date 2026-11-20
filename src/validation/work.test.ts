@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
 import { taskId } from '../domain.ts';
+import { addTasks } from '../stories/fixtures.ts';
 import { validationContext } from './fixture.ts';
+import { SELECTION_ENV } from './selection.ts';
 import { collectWorkDiff, COMMAND_OUTPUT_LIMIT, workValidator } from './work.ts';
 
 const roots: Array<string> = [];
@@ -368,4 +370,101 @@ test('work validation reports each command as it starts', async () => {
     ),
   );
   assert.deepEqual(reported, ['lint 1/3', 'test 2/3', 'check 3/3']);
+});
+
+// Work validation of a run whose reply is `output`, with one command that
+// writes the selection it was given to a file outside the worktree.
+async function validateReply(output: string) {
+  const { baseSha, cwd } = repo();
+  mkdirSync(path.join(cwd, 'tests'));
+  writeFileSync(path.join(cwd, 'tests', 'filter.test.ts'), 'test\n');
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
+  const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-selection-')), 'seen.txt');
+  roots.push(path.dirname(seen));
+  const report = await workValidator.validate(
+    validationContext('work', (snapshot, finished) => {
+      addTasks(snapshot, 1);
+      snapshot.execution.worktreePath = cwd;
+      snapshot.execution.worktreeBaseSha = baseSha;
+      snapshot.execution.policy.validation.work.commands = [
+        {
+          argv: [
+            'node',
+            '-e',
+            `require('node:fs').writeFileSync(${JSON.stringify(seen)}, process.env.${SELECTION_ENV} ?? 'unset')`,
+          ],
+          name: 'tests',
+          timeoutMs: 5000,
+        },
+      ];
+      finished.resultJson = JSON.stringify({ output });
+    }),
+  );
+  return { report, seen: existsSync(seen) ? readFileSync(seen, 'utf8') : null };
+}
+
+test('the worker’s selection reaches the commands as JSON, and the report lists it', async () => {
+  const { report, seen } = await validateReply(
+    '## Validation selection\n\n- `tests/filter.test.ts`: checks disabled entries are excluded\n',
+  );
+  assert.equal(report.status, 'passed');
+  assert.deepEqual(JSON.parse(seen ?? ''), {
+    tests: [{ path: 'tests/filter.test.ts', reason: 'checks disabled entries are excluded' }],
+    version: 1,
+  });
+  assert.equal(
+    report.checks.find((check) => check.name === 'validation selection')?.details,
+    `${SELECTION_ENV} lists 1 test file: tests/filter.test.ts`,
+  );
+});
+
+test('a reply without the section runs the commands as before, with no selection', async () => {
+  const { report, seen } = await validateReply('## Status\n\nready_for_review\n');
+  assert.equal(report.status, 'passed');
+  assert.equal(seen, 'unset');
+  assert.equal(
+    report.checks.some((check) => check.name === 'validation selection'),
+    false,
+  );
+});
+
+test('a malformed or missing selection is corrected before any command runs', async () => {
+  const malformed = await validateReply('## Validation selection\n\n- tests/filter.test.ts\n');
+  assert.equal(malformed.report.status, 'failed');
+  assert.match(
+    malformed.report.status === 'failed' ? malformed.report.failures.join('\n') : '',
+    /is not an entry\. Under ## Validation selection, write one line per test file/,
+  );
+  assert.equal(malformed.seen, null);
+  // The section is optional: the correction says how to drop it.
+  assert.match(
+    malformed.report.status === 'failed' ? malformed.report.failures.join('\n') : '',
+    /The selection is optional: write the section again with the lines fixed, or with `none` alone, so the validator uses its default behavior/,
+  );
+
+  const missing = await validateReply('## Validation selection\n\n- `tests/gone.test.ts`: gone\n');
+  assert.match(
+    missing.report.status === 'failed' ? missing.report.failures.join('\n') : '',
+    /tests\/gone\.test\.ts is not a file in the worktree/,
+  );
+  assert.equal(missing.seen, null);
+});
+
+test('parallel validations of different tickets each give their commands only their own selection', async () => {
+  const [one, two, none] = await Promise.all([
+    validateReply('## Validation selection\n\n- `tests/filter.test.ts`: ticket one\n'),
+    validateReply('## Validation selection\n\n- `README.md`: ticket two\n'),
+    validateReply('## Status\n\nready_for_review\n'),
+  ]);
+  assert.deepEqual(JSON.parse(one.seen ?? ''), {
+    tests: [{ path: 'tests/filter.test.ts', reason: 'ticket one' }],
+    version: 1,
+  });
+  assert.deepEqual(JSON.parse(two.seen ?? ''), {
+    tests: [{ path: 'README.md', reason: 'ticket two' }],
+    version: 1,
+  });
+  assert.equal(none.seen, 'unset');
+  // The server's own environment never carries a selection.
+  assert.equal(process.env[SELECTION_ENV], undefined);
 });
