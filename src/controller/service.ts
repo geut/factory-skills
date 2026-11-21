@@ -716,7 +716,16 @@ export function createFactoryService(input: {
     answer: string,
     options: CommandOptions,
   ): Committed {
-    const key = dedupe(options, `reply:${snapshot.ticket.id}:${sha256(answer)}`);
+    // An answer to the question asked: the same words may answer the next
+    // question, or the same one in a rerun's generation.
+    // The question still being handled: a resend of the same answer, after it
+    // moved the question on to resuming, is the same reply.
+    const question =
+      snapshot.attention.findLast(
+        (item) =>
+          item.status === 'open' || item.status === 'answered' || item.status === 'resuming',
+      )?.id ?? 'no-question';
+    const key = dedupe(options, `reply:${snapshot.execution.id}:${question}:${sha256(answer)}`);
     const applied = apply(
       {
         ...(options.actor === null ? {} : { actor: options.actor }),
@@ -739,6 +748,9 @@ export function createFactoryService(input: {
     );
   }
 
+  // Deduped by the generation and its version: a ticket and its rerun can
+  // wait for a retry at the same version. The reducer makes the keys of the
+  // actions a retry creates unique.
   function retryCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
     const applied = apply(
       {
@@ -746,7 +758,7 @@ export function createFactoryService(input: {
         kind: 'retry',
         ticketId: snapshot.ticket.id,
       },
-      dedupe(options, `retry:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      dedupe(options, `retry:${snapshot.execution.id}:${snapshot.execution.version}`),
       'command',
       options.actor,
     );
@@ -761,7 +773,8 @@ export function createFactoryService(input: {
         kind: 'complete',
         ticketId: snapshot.ticket.id,
       },
-      dedupe(options, `complete:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      // A rerun's generation completes on its own, whatever its version.
+      dedupe(options, `complete:${snapshot.execution.id}:${snapshot.execution.version}`),
       'command',
       options.actor,
     );
