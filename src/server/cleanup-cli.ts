@@ -3,6 +3,7 @@ import {
   cleanUpTicket,
   completedTickets,
   needsAttention,
+  NO_WAIT,
   outcomeLine,
   pullRequestCommits,
   type CleanupOutcome,
@@ -27,7 +28,7 @@ export async function runCleanupCommand(
   args: Array<string>,
   cwd: string,
   io: Io,
-  deps: { processes?: () => ReadonlyArray<ProcessInfo> } = {},
+  deps: { processes?: () => Promise<ReadonlyArray<ProcessInfo>> } = {},
 ): Promise<number> {
   const [flag, ...extra] = args;
   if (flag === '--help' || flag === '-h') {
@@ -45,15 +46,18 @@ export async function runCleanupCommand(
     return 1;
   }
   const db = openStateDatabase(factoryRoot, { readOnly: true });
+  // One look at the processes for every ticket.
+  const processes = await (deps.processes ?? listProcesses)();
   const outcomes: Array<CleanupOutcome> = [];
   try {
     const tickets = completedTickets(db);
     for (const snapshot of tickets) {
       const outcome = await cleanUpTicket({
         dryRun,
-        processes: deps.processes ?? listProcesses,
+        processes: () => Promise.resolve(processes),
         pullRequestCommits: pullRequestCommits(db, snapshot.execution.id),
         snapshot,
+        wait: NO_WAIT,
       });
       outcomes.push(outcome);
       const line = outcomeLine(outcome);

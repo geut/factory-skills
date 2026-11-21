@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   cleanUpTicket,
+  CLEANUP_WAIT,
   needsAttention,
   outcomeLine,
   pullRequestCommits,
@@ -20,7 +21,6 @@ import { listProcesses } from '../actions/strays.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
-  executionId as executionIdOf,
   randomIds,
   runId as runIdOf,
   ticketId as ticketIdOf,
@@ -308,8 +308,16 @@ export function createFactoryService(input: {
       return;
     }
     const snapshot = loadCurrentByTicketKey(db, event.ticketId);
-    if (snapshot !== null && runtime.closeTab !== undefined) {
-      void runtime.closeTab(ticketKeyOf(snapshot)).catch(() => undefined);
+    if (snapshot === null) {
+      return;
+    }
+    const closed =
+      runtime.closeTab === undefined
+        ? Promise.resolve()
+        : runtime.closeTab(ticketKeyOf(snapshot)).catch(() => undefined);
+    // A completed ticket's worktree is cleaned up once its panes are gone.
+    if (event.kind === 'complete') {
+      void closed.then(() => cleanUpCompleted(snapshot.execution.id));
     }
   }
 
@@ -377,7 +385,6 @@ export function createFactoryService(input: {
         'controller',
         CODE_HOST_ACTOR,
       );
-      cleanUpCompleted(executionIdOf(executionId));
     } else if (outcome.pullRequest.state === 'closed') {
       apply(
         {
@@ -758,34 +765,47 @@ export function createFactoryService(input: {
       'command',
       options.actor,
     );
-    cleanUpCompleted(snapshot.execution.id);
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
   // Once a ticket is complete, its worktree and local branch go, as far as
   // that is safe, off the caller's path: removing a worktree full of
-  // dependencies takes a while. What stays, and why, is a card on the ticket.
-  function cleanUpCompleted(id: ExecutionId): void {
+  // dependencies takes a while. It runs after the ticket's tab closed, so the
+  // handoff panes' processes have left the worktree. Cleaning up is
+  // idempotent: a request while one runs joins it, a later one finds what is
+  // already gone, and a card goes out only when the outcome changed.
+  const cleanups = new Map<string, Promise<void>>();
+  const reported = new Map<string, string>();
+  function cleanUpCompleted(id: ExecutionId): Promise<void> {
+    const running = cleanups.get(id);
+    if (running !== undefined) {
+      return running;
+    }
     const snapshot = loadSnapshotByExecution(db, id);
     if (snapshot === null || snapshot.execution.status !== 'complete') {
-      return;
+      return Promise.resolve();
     }
-    void cleanUpTicket({
+    const cleanup = cleanUpTicket({
       dryRun: false,
       processes: listProcesses,
       pullRequestCommits: pullRequestCommits(db, id),
       snapshot,
+      wait: CLEANUP_WAIT,
     })
       .then((outcome) => {
         const line = outcomeLine(outcome);
         if (line !== null) {
           log(`Cleanup: ${line}`);
         }
+        if (line === null || reported.get(id) === line) {
+          return;
+        }
+        reported.set(id, line);
         if (needsAttention(outcome) && !stopped) {
           notify(
             attentionCard(
               snapshot,
-              `${line ?? ''} Resolve it, then run \`factory cleanup\` to clean up what is left.`,
+              `${line} Resolve it, then run \`factory cleanup\` to clean up what is left.`,
             ),
           );
         }
@@ -794,7 +814,12 @@ export function createFactoryService(input: {
         log(
           `Cleanup of ${snapshot.ticket.displayRef} failed: ${error instanceof Error ? error.message : String(error)}`,
         );
+      })
+      .finally(() => {
+        cleanups.delete(id);
       });
+    cleanups.set(id, cleanup);
+    return cleanup;
   }
 
   async function feedbackCommitted(

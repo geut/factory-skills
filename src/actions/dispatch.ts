@@ -259,7 +259,7 @@ async function sweepStrayProcesses(
   const strays = strayProcesses({
     activeWorktrees: activeWorktrees(input.db),
     exists: existsSync,
-    processes: listProcesses(),
+    processes: await listProcesses(),
     protectedPids: new Set([process.pid, process.ppid]),
     realWorktreesDir: realpathSync(worktreesDir),
     worktreesDir,

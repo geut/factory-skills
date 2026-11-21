@@ -180,14 +180,14 @@ test(
     });
     try {
       const pid = child.pid ?? -1;
-      const listed = listProcesses().find((item) => item.pid === pid);
+      const listed = (await listProcesses()).find((item) => item.pid === pid);
       assert.equal(listed?.factoryWorktree, worktree);
       assert.equal(listed?.cwd, root);
       assert.match(listed?.command ?? '', /^sleep 30/);
       const strays = strayProcesses({
         activeWorktrees: new Set(),
         exists: existsSync,
-        processes: listProcesses(),
+        processes: await listProcesses(),
         protectedPids: new Set([process.pid]),
         worktreesDir,
       });

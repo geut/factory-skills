@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { blank } from '../stories/fixtures.ts';
-import { cleanUpTicket, needsAttention, outcomeLine } from './cleanup.ts';
+import {
+  cleanUpTicket,
+  needsAttention,
+  NO_WAIT,
+  outcomeLine,
+  type ProcessWait,
+} from './cleanup.ts';
 import type { ProcessInfo } from './strays.ts';
 
 const roots: Array<string> = [];
@@ -62,14 +68,15 @@ function completed() {
   return { codeRoot, snapshot, worktree };
 }
 
-const none = (): Array<ProcessInfo> => [];
+const none = async (): Promise<Array<ProcessInfo>> => [];
 
 function cleanUp(
   value: ReturnType<typeof completed>,
   options: {
     commits?: Array<string>;
     dryRun?: boolean;
-    processes?: () => Array<ProcessInfo>;
+    processes?: () => Promise<Array<ProcessInfo>>;
+    wait?: ProcessWait;
   } = {},
 ) {
   return cleanUpTicket({
@@ -77,6 +84,7 @@ function cleanUp(
     processes: options.processes ?? none,
     pullRequestCommits: new Set(options.commits ?? []),
     snapshot: value.snapshot,
+    wait: options.wait ?? NO_WAIT,
   });
 }
 
@@ -140,7 +148,7 @@ test('changes no commit holds keep the worktree and its branch', async () => {
 test('a process still running in the worktree keeps it', async () => {
   const value = completed();
   git(value.worktree, ['push', 'origin', branch]);
-  const processes = (): Array<ProcessInfo> => [
+  const processes = async (): Promise<Array<ProcessInfo>> => [
     { command: 'node server.js', cwd: value.worktree, factoryWorktree: null, pid: 4242, ppid: 1 },
   ];
   const outcome = await cleanUp(value, { processes });
@@ -178,4 +186,31 @@ test('only a worktree the factory made, under its worktrees directory, is ever r
   assert.equal(outcome.worktree.kind, 'kept');
   assert.match(outcome.worktree.kind === 'kept' ? outcome.worktree.reason : '', /is outside/);
   assert.equal(existsSync(elsewhere), true);
+});
+
+test('a process that exits while the server waits, as a closing pane’s does, no longer keeps the worktree', async () => {
+  const value = completed();
+  git(value.worktree, ['push', 'origin', branch]);
+  let looks = 0;
+  // The pane's pi is still there at the first look, gone at the second.
+  const processes = async (): Promise<Array<ProcessInfo>> => {
+    looks += 1;
+    return looks === 1
+      ? [{ command: 'pi', cwd: value.worktree, factoryWorktree: null, pid: 4243, ppid: 1 }]
+      : [];
+  };
+  const outcome = await cleanUp(value, { processes, wait: { checks: 3, intervalMs: 1 } });
+  assert.equal(outcome.worktree.kind, 'removed');
+  assert.equal(looks, 2);
+});
+
+test('cleanups of the same ticket at once never fail each other: what one removed, the other finds gone', async () => {
+  const value = completed();
+  git(value.worktree, ['push', 'origin', branch]);
+  const [one, two] = await Promise.all([cleanUp(value), cleanUp(value)]);
+  for (const outcome of [one, two]) {
+    assert.equal(needsAttention(outcome), false, JSON.stringify(outcome));
+  }
+  assert.equal(existsSync(value.worktree), false);
+  assert.equal(hasBranch(value.codeRoot), false);
 });

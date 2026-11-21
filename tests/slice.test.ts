@@ -180,7 +180,8 @@ test('a valid plan registers tasks and launches the first work agent', async () 
     output: 'Plan files are written.',
     usage: sampleUsage(),
   });
-  await new Promise((resolve) => setImmediate(resolve));
+  // The launch waits for the stray-process sweep, which lists processes.
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
   const work = runtime.launches.find((launch) => launch.stage === 'work');
   assert.ok(work, 'expected a work launch');
   assert.match(service.status('proj-123'), /stage: work/);
@@ -1523,6 +1524,10 @@ test('a completed ticket keeps a worktree with uncommitted work and says why; fa
   assert.match(card, /kept branch factory\/.*: its worktree is kept/);
   assert.match(card, /run `factory cleanup`/);
   assert.equal(existsSync(path.join(wrapup.cwd, 'change.txt')), true);
+  // Completing again runs the same cleanup, with the same outcome: no new card.
+  assert.match(await service.command('complete proj-123.md'), /already complete/);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(notified.filter((message) => message.includes('kept worktree')).length, 1);
 
   // The human commits the change elsewhere and drops it here; the branch
   // has no commits of its own.

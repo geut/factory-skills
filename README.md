@@ -111,7 +111,7 @@ The tracker adapter decides what an issue's checklist is: wrap-up's input prepar
 - The local branch goes only with its worktree, and only if its commits are on a remote branch, or in the ticket's merged pull request (its remote branch may be deleted), or it has none of its own.
 - Remote branches, cancelled tickets (cancelling promises the worktree stays), and failed ones, which `retry` may resume, are never touched.
 
-What stays, and why, is a card on the ticket and a server log line. `factory cleanup` applies the same checks to every completed ticket, such as those that completed before, or after you resolved what a cleanup kept; `--dry-run` says what would go and changes nothing. Running it again finds what is already gone.
+It runs once the ticket's tab has closed, so the handoff panes have left the worktree, and waits a few seconds for their processes to exit. What stays, and why, is a card on the ticket and a server log line. Cleaning up is idempotent: a request while one runs for the same ticket joins it, a later one finds what is already gone, and the card goes out again only when the outcome changes. `factory cleanup` applies the same checks to every completed ticket, such as those that completed before, or after you resolved what a cleanup kept; `--dry-run` says what would go and changes nothing. Running it again finds what is already gone.
 
 ## Factory server
 

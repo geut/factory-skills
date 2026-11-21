@@ -111,10 +111,34 @@ function listed(items: Array<string>, limit = 5): string {
   return items.length > limit ? `${shown}, and ${items.length - limit} more` : shown;
 }
 
+// How long the server waits for processes in a worktree to exit, as after
+// the ticket's tab closed: re-checks, a second apart. `factory cleanup` does
+// not wait.
+export type ProcessWait = { checks: number; intervalMs: number };
+
+export const NO_WAIT: ProcessWait = { checks: 0, intervalMs: 0 };
+export const CLEANUP_WAIT: ProcessWait = { checks: 5, intervalMs: 1000 };
+
+// The processes still in the worktree after waiting up to `wait` for them to
+// exit.
+async function settledProcesses(
+  worktree: string,
+  processes: () => Promise<ReadonlyArray<ProcessInfo>>,
+  wait: ProcessWait,
+): Promise<Array<ProcessInfo>> {
+  let running = processesIn(worktree, await processes());
+  for (let check = 0; check < wait.checks && running.length > 0; check += 1) {
+    await new Promise((resolve) => setTimeout(resolve, wait.intervalMs));
+    running = processesIn(worktree, await processes());
+  }
+  return running;
+}
+
 async function worktreeStep(input: {
   codeRoot: string;
   dryRun: boolean;
-  processes: () => ReadonlyArray<ProcessInfo>;
+  processes: () => Promise<ReadonlyArray<ProcessInfo>>;
+  wait: ProcessWait;
   worktree: string | null;
   worktreesDir: string;
 }): Promise<CleanupItem> {
@@ -131,7 +155,8 @@ async function worktreeStep(input: {
   }
   const pending = await pendingChanges(worktree);
   if (!Array.isArray(pending)) {
-    return { kind: 'failed', reason: pending.error };
+    // Another cleanup of the same ticket removed it meanwhile.
+    return existsSync(worktree) ? { kind: 'failed', reason: pending.error } : { kind: 'gone' };
   }
   if (pending.length > 0) {
     return {
@@ -139,7 +164,7 @@ async function worktreeStep(input: {
       reason: `it has changes no commit holds: ${listed(pending)}`,
     };
   }
-  const running = processesIn(worktree, input.processes());
+  const running = await settledProcesses(worktree, input.processes, input.wait);
   if (running.length > 0) {
     return {
       kind: 'kept',
@@ -152,9 +177,13 @@ async function worktreeStep(input: {
   // The checks above are the safety; --force only lets git remove ignored
   // files and the host's metadata with the rest.
   const removed = await git(input.codeRoot, ['worktree', 'remove', '--force', worktree]);
-  return removed.code === 0
-    ? { kind: 'removed' }
-    : { kind: 'failed', reason: removed.stderr.trim() || 'git worktree remove failed' };
+  if (removed.code === 0) {
+    return { kind: 'removed' };
+  }
+  // Gone all the same, as when another cleanup removed it first.
+  return existsSync(worktree)
+    ? { kind: 'failed', reason: removed.stderr.trim() || 'git worktree remove failed' }
+    : { kind: 'gone' };
 }
 
 async function branchStep(input: {
@@ -210,9 +239,18 @@ async function branchStep(input: {
     return { kind: 'would_remove' };
   }
   const deleted = await git(input.codeRoot, ['branch', '-D', branch]);
-  return deleted.code === 0
-    ? { kind: 'removed' }
-    : { kind: 'failed', reason: deleted.stderr.trim() || 'git branch -D failed' };
+  if (deleted.code === 0) {
+    return { kind: 'removed' };
+  }
+  const still = await git(input.codeRoot, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    `refs/heads/${branch}`,
+  ]);
+  return still.code === 0
+    ? { kind: 'failed', reason: deleted.stderr.trim() || 'git branch -D failed' }
+    : { kind: 'gone' };
 }
 
 // The commits of a ticket's pull request, as the code host last reported
@@ -229,9 +267,10 @@ export function pullRequestCommits(db: DatabaseSync, executionId: string): Set<s
 // Cleans up after one completed ticket, as far as it is safe.
 export async function cleanUpTicket(input: {
   dryRun: boolean;
-  processes: () => ReadonlyArray<ProcessInfo>;
+  processes: () => Promise<ReadonlyArray<ProcessInfo>>;
   pullRequestCommits: ReadonlySet<string>;
   snapshot: FactorySnapshot;
+  wait: ProcessWait;
 }): Promise<CleanupOutcome> {
   const { execution, ticket } = input.snapshot;
   const codeRoot = execution.policy.codeRoot;
@@ -239,6 +278,7 @@ export async function cleanUpTicket(input: {
     codeRoot,
     dryRun: input.dryRun,
     processes: input.processes,
+    wait: input.wait,
     worktree: execution.worktreePath,
     worktreesDir: path.join(factoryRootOf(execution.factoryDir), 'worktrees'),
   });

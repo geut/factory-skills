@@ -1102,7 +1102,9 @@ export function createPiHerdrRuntime(options?: {
         return false;
       }
       const pids = new Set(paneProcessIdsOf(info.stdout));
-      return listProcesses().some((item) => pids.has(item.pid) && item.factoryWorktree === marker);
+      return (await listProcesses()).some(
+        (item) => pids.has(item.pid) && item.factoryWorktree === marker,
+      );
     },
     async reconcile(runs) {
       const observations: Array<{ observation: ReconcileObservation; runId: RunId }> = [];
