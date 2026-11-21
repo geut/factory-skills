@@ -718,7 +718,13 @@ export function createFactoryService(input: {
   ): Committed {
     // An answer to the question asked: the same words may answer the next
     // question, or the same one in a rerun's generation.
-    const question = snapshot.attention.find((item) => item.status === 'open')?.id ?? 'no-question';
+    // The question still being handled: a resend of the same answer, after it
+    // moved the question on to resuming, is the same reply.
+    const question =
+      snapshot.attention.findLast(
+        (item) =>
+          item.status === 'open' || item.status === 'answered' || item.status === 'resuming',
+      )?.id ?? 'no-question';
     const key = dedupe(options, `reply:${snapshot.execution.id}:${question}:${sha256(answer)}`);
     const applied = apply(
       {
@@ -742,13 +748,17 @@ export function createFactoryService(input: {
     );
   }
 
-  // Keyed by the generation and its version: two tickets, or a ticket and its
-  // rerun, can wait for a retry at the same version.
+  // Deduped by the generation and its version: a ticket and its rerun can
+  // wait for a retry at the same version. The reducer makes the keys of the
+  // actions a retry creates unique.
   function retryCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
-    const key = `retry:${snapshot.execution.id}:${snapshot.execution.version}`;
     const applied = apply(
-      { idempotencyKey: key, kind: 'retry', ticketId: snapshot.ticket.id },
-      dedupe(options, key),
+      {
+        idempotencyKey: `retry:${snapshot.execution.version}`,
+        kind: 'retry',
+        ticketId: snapshot.ticket.id,
+      },
+      dedupe(options, `retry:${snapshot.execution.id}:${snapshot.execution.version}`),
       'command',
       options.actor,
     );

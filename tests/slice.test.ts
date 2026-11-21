@@ -804,6 +804,50 @@ test('work caller_ping resumes that work session and a failed resume keeps the a
   assert.match(resumed.at(-1)?.prompt ?? '', /factory-work/);
 });
 
+test('a retried resume carries the answer to the question it resumes, not an earlier one', async () => {
+  const { runtime, service, workRunId } = await reachWork();
+  runtime.emit(workRunId, { kind: 'caller_ping', question: 'Which store?', usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('waiting_for_user'));
+  await service.command('reply proj-123 "Use the catalog store"');
+  await waitFor(() =>
+    runtime.launches.some((launch) => launch.stage === 'work' && launch.mode === 'resume'),
+  );
+  const resumed = runtime.launches.at(-1)?.runId;
+  if (resumed === undefined) {
+    throw new Error('missing resumed run');
+  }
+  runtime.emit(resumed, {
+    kind: 'caller_ping',
+    question: 'Keep it in the URL?',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('Keep it in the URL?'));
+  runtime.failuresRemaining = 4;
+  await service.command('reply proj-123 "Yes, as a query parameter"');
+  await waitFor(() => service.status('proj-123').includes('resume_failed'));
+  runtime.failuresRemaining = 0;
+  const launches = runtime.launches.length;
+  await service.command('retry proj-123');
+  await waitFor(() => runtime.launches.length > launches);
+  const retried = runtime.launches.at(-1)?.prompt ?? '';
+  assert.match(retried, /Yes, as a query parameter/);
+  assert.doesNotMatch(retried, /catalog store/);
+});
+
+test('sending the same reply twice resumes once and refuses nothing', async () => {
+  const { runtime, service, workRunId } = await reachWork();
+  runtime.emit(workRunId, { kind: 'caller_ping', question: 'Which store?', usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('waiting_for_user'));
+  await service.command('reply proj-123 "Use the catalog store"');
+  const again = await service.command('reply proj-123 "Use the catalog store"');
+  assert.doesNotMatch(again, /not waiting|no open question/i);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(
+    runtime.launches.filter((launch) => launch.stage === 'work' && launch.mode === 'resume').length,
+    1,
+  );
+});
+
 test('restart validates a finished worker once and reconciles one reviewer', async () => {
   const { codeRoot, factoryRoot } = repo();
   const db = openStateDatabase(factoryRoot, { create: true });

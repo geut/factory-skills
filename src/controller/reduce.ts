@@ -582,10 +582,14 @@ function scheduleInfrastructure(
     snapshot.execution.statusReason = message;
     return;
   }
-  const current = snapshot.replies.find((reply) => reply.isCurrent) ?? null;
   const attention =
     snapshot.attention.find((item) => item.status === 'resuming' || item.status === 'answered') ??
     null;
+  // Each question keeps its own current reply: the one to the question resumed.
+  const current =
+    snapshot.replies.find(
+      (reply) => reply.isCurrent && attention !== null && reply.requestId === attention.id,
+    ) ?? null;
   const prompt =
     human && current !== null
       ? stages[session.stage].turn({ answer: current.answer, kind: 'reply' })
@@ -2052,6 +2056,11 @@ export function reduce(input: {
       if (retry === null) {
         return reject(existing, 'This ticket is not waiting for retry.');
       }
+      // Action keys are unique across every ticket and generation, and the
+      // retry's own key need not be: every action it creates carries the
+      // execution.
+      const retryActionKey = (name: string): string =>
+        `${name}:${snapshot.execution.id}:${event.idempotencyKey}`;
       switch (retry.kind) {
         case 'input': {
           const failed = [...snapshot.actions]
@@ -2067,8 +2076,7 @@ export function reduce(input: {
           resolveOpen(snapshot, failed.purpose === 'human_reply');
           enqueueInput(snapshot, failed.stage, {
             failures: failed.failures,
-            // Action keys are unique across every ticket and generation.
-            idempotencyKey: `${failed.stage}-input-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
+            idempotencyKey: retryActionKey(`${failed.stage}-input-retry`),
             ids,
             purpose: failed.purpose,
             ...(failed.origin === null ? {} : { origin: failed.origin }),
@@ -2093,12 +2101,7 @@ export function reduce(input: {
           snapshot.execution.stage = retry.stage;
           snapshot.execution.status = 'active';
           snapshot.execution.retry = null;
-          enqueueValidation(
-            snapshot,
-            earlier,
-            `validate:${earlier.id}:retry:${event.idempotencyKey}`,
-            ids,
-          );
+          enqueueValidation(snapshot, earlier, retryActionKey(`validate:${earlier.id}`), ids);
           return finish(snapshot, `Validating the ${retry.stage} again.`);
         }
         case 'validate': {
@@ -2113,7 +2116,7 @@ export function reduce(input: {
             attentionReplyId: null,
             attentionRequestId: null,
             id: ids.action(),
-            idempotencyKey: `validate-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
+            idempotencyKey: retryActionKey('validate-retry'),
             kind: 'validate_run',
             lastError: null,
             maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
@@ -2126,10 +2129,14 @@ export function reduce(input: {
           return finish(snapshot, 'Retrying validation.');
         }
         case 'resume_reply': {
-          const reply = snapshot.replies.find((item) => item.isCurrent) ?? null;
           const attention =
             snapshot.attention.find(
               (item) => item.status === 'answered' || item.status === 'resuming',
+            ) ?? null;
+          // The current reply to the question resumed, not an earlier one's.
+          const reply =
+            snapshot.replies.find(
+              (item) => item.isCurrent && attention !== null && item.requestId === attention.id,
             ) ?? null;
           const parent =
             attention?.runId === null || attention === null
@@ -2156,7 +2163,7 @@ export function reduce(input: {
             attentionRequestId: attention.id,
             cwd: sessionCwd(snapshot, session),
             id: ids.action(),
-            idempotencyKey: `retry:${event.idempotencyKey}:${run.id}`,
+            idempotencyKey: retryActionKey(`retry:${run.id}`),
             kind: 'resume_run',
             lastError: null,
             maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
@@ -2185,7 +2192,7 @@ export function reduce(input: {
             attentionReplyId: null,
             attentionRequestId: null,
             id: ids.action(),
-            idempotencyKey: `worktree-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
+            idempotencyKey: retryActionKey('worktree-retry'),
             kind: 'prepare_worktree',
             lastError: null,
             maxAttempts: 3,
