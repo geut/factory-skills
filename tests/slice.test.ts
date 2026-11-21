@@ -285,6 +285,50 @@ test('a plan validation that throws fails the ticket, and retry validates again'
   await closeWhenIdle(db);
 });
 
+// Two parallel tickets failed the same way and waited for a retry at the
+// same version: the second retry's validation action took the first one's
+// key, and every retry of it failed with an internal error.
+test('two tickets waiting for a retry at the same version each retry', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  writeFileSync(path.join(codeRoot, 'proj-456.md'), '# Remember the sort\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  await service.command('start proj-456.md');
+  for (const dir of readdirSync(path.join(factoryRoot, 'tickets'))) {
+    writePlanFiles(path.join(factoryRoot, 'tickets', dir), '01-task-store-filter.md');
+  }
+  const db = openStateDatabase(factoryRoot, { create: true });
+  db.exec(
+    "CREATE TRIGGER refuse_tasks BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'disk is full'); END",
+  );
+  for (const launch of runtime.launches) {
+    runtime.emit(launch.runId, {
+      kind: 'subagent_done',
+      output: 'Plan written.',
+      usage: sampleUsage(),
+    });
+  }
+  await waitFor(
+    () =>
+      service.status('proj-123').includes('status: failed') &&
+      service.status('proj-456').includes('status: failed'),
+  );
+  // The case to cover: both at the same version.
+  const versions = db
+    .prepare('SELECT version FROM ticket_executions WHERE is_current = 1')
+    .all()
+    .map((row) => row['version']);
+  assert.equal(new Set(versions).size, 1, JSON.stringify(versions));
+
+  db.exec('DROP TRIGGER refuse_tasks');
+  assert.doesNotMatch(await service.command('retry proj-123'), /error/i);
+  assert.doesNotMatch(await service.command('retry proj-456'), /error/i);
+  await waitFor(() => runtime.launches.filter((launch) => launch.stage === 'work').length === 2);
+  await closeWhenIdle(db);
+});
+
 // The Herdr tabs check: the database was reset, but the ticket directory and
 // worktree of the earlier run stayed. The new run read the old plan and found
 // the old hello.md in its worktree, and spent most of its time untangling them.
@@ -384,6 +428,27 @@ test('caller_ping is durable and reply resumes that session', async () => {
   assert.match(illegal, /Resuming the session|stage:/);
   assert.equal(runtime.launches.at(-1)?.mode, 'resume');
   assert.match(runtime.launches.at(-1)?.prompt ?? '', /Use the existing API/);
+});
+
+test('the same answer to the next question resumes the session again', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  for (const question of ['Store it in the URL?', 'Keep it across tabs too?']) {
+    const runId = runtime.launches.at(-1)?.runId;
+    if (runId === undefined) {
+      throw new Error('missing run');
+    }
+    runtime.emit(runId, { kind: 'caller_ping', question, usage: sampleUsage() });
+    await waitFor(() => service.status('proj-123').includes('waiting_for_user'));
+    const launches = runtime.launches.length;
+    // "yes" both times: the second is an answer to a new question.
+    assert.doesNotMatch(await service.command('reply proj-123 "yes"'), /already current|ignored/);
+    await waitFor(() => runtime.launches.length === launches + 1);
+    assert.equal(runtime.launches.at(-1)?.mode, 'resume');
+  }
 });
 
 test('three failed plan corrections pause instead of launching again', async () => {

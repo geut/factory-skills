@@ -1962,8 +1962,15 @@ export function reduce(input: {
       if (snapshot.replies.some((reply) => reply.idempotencyKey === event.idempotencyKey)) {
         return unchanged(existing, 'Duplicate reply ignored.');
       }
+      // The same answer to this question again changes nothing; to the next
+      // question, it is a new reply.
       const answerHash = sha256(event.answer);
-      if (snapshot.replies.some((reply) => reply.isCurrent && reply.answerHash === answerHash)) {
+      if (
+        snapshot.replies.some(
+          (reply) =>
+            reply.requestId === attention.id && reply.isCurrent && reply.answerHash === answerHash,
+        )
+      ) {
         return unchanged(existing, 'That answer is already current.');
       }
       for (const reply of snapshot.replies) {
@@ -2060,7 +2067,8 @@ export function reduce(input: {
           resolveOpen(snapshot, failed.purpose === 'human_reply');
           enqueueInput(snapshot, failed.stage, {
             failures: failed.failures,
-            idempotencyKey: `${failed.stage}-input-retry:${event.idempotencyKey}`,
+            // Action keys are unique across every ticket and generation.
+            idempotencyKey: `${failed.stage}-input-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
             ids,
             purpose: failed.purpose,
             ...(failed.origin === null ? {} : { origin: failed.origin }),
@@ -2105,7 +2113,7 @@ export function reduce(input: {
             attentionReplyId: null,
             attentionRequestId: null,
             id: ids.action(),
-            idempotencyKey: `validate-retry:${event.idempotencyKey}`,
+            idempotencyKey: `validate-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
             kind: 'validate_run',
             lastError: null,
             maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
@@ -2177,7 +2185,7 @@ export function reduce(input: {
             attentionReplyId: null,
             attentionRequestId: null,
             id: ids.action(),
-            idempotencyKey: `worktree-retry:${event.idempotencyKey}`,
+            idempotencyKey: `worktree-retry:${snapshot.execution.id}:${event.idempotencyKey}`,
             kind: 'prepare_worktree',
             lastError: null,
             maxAttempts: 3,

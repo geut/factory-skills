@@ -716,7 +716,10 @@ export function createFactoryService(input: {
     answer: string,
     options: CommandOptions,
   ): Committed {
-    const key = dedupe(options, `reply:${snapshot.ticket.id}:${sha256(answer)}`);
+    // An answer to the question asked: the same words may answer the next
+    // question, or the same one in a rerun's generation.
+    const question = snapshot.attention.find((item) => item.status === 'open')?.id ?? 'no-question';
+    const key = dedupe(options, `reply:${snapshot.execution.id}:${question}:${sha256(answer)}`);
     const applied = apply(
       {
         ...(options.actor === null ? {} : { actor: options.actor }),
@@ -739,14 +742,13 @@ export function createFactoryService(input: {
     );
   }
 
+  // Keyed by the generation and its version: two tickets, or a ticket and its
+  // rerun, can wait for a retry at the same version.
   function retryCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+    const key = `retry:${snapshot.execution.id}:${snapshot.execution.version}`;
     const applied = apply(
-      {
-        idempotencyKey: `retry:${snapshot.execution.version}`,
-        kind: 'retry',
-        ticketId: snapshot.ticket.id,
-      },
-      dedupe(options, `retry:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      { idempotencyKey: key, kind: 'retry', ticketId: snapshot.ticket.id },
+      dedupe(options, key),
       'command',
       options.actor,
     );
@@ -761,7 +763,8 @@ export function createFactoryService(input: {
         kind: 'complete',
         ticketId: snapshot.ticket.id,
       },
-      dedupe(options, `complete:${snapshot.ticket.id}:${snapshot.execution.version}`),
+      // A rerun's generation completes on its own, whatever its version.
+      dedupe(options, `complete:${snapshot.execution.id}:${snapshot.execution.version}`),
       'command',
       options.actor,
     );
