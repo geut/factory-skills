@@ -38,6 +38,7 @@ import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports
 import type { GithubClient } from '../src/ports/github.ts';
 import type { PullRequestFeedback, SkippedFeedback } from '../src/ports/pull-request-feedback.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
+import { runCleanupCommand } from '../src/server/cleanup-cli.ts';
 import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
@@ -179,7 +180,8 @@ test('a valid plan registers tasks and launches the first work agent', async () 
     output: 'Plan files are written.',
     usage: sampleUsage(),
   });
-  await new Promise((resolve) => setImmediate(resolve));
+  // The launch waits for the stray-process sweep, which lists processes.
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
   const work = runtime.launches.find((launch) => launch.stage === 'work');
   assert.ok(work, 'expected a work launch');
   assert.match(service.status('proj-123'), /stage: work/);
@@ -1493,6 +1495,53 @@ test('a valid handoff is ready for handoff, opens both panes, and complete finis
   assert.equal(executionRow(db)['stage'], 'done');
   assert.notEqual(executionRow(db)['finished_at'], null);
   assert.match(await service.command('complete proj-123.md'), /already complete/);
+  await closeWhenIdle(db);
+});
+
+test('a completed ticket keeps a worktree with uncommitted work and says why; factory cleanup removes it once that is resolved', async () => {
+  const { branch, db, notified, runtime, service, wrapup } = await reachWrapup();
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  const codeRoot = path.resolve(wrapup.cwd, '../../..');
+  const out: Array<string> = [];
+  const io = { err: (line: string) => out.push(line), out: (line: string) => out.push(line) };
+  // Not complete yet: its worktree serves the handoff and later feedback
+  // rounds, so cleanup leaves it alone.
+  assert.equal(await runCleanupCommand([], codeRoot, io), 0);
+  assert.deepEqual(out, ['Nothing to clean up: 0 completed tickets checked.']);
+  assert.equal(existsSync(wrapup.cwd), true);
+  out.length = 0;
+  // Pull requests are off: the ticket's change is still uncommitted when the
+  // human completes it.
+  assert.match(await service.command('complete proj-123.md'), /status: complete/);
+  await waitFor(() => notified.some((message) => message.includes('kept worktree')));
+  const card = notified.find((message) => message.includes('kept worktree')) ?? '';
+  assert.match(card, /it has changes no commit holds: change\.txt/);
+  assert.match(card, /kept branch factory\/.*: its worktree is kept/);
+  assert.match(card, /run `factory cleanup`/);
+  assert.equal(existsSync(path.join(wrapup.cwd, 'change.txt')), true);
+  // Completing again runs the same cleanup, with the same outcome: no new card.
+  assert.match(await service.command('complete proj-123.md'), /already complete/);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(notified.filter((message) => message.includes('kept worktree')).length, 1);
+
+  // The human commits the change elsewhere and drops it here; the branch
+  // has no commits of its own.
+  rmSync(path.join(wrapup.cwd, 'change.txt'));
+  assert.equal(await runCleanupCommand(['--dry-run'], codeRoot, io), 0);
+  assert.match(out.join('\n'), /would remove worktree .*; would remove branch factory\//);
+  assert.equal(existsSync(wrapup.cwd), true);
+  out.length = 0;
+  assert.equal(await runCleanupCommand([], codeRoot, io), 0);
+  assert.match(out.join('\n'), /proj-123: removed worktree .*; removed branch factory\//);
+  assert.equal(existsSync(wrapup.cwd), false);
+  out.length = 0;
+  assert.equal(await runCleanupCommand([], codeRoot, io), 0);
+  assert.deepEqual(out, ['Nothing to clean up: 1 completed ticket checked.']);
   await closeWhenIdle(db);
 });
 

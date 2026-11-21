@@ -1,5 +1,6 @@
-import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { readdir, readFile, readlink, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 // Servers an agent backgrounds in its worktree outlive its pane. Before a work
@@ -171,43 +172,60 @@ function readOrNull<T>(read: () => T): T | null {
   }
 }
 
-// Linux: the current user's processes from /proc. One that exits mid-read, or
-// whose files are closed to us, comes back with what could be read.
-function fromProc(uid: number): Array<ProcessInfo> {
-  const processes: Array<ProcessInfo> = [];
-  for (const name of readdirSync('/proc')) {
-    if (!/^\d+$/.test(name)) {
-      continue;
-    }
-    const dir = `/proc/${name}`;
-    if (readOrNull(() => statSync(dir).uid) !== uid) {
-      continue;
-    }
-    // `pid (comm) state ppid …`; comm may hold spaces and parentheses.
-    const stat = readOrNull(() => readFileSync(`${dir}/stat`, 'utf8')) ?? '';
-    const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
-    const command = (readOrNull(() => readFileSync(`${dir}/cmdline`, 'utf8')) ?? '')
-      .split('\0')
-      .join(' ')
-      .trim();
-    if (command.length === 0) {
-      continue;
-    }
-    processes.push({
-      command,
-      cwd: readOrNull(() => readlinkSync(`${dir}/cwd`)),
-      factoryWorktree: markerIn(readOrNull(() => readFileSync(`${dir}/environ`, 'utf8')) ?? ''),
-      pid: Number(name),
-      ppid: Number.isInteger(ppid) ? ppid : 0,
-    });
+async function readOrNullAsync<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
   }
-  return processes;
+}
+
+// Linux: the current user's processes from /proc. One that exits mid-read, or
+// whose files are closed to us, comes back with what could be read. Read
+// with awaited I/O, so the server keeps answering while it lists.
+async function fromProc(uid: number): Promise<Array<ProcessInfo>> {
+  const names = (await readdir('/proc')).filter((name) => /^\d+$/.test(name));
+  const listed = await Promise.all(
+    names.map(async (name): Promise<ProcessInfo | null> => {
+      const dir = `/proc/${name}`;
+      if ((await readOrNullAsync(async () => (await stat(dir)).uid)) !== uid) {
+        return null;
+      }
+      // `pid (comm) state ppid …`; comm may hold spaces and parentheses.
+      const [statText, cmdline, cwd, environ] = await Promise.all([
+        readOrNullAsync(() => readFile(`${dir}/stat`, 'utf8')),
+        readOrNullAsync(() => readFile(`${dir}/cmdline`, 'utf8')),
+        readOrNullAsync(() => readlink(`${dir}/cwd`)),
+        readOrNullAsync(() => readFile(`${dir}/environ`, 'utf8')),
+      ]);
+      const text = statText ?? '';
+      const ppid = Number(text.slice(text.lastIndexOf(')') + 2).split(' ')[1]);
+      const command = (cmdline ?? '').split('\0').join(' ').trim();
+      if (command.length === 0) {
+        return null;
+      }
+      return {
+        command,
+        cwd,
+        factoryWorktree: markerIn(environ ?? ''),
+        pid: Number(name),
+        ppid: Number.isInteger(ppid) ? ppid : 0,
+      };
+    }),
+  );
+  return listed.filter((item) => item !== null);
 }
 
 // What a command printed. lsof exits 1 over warnings it still lists past, so
 // the status is not checked; a command that cannot run prints nothing.
-function commandOutput(command: string, args: Array<string>): string {
-  return spawnSync(command, args, { encoding: 'utf8', timeout: 10_000 }).stdout ?? '';
+function commandOutput(command: string, args: Array<string>): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
+    const out: Array<Buffer> = [];
+    child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
+    child.on('error', () => resolve(''));
+    child.on('close', () => resolve(Buffer.concat(out).toString('utf8')));
+  });
 }
 
 // `ps -E` appends the environment to the command, space-separated: the marker
@@ -216,17 +234,15 @@ const psMarker = new RegExp(`^\\s*(\\d+)\\s.*\\s${MARKER}=(.*?)(?= [A-Za-z_][A-Z
 
 // Elsewhere (macOS): `ps` for the processes and their environment, `lsof` for
 // their working directories.
-function fromPs(uid: number): Array<ProcessInfo> {
+async function fromPs(uid: number): Promise<Array<ProcessInfo>> {
+  const [withEnv, withCwd, listed] = await Promise.all([
+    // -ww: without a terminal, ps cuts lines at 80 columns, before the environment.
+    commandOutput('ps', ['-ww', '-E', '-U', String(uid), '-o', 'pid=,command=']),
+    commandOutput('lsof', ['-a', '-d', 'cwd', '-u', String(uid), '-Fpn']),
+    commandOutput('ps', ['-ww', '-U', String(uid), '-o', 'pid=,ppid=,command=']),
+  ]);
   const markers = new Map<number, string>();
-  // -ww: without a terminal, ps cuts lines at 80 columns, before the environment.
-  for (const line of commandOutput('ps', [
-    '-ww',
-    '-E',
-    '-U',
-    String(uid),
-    '-o',
-    'pid=,command=',
-  ]).split('\n')) {
+  for (const line of withEnv.split('\n')) {
     const match = psMarker.exec(line);
     if (match !== null && match[2] !== undefined && match[2].length > 0) {
       markers.set(Number(match[1]), match[2]);
@@ -234,43 +250,42 @@ function fromPs(uid: number): Array<ProcessInfo> {
   }
   const cwds = new Map<number, string>();
   let pid = 0;
-  for (const line of commandOutput('lsof', ['-a', '-d', 'cwd', '-u', String(uid), '-Fpn']).split(
-    '\n',
-  )) {
+  for (const line of withCwd.split('\n')) {
     if (line.startsWith('p')) {
       pid = Number(line.slice(1));
     } else if (line.startsWith('n')) {
       cwds.set(pid, line.slice(1));
     }
   }
-  return commandOutput('ps', ['-ww', '-U', String(uid), '-o', 'pid=,ppid=,command='])
-    .split('\n')
-    .flatMap((line) => {
-      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
-      if (match === null) {
-        return [];
-      }
-      const pid = Number(match[1]);
-      return [
-        {
-          command: match[3]?.trim() ?? '',
-          cwd: cwds.get(pid) ?? null,
-          factoryWorktree: markers.get(pid) ?? null,
-          pid,
-          ppid: Number(match[2]),
-        },
-      ];
-    });
+  return listed.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (match === null) {
+      return [];
+    }
+    const found = Number(match[1]);
+    return [
+      {
+        command: match[3]?.trim() ?? '',
+        cwd: cwds.get(found) ?? null,
+        factoryWorktree: markers.get(found) ?? null,
+        pid: found,
+        ppid: Number(match[2]),
+      },
+    ];
+  });
 }
 
 // The current user's processes. Listing never throws: a platform it cannot
 // read yields none, and the sweep then stops nothing.
-export function listProcesses(): Array<ProcessInfo> {
+export async function listProcesses(): Promise<Array<ProcessInfo>> {
   const uid = process.getuid?.() ?? null;
   if (uid === null) {
     return [];
   }
-  return readOrNull(() => (process.platform === 'linux' ? fromProc(uid) : fromPs(uid))) ?? [];
+  return (
+    (await readOrNullAsync(() => (process.platform === 'linux' ? fromProc(uid) : fromPs(uid)))) ??
+    []
+  );
 }
 
 // Whether `pid` still runs. A zombie has exited; only its entry is left.

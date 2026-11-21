@@ -1,6 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import {
+  cleanUpTicket,
+  CLEANUP_WAIT,
+  needsAttention,
+  outcomeLine,
+  pullRequestCommits,
+} from '../actions/cleanup.ts';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
 import {
   type FeedbackChoice,
@@ -10,6 +17,7 @@ import {
   writeFeedbackTask,
 } from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
+import { listProcesses } from '../actions/strays.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
@@ -18,6 +26,7 @@ import {
   ticketId as ticketIdOf,
   type Actor,
   type ControllerEvent,
+  type ExecutionId,
   type FactorySnapshot,
   type IdSource,
   type Policy,
@@ -64,6 +73,7 @@ type FeedbackCommand = Extract<ParsedCommand, { kind: 'feedback' }>;
 import type { TicketProgress } from './progress.ts';
 import { describeExisting } from './reduce.ts';
 import {
+  attentionCard,
   correctsRun,
   feedbackRoundCard,
   pendingFeedbackCard,
@@ -81,6 +91,7 @@ import {
   listRunningChildren,
   loadCurrentByFactoryKey,
   loadCurrentByTicketKey,
+  loadSnapshotByExecution,
   loadSnapshotByRun,
   recordCard,
   requeueOrphanedPanes,
@@ -260,6 +271,7 @@ export function createFactoryService(input: {
     linear: input.linear ?? linearFromEnv(process.env),
   };
   const post = input.notify ?? (() => undefined);
+  const log = input.log ?? (() => undefined);
   // Every card is also kept as an event, for clients that read the history.
   const notify = (message: string): void => {
     recordCard(db, message, now());
@@ -296,8 +308,16 @@ export function createFactoryService(input: {
       return;
     }
     const snapshot = loadCurrentByTicketKey(db, event.ticketId);
-    if (snapshot !== null && runtime.closeTab !== undefined) {
-      void runtime.closeTab(ticketKeyOf(snapshot)).catch(() => undefined);
+    if (snapshot === null) {
+      return;
+    }
+    const closed =
+      runtime.closeTab === undefined
+        ? Promise.resolve()
+        : runtime.closeTab(ticketKeyOf(snapshot)).catch(() => undefined);
+    // A completed ticket's worktree is cleaned up once its panes are gone.
+    if (event.kind === 'complete') {
+      void closed.then(() => cleanUpCompleted(snapshot.execution.id));
     }
   }
 
@@ -517,7 +537,7 @@ export function createFactoryService(input: {
             ? {}
             : { linksRetryDelaysMs: input.linksRetryDelaysMs }),
           liveActions,
-          log: input.log ?? (() => undefined),
+          log,
           notify,
           now,
           runtime,
@@ -746,6 +766,60 @@ export function createFactoryService(input: {
       options.actor,
     );
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  // Once a ticket is complete, its worktree and local branch go, as far as
+  // that is safe, off the caller's path: removing a worktree full of
+  // dependencies takes a while. It runs after the ticket's tab closed, so the
+  // handoff panes' processes have left the worktree. Cleaning up is
+  // idempotent: a request while one runs joins it, a later one finds what is
+  // already gone, and a card goes out only when the outcome changed.
+  const cleanups = new Map<string, Promise<void>>();
+  const reported = new Map<string, string>();
+  function cleanUpCompleted(id: ExecutionId): Promise<void> {
+    const running = cleanups.get(id);
+    if (running !== undefined) {
+      return running;
+    }
+    const snapshot = loadSnapshotByExecution(db, id);
+    if (snapshot === null || snapshot.execution.status !== 'complete') {
+      return Promise.resolve();
+    }
+    const cleanup = cleanUpTicket({
+      dryRun: false,
+      processes: listProcesses,
+      pullRequestCommits: pullRequestCommits(db, id),
+      snapshot,
+      wait: CLEANUP_WAIT,
+    })
+      .then((outcome) => {
+        const line = outcomeLine(outcome);
+        if (line !== null) {
+          log(`Cleanup: ${line}`);
+        }
+        if (line === null || reported.get(id) === line) {
+          return;
+        }
+        reported.set(id, line);
+        if (needsAttention(outcome) && !stopped) {
+          notify(
+            attentionCard(
+              snapshot,
+              `${line} Resolve it, then run \`factory cleanup\` to clean up what is left.`,
+            ),
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        log(
+          `Cleanup of ${snapshot.ticket.displayRef} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        cleanups.delete(id);
+      });
+    cleanups.set(id, cleanup);
+    return cleanup;
   }
 
   async function feedbackCommitted(
