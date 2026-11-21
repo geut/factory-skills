@@ -3,6 +3,7 @@ import { isSea } from 'node:sea';
 import { factoryPaths } from './controller/service.ts';
 import { createFactoryClient } from './extension/factory-client.ts';
 import { ghJson } from './ports/gh.ts';
+import { runCleanupCommand } from './server/cleanup-cli.ts';
 import { serve } from './server/serve.ts';
 import { runSessionsCommand } from './server/sessions-cli.ts';
 import { runTokenCommand } from './server/token-cli.ts';
@@ -18,6 +19,7 @@ const usage = `Usage:
   factory serve     run the factory server for the repository in this directory
   factory token     manage API client tokens (factory token --help)
   factory sessions  list each stage's Pi session file (factory sessions [ticket])
+  factory cleanup   remove completed tickets' worktrees and branches (--dry-run)
   factory tracker   list what the Linear workspace has (factory tracker inspect)
   factory update    install the newest release (factory update --help)
   factory --version print this factory's version
@@ -31,6 +33,9 @@ async function main(argv: Array<string>): Promise<number> {
   }
   if (command === 'tracker') {
     return runTrackerCommand(rest, process.cwd(), { err: fail, out: say }, { env: process.env });
+  }
+  if (command === 'cleanup') {
+    return runCleanupCommand(rest, process.cwd(), { err: fail, out: say });
   }
   if (command === 'sessions') {
     return runSessionsCommand(rest, process.cwd(), { err: fail, out: say });

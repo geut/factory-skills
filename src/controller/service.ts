@@ -1,6 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import {
+  cleanUpTicket,
+  needsAttention,
+  outcomeLine,
+  pullRequestCommits,
+} from '../actions/cleanup.ts';
 import { dispatchPending, watchRun } from '../actions/dispatch.ts';
 import {
   type FeedbackChoice,
@@ -10,14 +16,17 @@ import {
   writeFeedbackTask,
 } from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
+import { listProcesses } from '../actions/strays.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
 import {
+  executionId as executionIdOf,
   randomIds,
   runId as runIdOf,
   ticketId as ticketIdOf,
   type Actor,
   type ControllerEvent,
+  type ExecutionId,
   type FactorySnapshot,
   type IdSource,
   type Policy,
@@ -64,6 +73,7 @@ type FeedbackCommand = Extract<ParsedCommand, { kind: 'feedback' }>;
 import type { TicketProgress } from './progress.ts';
 import { describeExisting } from './reduce.ts';
 import {
+  attentionCard,
   correctsRun,
   feedbackRoundCard,
   pendingFeedbackCard,
@@ -81,6 +91,7 @@ import {
   listRunningChildren,
   loadCurrentByFactoryKey,
   loadCurrentByTicketKey,
+  loadSnapshotByExecution,
   loadSnapshotByRun,
   recordCard,
   requeueOrphanedPanes,
@@ -260,6 +271,7 @@ export function createFactoryService(input: {
     linear: input.linear ?? linearFromEnv(process.env),
   };
   const post = input.notify ?? (() => undefined);
+  const log = input.log ?? (() => undefined);
   // Every card is also kept as an event, for clients that read the history.
   const notify = (message: string): void => {
     recordCard(db, message, now());
@@ -365,6 +377,7 @@ export function createFactoryService(input: {
         'controller',
         CODE_HOST_ACTOR,
       );
+      cleanUpCompleted(executionIdOf(executionId));
     } else if (outcome.pullRequest.state === 'closed') {
       apply(
         {
@@ -517,7 +530,7 @@ export function createFactoryService(input: {
             ? {}
             : { linksRetryDelaysMs: input.linksRetryDelaysMs }),
           liveActions,
-          log: input.log ?? (() => undefined),
+          log,
           notify,
           now,
           runtime,
@@ -745,7 +758,43 @@ export function createFactoryService(input: {
       'command',
       options.actor,
     );
+    cleanUpCompleted(snapshot.execution.id);
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  // Once a ticket is complete, its worktree and local branch go, as far as
+  // that is safe, off the caller's path: removing a worktree full of
+  // dependencies takes a while. What stays, and why, is a card on the ticket.
+  function cleanUpCompleted(id: ExecutionId): void {
+    const snapshot = loadSnapshotByExecution(db, id);
+    if (snapshot === null || snapshot.execution.status !== 'complete') {
+      return;
+    }
+    void cleanUpTicket({
+      dryRun: false,
+      processes: listProcesses,
+      pullRequestCommits: pullRequestCommits(db, id),
+      snapshot,
+    })
+      .then((outcome) => {
+        const line = outcomeLine(outcome);
+        if (line !== null) {
+          log(`Cleanup: ${line}`);
+        }
+        if (needsAttention(outcome) && !stopped) {
+          notify(
+            attentionCard(
+              snapshot,
+              `${line ?? ''} Resolve it, then run \`factory cleanup\` to clean up what is left.`,
+            ),
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        log(
+          `Cleanup of ${snapshot.ticket.displayRef} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   }
 
   async function feedbackCommitted(
