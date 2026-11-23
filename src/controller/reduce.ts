@@ -21,6 +21,7 @@ import {
 } from '../domain.ts';
 import { sha256 } from '../hash.ts';
 import { childDescription } from '../runtime/policy.ts';
+import { missingReport } from '../runtime/work-report.ts';
 import type { Handoff, Outcome, StageDefinition, StageView } from '../stages/definition.ts';
 import { feedbackRoundRefusal, feedbackRounds, feedbackTaskId } from '../stages/feedback.ts';
 import { flow, nextStep, previousTaskStage, type Step } from '../stages/flow.ts';
@@ -477,6 +478,17 @@ function repeatsLastCorrection(
   return before.length === now.length && before.every((failure, index) => failure === now[index]);
 }
 
+// How many corrections in a row a run that ended without a report gets
+// before the ticket pauses. A missing report is a broken handoff, not a
+// failed check: it has this budget of its own, and spends none of the
+// stage's.
+const MISSING_REPORT_CORRECTIONS = 2;
+
+// Whether a run ended without a report.
+function endedWithoutReport(run: RunRecord | null): boolean {
+  return run !== null && missingReport(runOutput(run)) !== null;
+}
+
 // Asks the stage's agent to fix what its validator failed, within the
 // stage's correction budget. At the limit the ticket pauses on the run, so a
 // reply resumes that agent with the person's guidance. A stage without a
@@ -491,14 +503,49 @@ function correct(
 ): 'correcting' | 'paused' {
   const stage = stages[session.stage];
   const policy = stage.corrections;
-  const count = snapshot.runs.filter(
+  const corrections = snapshot.runs.filter(
     (run) =>
       run.sessionId === session.id &&
       run.purpose === 'validation_correction' &&
       (policy.per === 'session' || run.semanticRound === parent.semanticRound),
-  ).length;
+  );
+  const missing = (run: RunRecord) =>
+    endedWithoutReport(snapshot.runs.find((item) => item.id === run.parentRunId) ?? null);
+  // The stage's budget counts only corrections of what its validator checked.
+  const count = corrections.filter((run) => !missing(run)).length;
   const task = session.taskId === null ? null : taskById(snapshot, session.taskId);
-  if (policy.limit !== null && count >= snapshot.execution.policy.limits[policy.limit]) {
+  if (endedWithoutReport(parent)) {
+    // The corrections for a missing report that led up to this run, itself
+    // included: a report, or a run that is no correction, such as one a
+    // person's reply resumed, starts the count over.
+    const runs = snapshot.runs.filter((run) => run.sessionId === session.id);
+    let inARow = 0;
+    for (let index = runs.indexOf(parent); index >= 0; index -= 1) {
+      const run = runs[index];
+      if (run === undefined || run.purpose !== 'validation_correction' || !missing(run)) {
+        break;
+      }
+      inARow += 1;
+    }
+    if (inARow >= MISSING_REPORT_CORRECTIONS) {
+      if (task !== null) {
+        task.status = 'blocked';
+      }
+      pauseWithNotice(snapshot, {
+        code: `missing_${session.stage}_report`,
+        failures,
+        ids,
+        question: [
+          `The ${stage.label.toLowerCase()} agent ended ${inARow + 1} runs in a row without a report, so its work was never checked. This spent no correction.`,
+          ...failures.map((failure) => `- ${failure}`),
+          'Reply to resume the agent with what it needs.',
+        ].join('\n'),
+        retry: null,
+        runId: parent.id,
+      });
+      return 'paused';
+    }
+  } else if (policy.limit !== null && count >= snapshot.execution.policy.limits[policy.limit]) {
     if (task !== null) {
       task.status = 'blocked';
     }
@@ -539,7 +586,7 @@ function correct(
   if (isInputStage(session.stage)) {
     enqueueInput(snapshot, session.stage, {
       failures,
-      idempotencyKey: `${session.stage}-input:${parent.id}:correction:${count + 1}`,
+      idempotencyKey: `${session.stage}-input:${parent.id}:correction:${corrections.length + 1}`,
       ids,
       purpose: 'validation_correction',
       ...(session.taskId === null ? {} : { taskId: session.taskId }),
@@ -547,7 +594,7 @@ function correct(
     return 'correcting';
   }
   const prompt = stage.turn({ failures, kind: 'correction' });
-  const round = policy.per === 'round' ? parent.semanticRound : count + 1;
+  const round = policy.per === 'round' ? parent.semanticRound : corrections.length + 1;
   const run = addRun(snapshot, session, parent, 'validation_correction', round, ids, prompt);
   run.description = parent.description ?? childDescription(task?.title ?? snapshot.ticket.title);
   launchAction(
