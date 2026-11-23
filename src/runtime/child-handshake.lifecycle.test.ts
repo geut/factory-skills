@@ -34,6 +34,14 @@ import factoryChildHandshake, {
   REPORT_ATTEMPTS,
 } from './child-handshake.ts';
 import { runReport } from './session-activity.ts';
+import { REPORT_NUDGE } from './work-report.ts';
+
+// A follow-up runs after the prompt resolves; wait for the child to exit.
+async function waitForExit(exits: Array<unknown>): Promise<void> {
+  for (let tries = 0; exits.length === 0 && tries < 100; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 // The handshake in a real Pi session, on Pi's scripted model: what the session
 // file holds when the child exits, and what a resumed session sends the model.
@@ -431,7 +439,64 @@ test('an agent that keeps sending no report stops after the attempts, without on
   assert.equal(first.exits[0]?.sidecar, '{"type":"done"}');
   // Every call has its result, so the session resumes cleanly.
   assert.equal(refusedCalls(first.sessionFile).length, REPORT_ATTEMPTS);
-  assert.equal(runReport(readFileSync(first.sessionFile, 'utf8'), 'run-1'), null);
+  // The controller reads why there is no report, with the last refusal.
+  const reply = runReport(readFileSync(first.sessionFile, 'utf8'), 'run-1') ?? '';
+  assert.match(reply, /^## Report missing\n/);
+  assert.match(
+    reply,
+    /- status: must have required properties status, summary, validation_selection/,
+  );
+});
+
+test('a work turn that ends without subagent_done is asked for the report, not ended', async () => {
+  const tree = reportWorktree();
+  const first = await child({
+    env: { FACTORY_REPORT: 'work', FACTORY_WORKTREE: tree, PI_SUBAGENT_AUTO_EXIT: '1' },
+    responses: [
+      // The reply as text, out of habit, and no call.
+      fauxAssistantMessage('## Status\n\nready_for_review'),
+      fauxAssistantMessage(
+        [
+          fauxToolCall(
+            'subagent_done',
+            {
+              status: 'ready_for_review',
+              summary: 'Done.',
+              validation_selection: { mode: 'default', reason: 'docs only' },
+            },
+            { id: 'toolu_report' },
+          ),
+        ],
+        { stopReason: 'toolUse' },
+      ),
+    ],
+  });
+  await first.session.prompt('Do the task.\nFactory run run-1');
+  await waitForExit(first.exits);
+  // Here `exit` only records, so Pi goes on after it; the first is the one.
+  assert.equal(first.exits[0]?.requests, 2);
+  assert.equal(first.exits[0]?.sidecar, '{"type":"done"}');
+  const text = readFileSync(first.sessionFile, 'utf8');
+  assert.match(text, new RegExp(REPORT_NUDGE.slice(0, 40)));
+  assert.match(runReport(text, 'run-1') ?? '', /none \(docs only\)/);
+});
+
+test('a work agent that keeps ending turns without subagent_done stops without a report', async () => {
+  const first = await child({
+    env: {
+      FACTORY_REPORT: 'work',
+      FACTORY_WORKTREE: reportWorktree(),
+      PI_SUBAGENT_AUTO_EXIT: '1',
+    },
+    responses: Array.from({ length: REPORT_ATTEMPTS + 1 }, () => fauxAssistantMessage('All done.')),
+  });
+  await first.session.prompt('Do the task.\nFactory run run-1');
+  await waitForExit(first.exits);
+  assert.equal(first.exits[0]?.requests, REPORT_ATTEMPTS);
+  assert.equal(first.exits[0]?.sidecar, '{"type":"done"}');
+  const reply = runReport(readFileSync(first.sessionFile, 'utf8'), 'run-1') ?? '';
+  assert.match(reply, /^## Report missing\n/);
+  assert.doesNotMatch(reply, /All done/);
 });
 
 test("Pi's own loader runs the handshake from a directory beside its report module, as the single executable writes them", async () => {

@@ -1,6 +1,11 @@
 import { writeFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { WORK_REPORT, WORK_REPORT_PARAMETERS, workReportProblems } from './work-report.ts';
+import {
+  REPORT_NUDGE,
+  WORK_REPORT,
+  WORK_REPORT_PARAMETERS,
+  workReportProblems,
+} from './work-report.ts';
 
 type ToolParameters = Parameters<ExtensionAPI['registerTool']>[0]['parameters'];
 
@@ -95,7 +100,8 @@ export function createTerminalWriter(): (
 export const MISSING_REPLY =
   'Not finished: the controller grades your reply text, and this run has no template in it yet. Write the stage template now as plain text, then call subagent_done.';
 
-// How many refused reports end a run without one.
+// How many missed reports end a run without one: refused calls, and turns
+// that ended without calling subagent_done.
 export const REPORT_ATTEMPTS = 3;
 
 export const REPORT_DONE_DESCRIPTION =
@@ -186,8 +192,9 @@ export default function factoryChildHandshake(
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-  // Report calls refused this run, by Pi's schema check or by this one.
-  let refused = 0;
+  // Reports missed this run: calls refused by Pi's schema check or by this
+  // one, and turns that ended without a call.
+  let missed = 0;
   const finish = () => {
     ending ??= { type: 'done' };
     return {
@@ -250,12 +257,12 @@ export default function factoryChildHandshake(
   // Every tool result of the turn is saved by now, and no request has started.
   pi.on('turn_end', (event) => {
     if (report && ending === null) {
-      refused += event.toolResults.filter(
+      missed += event.toolResults.filter(
         (result) => result.toolName === 'subagent_done' && result.isError,
       ).length;
       // An agent that cannot produce a report stops here, without one, for
       // the controller to handle, rather than spending requests on it.
-      if (refused >= REPORT_ATTEMPTS) {
+      if (missed >= REPORT_ATTEMPTS) {
         ending = { type: 'done' };
       }
     }
@@ -285,6 +292,16 @@ export default function factoryChildHandshake(
     nudges = 0;
     if (env['PI_SUBAGENT_AUTO_EXIT'] !== '1' || !shouldAutoExit(event.messages)) {
       return;
+    }
+    // A run with a report ends only through subagent_done: a turn that ends
+    // without the call, however its reply reads, is asked for it, and counts
+    // as a missed report.
+    if (report && ending === null) {
+      missed += 1;
+      if (missed < REPORT_ATTEMPTS) {
+        pi.sendUserMessage(REPORT_NUDGE, { deliverAs: 'followUp' });
+        return;
+      }
     }
     writeTerminal(env['PI_SUBAGENT_SESSION'], { type: 'done' });
     deps.exit(0);

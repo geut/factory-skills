@@ -14,8 +14,14 @@ import path from 'node:path';
 export const WORK_REPORT = 'work';
 
 // Bounds that keep the selection well under the size an environment allows.
-const MAX_TESTS = 100;
-const MAX_REASON = 300;
+// Work validation reads a selection from reply text with the same ones.
+export const MAX_TESTS = 100;
+export const MAX_REASON = 300;
+
+// What the handshake sends an agent that ends its turn without calling
+// subagent_done: a run that never calls it has no report either.
+export const REPORT_NUDGE =
+  'Not finished: the controller reads only the arguments of subagent_done. Call subagent_done now with your report as its arguments.';
 
 export type SelectedTest = { path: string; reason: string };
 
@@ -269,8 +275,17 @@ export function readWorkReport(value: unknown): WorkReport | null {
   };
 }
 
+// `file` normalized as a path relative to the repository root, or null when
+// it leaves the repository.
+export function repositoryPath(file: string): string | null {
+  const normal = path.posix.normalize(file.replaceAll('\\', '/'));
+  return path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')
+    ? null
+    : normal;
+}
+
 // Whether `file` is a file inside `root`, symlinks resolved.
-function fileInside(root: string, file: string): boolean {
+export function fileInside(root: string, file: string): boolean {
   try {
     const realRoot = realpathSync(root);
     const real = realpathSync(path.join(root, file));
@@ -309,8 +324,8 @@ function selectionProblems(selection: unknown, worktree: string): Array<string> 
   }
   read.tests.forEach((test, index) => {
     const at = `validation_selection.tests[${index}]`;
-    const normal = path.posix.normalize(test.path.replaceAll('\\', '/'));
-    if (path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')) {
+    const normal = repositoryPath(test.path);
+    if (normal === null) {
       problems.push(
         `${at}.path: ${test.path} is outside the repository; give it relative to the repository root.`,
       );
@@ -446,4 +461,26 @@ export function renderWorkReport(report: WorkReport): string {
     ['Evidence', list(report.evidence.map((item) => `- ${line(item)}`))],
   ];
   return sections.map(([heading, body]) => `## ${heading}\n\n${body}`).join('\n\n');
+}
+
+const MISSING_HEADING = '## Report missing';
+
+// What a work run that ended without a report replies: why, for work
+// validation to stop on before any command runs, and for the ticket view.
+// `refusal` is the last refused report's error, if any.
+export function renderMissingReport(refusal: string | null): string {
+  return [
+    MISSING_HEADING,
+    '',
+    'The run ended without a report: subagent_done refused it, or the agent ended its turn without calling it.',
+    ...(refusal === null ? [] : ['', 'The last refusal:', refusal]),
+  ].join('\n');
+}
+
+// Why a work reply is no report, or null when it is one (or a reply from an
+// older session, read from its text).
+export function missingReport(output: string): string | null {
+  return output.startsWith(`${MISSING_HEADING}\n`)
+    ? output.slice(MISSING_HEADING.length).trim()
+    : null;
 }

@@ -36,6 +36,6 @@ Required: `status`, `summary`, `validation_selection`.
 - `plan_changed` is true when you edited `plan.md`.
 - `evidence` lists screenshot or transcript paths that help a reviewer.
 
-`subagent_done` checks the report before it ends the run: the required fields, that each selected test is a file in the worktree, and in a feedback round that every item is answered once. A refused report comes back as a tool error naming the fields; fix them and call it again. No project checks run until a report is accepted. Leave the work uncommitted.
+`subagent_done` checks the report before it ends the run: the required fields, that each selected test is a file in the worktree, and in a feedback round that every item is answered once. A refused report comes back as a tool error naming the fields; fix them and call it again. A turn that ends without the call is asked for it. No project checks run until a report is accepted. Leave the work uncommitted.
 
 `caller_ping` is the only other terminal call, and it replaces the report when you need a decision.

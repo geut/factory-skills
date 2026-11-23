@@ -1,4 +1,9 @@
-import { readWorkReport, renderWorkReport } from './work-report.ts';
+import {
+  readWorkReport,
+  renderMissingReport,
+  renderWorkReport,
+  REPORT_NUDGE,
+} from './work-report.ts';
 
 export type SessionActivity = {
   activity: string;
@@ -176,9 +181,10 @@ function runLines(jsonl: string, runId: string): Array<string> | null {
 }
 
 // The report a run's accepted subagent_done call carried, rendered as the
-// work template; null when the run ended without one, as every stage without
-// a report does. A refused call's result is an error, so its arguments never
-// count.
+// work template. A refused call's result is an error, so its arguments never
+// count. A run that was refused a report, or asked for one, and ended
+// without one replies that it has none, with the last refusal. Null for a
+// run that never dealt with a report, as in every stage without one.
 export function runReport(jsonl: string, runId: string): string | null {
   const lines = runLines(jsonl, runId);
   if (lines === null) {
@@ -186,6 +192,8 @@ export function runReport(jsonl: string, runId: string): string | null {
   }
   const calls = new Map<string, unknown>();
   let accepted: unknown = null;
+  let asked = false;
+  let refusal: string | null = null;
   for (const line of lines) {
     let parsed: unknown;
     try {
@@ -209,18 +217,27 @@ export function runReport(jsonl: string, runId: string): string | null {
         }
       }
     }
-    const id = message['toolCallId'];
+    const content = message['content'];
     if (
-      message['role'] === 'toolResult' &&
-      message['isError'] !== true &&
-      typeof id === 'string' &&
-      calls.has(id)
+      message['role'] === 'user' &&
+      (typeof content === 'string' ? content : textOf(message)).trim() === REPORT_NUDGE
     ) {
-      accepted = calls.get(id);
+      asked = true;
+    }
+    const id = message['toolCallId'];
+    if (message['role'] === 'toolResult' && typeof id === 'string' && calls.has(id)) {
+      if (message['isError'] === true) {
+        refusal = textOf(message).trim();
+      } else {
+        accepted = calls.get(id);
+      }
     }
   }
   const report = readWorkReport(accepted);
-  return report === null ? null : renderWorkReport(report);
+  if (report !== null) {
+    return renderWorkReport(report);
+  }
+  return asked || refusal !== null ? renderMissingReport(refusal) : null;
 }
 
 export function runAssistantText(jsonl: string, runId: string): string {
