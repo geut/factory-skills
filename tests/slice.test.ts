@@ -774,12 +774,18 @@ test('a worker that ends without a report is corrected on a budget of its own, a
     await waitFor(() => works().length === expected);
     assert.match(works().at(-1)?.prompt ?? '', /The run ended without a report/);
   }
-  runtime.emit(works()[2]?.runId ?? planRun, {
+  // The second correction crashes: its infrastructure retry carries on the
+  // same count, so its miss still pauses.
+  runtime.emit(works()[2]?.runId ?? planRun, { kind: 'crashed', message: 'exit 1' });
+  await waitFor(() => works().length === 4);
+  runtime.emit(works()[3]?.runId ?? planRun, {
     kind: 'subagent_done',
     output: noReport,
     usage: sampleUsage(),
   });
   await waitFor(() => service.status('proj-123').includes('paused'));
+  // The card shows the run that never handed in a report, the retry, as paused.
+  await waitFor(() => notified.some((message) => message.includes('status: retry · paused')));
   const notice =
     notified.find((message) =>
       message.includes('without a report, so its work was never checked'),
@@ -789,24 +795,24 @@ test('a worker that ends without a report is corrected on a budget of its own, a
     /The work agent ended 3 runs in a row without a report, so its work was never checked\. This spent no correction\./,
   );
   assert.match(notice, /Reply to resume the agent with what it needs\./);
-  assert.equal(works().length, 3);
+  assert.equal(works().length, 4);
   // A reply resumes the worker; its next miss is corrected again.
   await service.command('reply proj-123 "Call subagent_done with the report"');
-  await waitFor(() => works().length === 4);
-  runtime.emit(works()[3]?.runId ?? planRun, {
+  await waitFor(() => works().length === 5);
+  runtime.emit(works()[4]?.runId ?? planRun, {
     kind: 'subagent_done',
     output: noReport,
     usage: sampleUsage(),
   });
-  await waitFor(() => works().length === 5);
+  await waitFor(() => works().length === 6);
   // A report with a real failure still gets the one work correction.
-  runtime.emit(works()[4]?.runId ?? planRun, {
+  runtime.emit(works()[5]?.runId ?? planRun, {
     kind: 'subagent_done',
     output: '## Status\n\nready_for_review',
     usage: sampleUsage(),
   });
-  await waitFor(() => works().length === 6);
-  assert.match(works()[5]?.prompt ?? '', /diff is empty/);
+  await waitFor(() => works().length === 7);
+  assert.match(works()[6]?.prompt ?? '', /diff is empty/);
 });
 
 test('at the work correction limit a reply resumes the worker with the answer', async () => {

@@ -500,7 +500,7 @@ function correct(
   parent: RunRecord,
   failures: Array<string>,
   ids: IdSource,
-): 'correcting' | 'paused' {
+): 'correcting' | 'paused' | 'paused_without_report' {
   const stage = stages[session.stage];
   const policy = stage.corrections;
   const corrections = snapshot.runs.filter(
@@ -517,11 +517,15 @@ function correct(
   if (endedWithoutReport(parent)) {
     // The corrections for a missing report that led up to this run, itself
     // included: a report, or a run that is no correction, such as one a
-    // person's reply resumed, starts the count over.
+    // person's reply resumed, starts the count over. An infrastructure retry
+    // relaunches the run before it, so it neither counts nor starts over.
     const runs = snapshot.runs.filter((run) => run.sessionId === session.id);
     let inARow = 0;
     for (let index = runs.indexOf(parent); index >= 0; index -= 1) {
       const run = runs[index];
+      if (run?.purpose === 'infrastructure_retry') {
+        continue;
+      }
       if (run === undefined || run.purpose !== 'validation_correction' || !missing(run)) {
         break;
       }
@@ -543,7 +547,7 @@ function correct(
         retry: null,
         runId: parent.id,
       });
-      return 'paused';
+      return 'paused_without_report';
     }
   } else if (policy.limit !== null && count >= snapshot.execution.policy.limits[policy.limit]) {
     if (task !== null) {
@@ -1389,10 +1393,15 @@ function applyOutcome(
     task.summaries[session.stage] = outcome.summary;
   }
   switch (outcome.kind) {
-    case 'correct':
-      return correct(snapshot, session, run, outcome.failures, ids) === 'paused'
+    case 'correct': {
+      const corrected = correct(snapshot, session, run, outcome.failures, ids);
+      if (corrected === 'paused_without_report') {
+        return finish(snapshot, `${stage.label} ended runs without a report.`);
+      }
+      return corrected === 'paused'
         ? finish(snapshot, `${stage.label} correction limit reached.`)
         : finish(snapshot, `${stage.label} validation failed.`);
+    }
     case 'pause':
       if (task !== null) {
         task.status = 'blocked';
