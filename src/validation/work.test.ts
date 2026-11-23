@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { WorkCommand } from '../config.ts';
 import { taskId } from '../domain.ts';
+import { renderMissingReport } from '../runtime/work-report.ts';
 import { addTasks } from '../stories/fixtures.ts';
 import { VALIDATION_LOGS, VALIDATION_LOGS_ENV } from './command-env.ts';
 import { validationContext } from './fixture.ts';
@@ -458,6 +459,20 @@ test('a malformed or missing selection is corrected before any command runs', as
     /tests\/gone\.test\.ts is not a file in the worktree/,
   );
   assert.equal(missing.seen, null);
+});
+
+test('a run that ended without a report is corrected before any command runs', async () => {
+  const { report, seen } = await validateReply(
+    renderMissingReport(
+      'Report refused; the session goes on.\n- summary: one sentence for the observable result.',
+    ),
+  );
+  assert.equal(report.status, 'failed');
+  assert.equal(seen, null);
+  const failures = report.status === 'failed' ? report.failures.join('\n') : '';
+  assert.match(failures, /The run ended without a report/);
+  assert.match(failures, /- summary: one sentence for the observable result\./);
+  assert.match(failures, /Call subagent_done with your report as its arguments/);
 });
 
 test('parallel validations of different tickets each give their commands only their own selection', async () => {

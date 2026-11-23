@@ -1,3 +1,10 @@
+import {
+  readWorkReport,
+  renderMissingReport,
+  renderWorkReport,
+  REPORT_NUDGE,
+} from './work-report.ts';
+
 export type SessionActivity = {
   activity: string;
   contextTokens: number;
@@ -153,12 +160,14 @@ export function lastAssistantText(jsonl: string): string {
   return sessionActivity(jsonl).lastText;
 }
 
-export function runAssistantText(jsonl: string, runId: string): string {
+// The session lines of one run: from its prompt to the next run's, or null
+// when the session has no prompt of the run.
+function runLines(jsonl: string, runId: string): Array<string> | null {
   const marker = `Factory run ${runId}`;
   const lines = jsonl.split('\n');
   const start = lines.findIndex((line) => line.includes(marker));
   if (start < 0) {
-    return lastAssistantText(jsonl);
+    return null;
   }
   let end = lines.length;
   for (let index = start + 1; index < lines.length; index += 1) {
@@ -168,7 +177,79 @@ export function runAssistantText(jsonl: string, runId: string): string {
       break;
     }
   }
-  const text = lastAssistantText(lines.slice(start + 1, end).join('\n'));
+  return lines.slice(start + 1, end);
+}
+
+// The report a run's accepted subagent_done call carried, rendered as the
+// work template. A refused call's result is an error, so its arguments never
+// count. A run that was refused a report, or asked for one, and ended
+// without one replies that it has none, with the last refusal. Null for a
+// run that never dealt with a report, as in every stage without one.
+export function runReport(jsonl: string, runId: string): string | null {
+  const lines = runLines(jsonl, runId);
+  if (lines === null) {
+    return null;
+  }
+  const calls = new Map<string, unknown>();
+  let accepted: unknown = null;
+  let asked = false;
+  let refusal: string | null = null;
+  for (const line of lines) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = isRecord(parsed) && isRecord(parsed['message']) ? parsed['message'] : null;
+    if (message === null) {
+      continue;
+    }
+    if (message['role'] === 'assistant' && Array.isArray(message['content'])) {
+      for (const block of message['content']) {
+        if (
+          isRecord(block) &&
+          block['type'] === 'toolCall' &&
+          block['name'] === 'subagent_done' &&
+          typeof block['id'] === 'string'
+        ) {
+          calls.set(block['id'], block['arguments']);
+        }
+      }
+    }
+    const content = message['content'];
+    if (
+      message['role'] === 'user' &&
+      (typeof content === 'string' ? content : textOf(message)).trim() === REPORT_NUDGE
+    ) {
+      asked = true;
+    }
+    const id = message['toolCallId'];
+    if (message['role'] === 'toolResult' && typeof id === 'string' && calls.has(id)) {
+      if (message['isError'] === true) {
+        refusal = textOf(message).trim();
+      } else {
+        accepted = calls.get(id);
+      }
+    }
+  }
+  const report = readWorkReport(accepted);
+  if (report !== null) {
+    return renderWorkReport(report);
+  }
+  return asked || refusal !== null ? renderMissingReport(refusal) : null;
+}
+
+export function runAssistantText(jsonl: string, runId: string): string {
+  const report = runReport(jsonl, runId);
+  if (report !== null) {
+    return report;
+  }
+  const lines = runLines(jsonl, runId);
+  if (lines === null) {
+    return lastAssistantText(jsonl);
+  }
+  const text = lastAssistantText(lines.join('\n'));
   return text.length > 0 ? text : lastAssistantText(jsonl);
 }
 

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
+import { readWorkReport, renderWorkReport } from '../runtime/work-report.ts';
 import { addTasks, blank, run, session } from '../stories/fixtures.ts';
 import { missingTests, parseSelection, taskSelection } from './selection.ts';
 
@@ -149,12 +150,15 @@ test('none is none however it is written', () => {
   assert.equal(parseSelection(reply('nothing')).kind, 'invalid');
 });
 
-test('the template in factory-work’s output reference parses as a selection, as a worker would copy it', () => {
+test('the report in factory-work’s output reference reads as a selection, as a worker would send it', () => {
   const reference = readFileSync(
     new URL('../../skills/factory-work/references/output.md', import.meta.url),
     'utf8',
   );
-  assert.deepEqual(parseSelection(reference), {
+  const example = /```json\n([\s\S]*?)\n```/.exec(reference)?.[1] ?? '';
+  const report = readWorkReport(JSON.parse(example));
+  assert.ok(report !== null, 'the example is a complete report');
+  assert.deepEqual(parseSelection(renderWorkReport(report)), {
     kind: 'listed',
     tests: [{ path: 'tests/filter.test.ts', reason: 'checks that disabled entries are excluded' }],
   });

@@ -1,5 +1,11 @@
 import { writeFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import {
+  REPORT_NUDGE,
+  WORK_REPORT,
+  WORK_REPORT_PARAMETERS,
+  workReportProblems,
+} from './work-report.ts';
 
 type ToolParameters = Parameters<ExtensionAPI['registerTool']>[0]['parameters'];
 
@@ -94,6 +100,22 @@ export function createTerminalWriter(): (
 export const MISSING_REPLY =
   'Not finished: the controller grades your reply text, and this run has no template in it yet. Write the stage template now as plain text, then call subagent_done.';
 
+// How many missed reports end a run without one: refused calls, and turns
+// that ended without calling subagent_done.
+export const REPORT_ATTEMPTS = 3;
+
+export const REPORT_DONE_DESCRIPTION =
+  "Finish this factory stage: your report is this call's arguments, and the controller reads only them. Call it once, as your last tool call; the session ends after it. If the report is refused, fix the fields the error names and call it again. If a message still arrives, follow it. Do not call caller_ping after it.";
+
+// What a refused report tells the agent.
+export function refusal(problems: ReadonlyArray<string>): string {
+  return [
+    'Report refused; the session goes on. Fix these fields and call subagent_done again:',
+    ...problems.map((problem) => `- ${problem}`),
+    'No project checks were run.',
+  ].join('\n');
+}
+
 type SessionEntryLike = { message?: { content?: unknown; role?: string }; type?: string };
 
 export function replyIsMissing(entries: ReadonlyArray<SessionEntryLike>): boolean {
@@ -163,10 +185,41 @@ export default function factoryChildHandshake(
   // The first terminal call of the turn; the run ends once the turn does.
   let ending: TerminalSidecar | null = null;
 
+  // A stage with a report takes it as subagent_done's arguments: the run
+  // cannot end without one the controller can read.
+  const report = env['FACTORY_REPORT'] === WORK_REPORT;
+  const feedbackItems = (env['FACTORY_FEEDBACK_ITEMS'] ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  // Reports missed this run: calls refused by Pi's schema check or by this
+  // one, and turns that ended without a call.
+  let missed = 0;
+  const finish = () => {
+    ending ??= { type: 'done' };
+    return {
+      content: [{ text: DONE_RESULT, type: 'text' as const }],
+      details: undefined,
+      terminate: true,
+    };
+  };
+
   pi.registerTool({
-    description:
-      'Finish this factory stage once your reply is written as text. Call it once, as your last tool call; the session ends after it. If a message still arrives, follow it. Do not call it again in the same turn and do not call caller_ping.',
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+    description: report
+      ? REPORT_DONE_DESCRIPTION
+      : 'Finish this factory stage once your reply is written as text. Call it once, as your last tool call; the session ends after it. If a message still arrives, follow it. Do not call it again in the same turn and do not call caller_ping.',
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (report) {
+        const problems = workReportProblems(params, {
+          feedbackItems,
+          worktree: env['FACTORY_WORKTREE'] ?? process.cwd(),
+        });
+        if (problems.length > 0) {
+          // A thrown error is a failed tool result: the run goes on.
+          throw new Error(refusal(problems));
+        }
+        return finish();
+      }
       // A Pi without a tool context cannot be checked; it ends as before.
       const entries = (ctx as typeof ctx | undefined)?.sessionManager.getEntries();
       // Asked once per run; a second call ends the run either way.
@@ -179,16 +232,11 @@ export default function factoryChildHandshake(
         replyNudged = true;
         return { content: [{ text: MISSING_REPLY, type: 'text' }], details: undefined };
       }
-      ending ??= { type: 'done' };
-      return {
-        content: [{ text: DONE_RESULT, type: 'text' }],
-        details: undefined,
-        terminate: true,
-      };
+      return finish();
     },
     label: 'Done',
     name: 'subagent_done',
-    parameters: doneParameters,
+    parameters: report ? (WORK_REPORT_PARAMETERS as unknown as ToolParameters) : doneParameters,
   });
   pi.registerTool({
     description:
@@ -207,7 +255,17 @@ export default function factoryChildHandshake(
     parameters: pingParameters,
   });
   // Every tool result of the turn is saved by now, and no request has started.
-  pi.on('turn_end', () => {
+  pi.on('turn_end', (event) => {
+    if (report && ending === null) {
+      missed += event.toolResults.filter(
+        (result) => result.toolName === 'subagent_done' && result.isError,
+      ).length;
+      // An agent that cannot produce a report stops here, without one, for
+      // the controller to handle, rather than spending requests on it.
+      if (missed >= REPORT_ATTEMPTS) {
+        ending = { type: 'done' };
+      }
+    }
     if (ending === null) {
       return;
     }
@@ -234,6 +292,16 @@ export default function factoryChildHandshake(
     nudges = 0;
     if (env['PI_SUBAGENT_AUTO_EXIT'] !== '1' || !shouldAutoExit(event.messages)) {
       return;
+    }
+    // A run with a report ends only through subagent_done: a turn that ends
+    // without the call, however its reply reads, is asked for it, and counts
+    // as a missed report.
+    if (report && ending === null) {
+      missed += 1;
+      if (missed < REPORT_ATTEMPTS) {
+        pi.sendUserMessage(REPORT_NUDGE, { deliverAs: 'followUp' });
+        return;
+      }
     }
     writeTerminal(env['PI_SUBAGENT_SESSION'], { type: 'done' });
     deps.exit(0);

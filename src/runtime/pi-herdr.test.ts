@@ -137,6 +137,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
     projectConfig: { kind: 'worktree', skill: 'factory-work' },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
+    report: null,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
@@ -161,6 +162,27 @@ test('herdr launch opens the factory plugin argv pane', () => {
   assert.doesNotMatch(script, /--print|(^|\s)-p(\s|$)/);
   assert.doesNotMatch(script, /\nexec /);
   assert.doesNotMatch(script, /subagent_resume/);
+  assert.doesNotMatch(script, /FACTORY_REPORT/);
+  // A work run takes its report as subagent_done's arguments, so the text
+  // nudge is off and the round's feedback items travel with it.
+  const work = renderLaunchScript({
+    env: {},
+    handshakePath: '/pkg/child-handshake.ts',
+    model: 'work-model',
+    piBin: 'pi',
+    projectConfig: { kind: 'worktree', skill: 'factory-work' },
+    promptFile: '/tmp/prompt.txt',
+    replyRequired: false,
+    report: { feedbackItems: ['F1', 'F2'] },
+    runId: 'run-1',
+    sessionFile: '/tmp/session.jsonl',
+    skillsPath: '/pkg/skills',
+    thinking: 'medium',
+    tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
+    worktree: '/repo/.factory/worktrees/proj-1',
+  });
+  assert.match(work, /\nexport FACTORY_REPORT=work\nexport FACTORY_FEEDBACK_ITEMS='F1,F2'\n/);
+  assert.doesNotMatch(work, /FACTORY_REPLY_REQUIRED/);
   assert.deepEqual(herdrRenameArgs('pane-1', '🔎 owner/repo#3'), [
     'pane',
     'rename',
@@ -208,6 +230,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
       projectConfig: { kind: 'worktree', skill: 'factory-work' },
       promptFile: '/tmp/prompt.txt',
       replyRequired: false,
+      report: null,
       runId: 'run-1',
       sessionFile,
       skillsPath: '/pkg/skills',
@@ -582,6 +605,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'Fix the lint.',
     purpose: 'validation_correction' as const,
+    report: null,
     runId: runId('run-2'),
     sessionFile: path.join(directory, 'session.jsonl'),
     sessionId: sessionId('session-1'),
@@ -612,6 +636,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
   const replaced = await runtime.resume({
     ...spec,
     purpose: 'initial',
+    report: null,
     runId: runId('run-3'),
     taskLabel: null,
   });
@@ -666,6 +691,79 @@ test('observe deletes a stale done until the new prompt is in the session', asyn
     writeFileSync(`${sessionFile}.exit`, '{"type":"done"}');
     mock.timers.tick(1000);
     assert.deepEqual(events, ['subagent_done']);
+  } finally {
+    stop();
+    mock.timers.reset();
+  }
+});
+
+// A subagent_done call after thinking, and its result, as Pi saves them.
+const doneCall = (id: string, args: unknown) => ({
+  message: {
+    content: [
+      { thinking: 'The tests pass.', type: 'thinking' },
+      { arguments: args, id, name: 'subagent_done', type: 'toolCall' },
+    ],
+    role: 'assistant',
+  },
+  type: 'message',
+});
+const doneResult = (id: string, isError: boolean) => ({
+  message: {
+    content: [],
+    isError,
+    role: 'toolResult',
+    toolCallId: id,
+    toolName: 'subagent_done',
+  },
+  type: 'message',
+});
+
+test("a finished work run's reply is the report its accepted subagent_done carried", () => {
+  mock.timers.enable({ apis: ['setInterval'] });
+  const directory = mkdtempSync(path.join(tmpdir(), 'factory-watch-report-'));
+  const sessionFile = path.join(directory, 'session.jsonl');
+  const report = {
+    status: 'ready_for_review',
+    summary: 'Logs name each field.',
+    validation_selection: { mode: 'default', reason: 'docs only' },
+  };
+  writeFileSync(
+    sessionFile,
+    [
+      { message: { content: promptMarker('run-5'), role: 'user' }, type: 'message' },
+      doneCall('toolu_empty', {}),
+      doneResult('toolu_empty', true),
+      doneCall('toolu_report', report),
+      doneResult('toolu_report', false),
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join('\n'),
+  );
+  writeFileSync(`${sessionFile}.exit`, '{"type":"done"}');
+  const runtime = createPiHerdrRuntime({
+    events: null,
+    pollMs: 1000,
+    run: async () => ({ code: 0, stderr: '', stdout: '' }),
+    targetPaneId: 'parent',
+  });
+  const outputs: Array<string> = [];
+  const stop = runtime.observe(
+    { paneId: 'pane-5', runId: runId('run-5'), sessionFile },
+    (event) => {
+      if (event.kind === 'subagent_done') {
+        outputs.push(event.output);
+      }
+    },
+  );
+  try {
+    mock.timers.tick(1000);
+    assert.equal(outputs.length, 1);
+    assert.match(
+      outputs[0] ?? '',
+      /^## Status\n\nready_for_review\n\n## Summary\n\nLogs name each field\./,
+    );
+    assert.match(outputs[0] ?? '', /## Validation selection\n\nnone \(docs only\)/);
   } finally {
     stop();
     mock.timers.reset();
@@ -815,6 +913,7 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'Work.',
     purpose: 'initial' as const,
+    report: null,
     runId: runId(id),
     sessionFile: path.join(directory, `${id}.jsonl`),
     sessionId: sessionId(id),
@@ -926,6 +1025,7 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
     prompt: 'p',
     purpose: 'initial',
+    report: null,
     runId: runId('r'),
     sessionFile: path.join(directory, 'r.jsonl'),
     sessionId: sessionId('s'),
@@ -975,6 +1075,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
       projectConfig: { kind: 'worktree' as const, skill: 'factory-work' },
       prompt: 'p',
       purpose: 'initial',
+      report: null,
       runId: runId(id),
       sessionFile: path.join(directory, `${id}.jsonl`),
       sessionId: sessionId(id),
@@ -1010,6 +1111,7 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
     },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
+    report: null,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
@@ -1037,6 +1139,7 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
     },
     promptFile: '/tmp/prompt.txt',
     replyRequired: true,
+    report: null,
     runId: 'run-1',
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',

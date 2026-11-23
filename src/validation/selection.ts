@@ -1,6 +1,11 @@
-import { statSync } from 'node:fs';
-import path from 'node:path';
 import type { FactorySnapshot, RunRecord } from '../domain.ts';
+import {
+  fileInside,
+  MAX_REASON,
+  MAX_TESTS,
+  repositoryPath,
+  type SelectedTest,
+} from '../runtime/work-report.ts';
 import { runOutput } from '../stages/output.ts';
 
 // The tests a worker proposes for validation: focused regression tests it
@@ -14,11 +19,7 @@ export const SELECTION_HEADING = 'Validation selection';
 // The work check that shows what the commands got.
 export const SELECTION_CHECK = 'validation selection';
 
-// Bounds that keep the variable well under the size an environment allows.
-const MAX_TESTS = 100;
-const MAX_REASON = 300;
-
-export type SelectedTest = { path: string; reason: string };
+export type { SelectedTest };
 
 export type ValidationSelection = { tests: Array<SelectedTest>; version: 1 };
 
@@ -90,8 +91,8 @@ export function parseSelection(output: string): ParsedSelection {
       problems.push(`Validation selection: "${line}" is not an entry. ${SELECTION_FORMAT}`);
       continue;
     }
-    const normal = path.posix.normalize(file.replaceAll('\\', '/'));
-    if (path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../')) {
+    const normal = repositoryPath(file);
+    if (normal === null) {
       problems.push(
         `Validation selection: ${file} is outside the repository; give the path relative to its root.`,
       );
@@ -116,13 +117,11 @@ export function parseSelection(output: string): ParsedSelection {
   return problems.length === 0 ? { kind: 'listed', tests } : { kind: 'invalid', problems };
 }
 
-// What `tests` names that the worktree does not have as a file.
+// What `tests` names that the worktree does not have as a file, by the rule
+// the handshake checks a report's selection with.
 export function missingTests(tests: Array<SelectedTest>, worktree: string): Array<string> {
   return tests
-    .filter(
-      (test) =>
-        statSync(path.join(worktree, test.path), { throwIfNoEntry: false })?.isFile() !== true,
-    )
+    .filter((test) => !fileInside(worktree, test.path))
     .map(
       (test) =>
         `Validation selection: ${test.path} is not a file in the worktree; list test files that exist.`,

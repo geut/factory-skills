@@ -5,7 +5,9 @@ import type { CommandReporter } from '../controller/command-progress.ts';
 import { factoryRootOf } from '../controller/keys.ts';
 import type { WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
+import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
+import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
@@ -254,10 +256,32 @@ async function validateWork(input: {
   cwd: string;
   // Where the commands are told to keep their logs.
   factoryRoot: string;
+  // Why the run ended without a report, or null when it has one.
+  missingReport: string | null;
   reportCommand: CommandReporter;
   // The tests the worker proposed, for the commands.
   selection: ParsedSelection;
 }): Promise<WorkValidationReport> {
+  // A run without a report has no selection to give the commands, nor
+  // answers for review: it is corrected before anything runs.
+  if (input.missingReport !== null) {
+    const checks: Array<ValidationCheck> = [
+      {
+        command: null,
+        details: [
+          input.missingReport,
+          'Call subagent_done with your report as its arguments; the controller reads nothing else.',
+        ].join('\n'),
+        durationMs: null,
+        exitCode: null,
+        kind: 'schema',
+        name: 'work report',
+        outputExcerpt: null,
+        status: 'failed',
+      },
+    ];
+    return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
+  }
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
     return errorReport(WORK_VALIDATOR_VERSION, collected.message);
@@ -354,6 +378,7 @@ export const workValidator: Validator<'work'> = {
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
       factoryRoot: factoryRootOf(factoryDir),
+      missingReport: missingReport(runOutput(run)),
       reportCommand: deps.reportCommand,
       // The selection as of the run validated: a retry of it gets the same.
       selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),
