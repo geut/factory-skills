@@ -168,8 +168,9 @@ export function correctionScheduled(snapshot: FactorySnapshot, runId: RunId): bo
   return snapshot.actions.some((action) => correctsRun(action, runId));
 }
 
-// A stage pauses at its correction limit, or at its round limit.
-const limitCode = /_(correction|round)_limit$/;
+// A stage pauses at its correction limit, at its round limit, or when its
+// agent kept ending runs without a report.
+const limitCode = /_(correction|round)_limit$|^missing_[a-z]+_report$/;
 
 // Input prepared for a correction of `runId`, before that run exists.
 export function correctsRun(action: ActionRecord, runId: RunId): boolean {

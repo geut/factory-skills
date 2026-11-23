@@ -35,6 +35,16 @@ test('work commands default to 60 seconds and keep a longer timeout', () => {
   assert.equal(parsed.config.validation.work.commands[0]?.timeoutMs, DEFAULT_COMMAND_TIMEOUT_MS);
   assert.equal(parsed.config.validation.work.commands[1]?.timeoutMs, 300_000);
   assert.equal(parsed.config.limits.workCorrections, 3);
+  assert.equal(parsed.config.limits.missingReportCorrections, 2);
+});
+
+test('the corrections for runs without a report are a limit of their own, down to none', () => {
+  const parsed = parseFactoryConfig({ limits: { missingReportCorrections: 0 }, models });
+  assert.equal(parsed.kind === 'ok' ? parsed.config.limits.missingReportCorrections : null, 0);
+  assert.equal(
+    parseFactoryConfig({ limits: { missingReportCorrections: -1 }, models }).kind,
+    'error',
+  );
 });
 
 test('label map accepts investigation and rejects unknown internal labels', () => {

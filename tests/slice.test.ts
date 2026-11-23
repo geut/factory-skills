@@ -38,6 +38,7 @@ import type { CodeHost, PullRequestInfo, PullRequestOutcome } from '../src/ports
 import type { GithubClient } from '../src/ports/github.ts';
 import type { PullRequestFeedback, SkippedFeedback } from '../src/ports/pull-request-feedback.ts';
 import { FakeRuntime, sampleUsage } from '../src/runtime/fake.ts';
+import { renderMissingReport } from '../src/runtime/work-report.ts';
 import { runCleanupCommand } from '../src/server/cleanup-cli.ts';
 import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
@@ -729,6 +730,131 @@ test('failed work validation resumes the same session and the limit pauses', asy
   );
   assert.equal(runtime.launches.filter((launch) => launch.stage === 'review').length, 0);
   assert.equal(runtime.launches.filter((launch) => launch.stage === 'work').length, 2);
+});
+
+test('a worker that ends without a report is corrected on a budget of its own, and pauses saying so', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      limits: { workCorrections: 1 },
+      models: { review: 'review-model', work: 'work-model' },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const works = () => runtime.launches.filter((launch) => launch.stage === 'work');
+  const noReport = renderMissingReport('Report refused; the session goes on.');
+  // Three runs in a row without a report: two corrections, then a pause,
+  // with the work budget of one untouched.
+  for (const [index, expected] of [2, 3].entries()) {
+    runtime.emit(works()[index]?.runId ?? planRun, {
+      kind: 'subagent_done',
+      output: noReport,
+      usage: sampleUsage(),
+    });
+    await waitFor(() => works().length === expected);
+    assert.match(works().at(-1)?.prompt ?? '', /The run ended without a report/);
+  }
+  // The second correction crashes: its infrastructure retry carries on the
+  // same count, so its miss still pauses.
+  runtime.emit(works()[2]?.runId ?? planRun, { kind: 'crashed', message: 'exit 1' });
+  await waitFor(() => works().length === 4);
+  runtime.emit(works()[3]?.runId ?? planRun, {
+    kind: 'subagent_done',
+    output: noReport,
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  // The card shows the run that never handed in a report, the retry, as paused.
+  await waitFor(() => notified.some((message) => message.includes('status: retry · paused')));
+  const notice =
+    notified.find((message) =>
+      message.includes('without a report, so its work was never checked'),
+    ) ?? '';
+  assert.match(
+    notice,
+    /The work agent ended 3 runs in a row without a report, so its work was never checked\. This spent no correction\./,
+  );
+  assert.match(notice, /Reply to resume the agent with what it needs\./);
+  assert.equal(works().length, 4);
+  // A reply resumes the worker; its next miss is corrected again.
+  await service.command('reply proj-123 "Call subagent_done with the report"');
+  await waitFor(() => works().length === 5);
+  runtime.emit(works()[4]?.runId ?? planRun, {
+    kind: 'subagent_done',
+    output: noReport,
+    usage: sampleUsage(),
+  });
+  await waitFor(() => works().length === 6);
+  // A report with a real failure still gets the one work correction.
+  runtime.emit(works()[5]?.runId ?? planRun, {
+    kind: 'subagent_done',
+    output: '## Status\n\nready_for_review',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => works().length === 7);
+  assert.match(works()[6]?.prompt ?? '', /diff is empty/);
+});
+
+test('with no corrections for a missing report, the first run without one pauses', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      limits: { missingReportCorrections: 0 },
+      models: { review: 'review-model', work: 'work-model' },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  runtime.emit(work?.runId ?? planRun, {
+    kind: 'subagent_done',
+    output: renderMissingReport(null),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  assert.ok(
+    notified.some((message) => message.includes('The work agent ended its run without a report')),
+  );
+  assert.equal(runtime.launches.filter((launch) => launch.stage === 'work').length, 1);
 });
 
 test('at the work correction limit a reply resumes the worker with the answer', async () => {

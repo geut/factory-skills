@@ -49,10 +49,12 @@ const contract = 'factory.work.v3';
 const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
 
 // The FACTORY.json limits this stage reads.
-export const workLimits = { workCorrections: { default: 3, min: 0 } } as const satisfies Record<
-  string,
-  LimitSpec
->;
+// `missingReportCorrections` bounds the corrections in a row for runs that
+// ended without a report; they spend none of `workCorrections`.
+export const workLimits = {
+  missingReportCorrections: { default: 2, min: 0 },
+  workCorrections: { default: 3, min: 0 },
+} as const satisfies Record<string, LimitSpec>;
 
 export const work = defineStage<WorkInput, 'work', WorkPrepared>({
   conclude: ({ snapshot, task }, _run, report) =>
