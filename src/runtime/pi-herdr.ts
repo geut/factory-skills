@@ -16,13 +16,15 @@ import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './h
 import { runStatusLabel } from './policy.ts';
 import type {
   FactorySubagentRuntime,
+  LaunchReport,
   LaunchSpec,
   PaneSpec,
   ProjectConfig,
   RunStarted,
   TicketTab,
 } from './runtime.ts';
-import { lastAssistantText } from './session-activity.ts';
+import { lastAssistantText, runReport } from './session-activity.ts';
+import { WORK_REPORT } from './work-report.ts';
 
 export type ClassifiedChild =
   | { kind: 'pending' }
@@ -312,6 +314,15 @@ function projectConfigArgs(config: ProjectConfig, skillsPath: string): string {
   }
 }
 
+// The report environment of a launch: which report subagent_done takes, and
+// the feedback items it answers.
+function reportLines(report: LaunchReport | null): string {
+  if (report === null) {
+    return '';
+  }
+  return `export FACTORY_REPORT=${WORK_REPORT}\nexport FACTORY_FEEDBACK_ITEMS=${shellQuote(report.feedbackItems.join(','))}\n`;
+}
+
 export function renderLaunchScript(input: {
   env: ForwardedEnv;
   handshakePath: string;
@@ -321,6 +332,9 @@ export function renderLaunchScript(input: {
   promptFile: string;
   // The controller grades the reply, so subagent_done asks for a missing one.
   replyRequired: boolean;
+  // A stage whose report is subagent_done's arguments, with the feedback
+  // round's items the report answers; null for a stage that replies in text.
+  report: LaunchReport | null;
   runId: string;
   sessionFile: string;
   // The factory's skills directory, where a `base` stage's skill is.
@@ -341,7 +355,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 export FACTORY_WORKTREE=${shellQuote(input.worktree)}
 export FACTORY_RUN_ID=${runId}
-${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
+${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${reportLines(input.report)}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -585,9 +599,11 @@ function readOptional(file: string): string | null {
   }
 }
 
-function childOutput(classified: ClassifiedChild, jsonl: string): string {
+// A finished run's reply: the report its subagent_done call carried, or, for
+// a stage without one, its last assistant text.
+function childOutput(classified: ClassifiedChild, jsonl: string, runId: string): string {
   if (classified.kind === 'subagent_done') {
-    return lastAssistantText(jsonl);
+    return runReport(jsonl, runId) ?? lastAssistantText(jsonl);
   }
   return jsonl;
 }
@@ -939,8 +955,10 @@ export function createPiHerdrRuntime(options?: {
         piBin,
         projectConfig: spec.projectConfig,
         promptFile,
-        // A plan is accepted from its files, whatever the reply says.
-        replyRequired: spec.stage !== 'plan',
+        // A plan is accepted from its files, whatever the reply says, and a
+        // report is checked as subagent_done's arguments.
+        replyRequired: spec.stage !== 'plan' && spec.report === null,
+        report: spec.report,
         runId: spec.runId,
         sessionFile: spec.sessionFile,
         skillsPath,
@@ -1069,7 +1087,7 @@ export function createPiHerdrRuntime(options?: {
         });
         const terminal = toTerminal(
           classified,
-          childOutput(classified, jsonl),
+          childOutput(classified, jsonl, active.runId),
           usageFromSession(jsonl),
         );
         if (terminal === null) {
@@ -1124,7 +1142,11 @@ export function createPiHerdrRuntime(options?: {
           withinStartupWindow: false,
         });
         const usage = usageFromSession(jsonl);
-        const terminal = toTerminal(classified, childOutput(classified, jsonl), usage);
+        const terminal = toTerminal(
+          classified,
+          childOutput(classified, jsonl, active.runId),
+          usage,
+        );
         if (terminal !== null && classified.kind !== 'gap_exit') {
           observations.push({ observation: { kind: 'terminal', terminal }, runId: active.runId });
           continue;

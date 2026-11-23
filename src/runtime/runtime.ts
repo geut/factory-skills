@@ -28,6 +28,8 @@ export type ProjectConfig =
       systemPrompt: string | null;
     };
 
+export type LaunchReport = { feedbackItems: Array<string> };
+
 export type LaunchSpec = {
   cwd: string;
   mode: 'launch' | 'resume';
@@ -37,6 +39,9 @@ export type LaunchSpec = {
   projectConfig: ProjectConfig;
   prompt: string;
   purpose: RunPurpose;
+  // A work run takes its report as subagent_done's arguments, answering the
+  // feedback round's items, if any; null for a stage that replies in text.
+  report: LaunchReport | null;
   runId: RunId;
   sessionFile: string;
   sessionId: SessionId;

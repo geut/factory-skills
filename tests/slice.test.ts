@@ -2864,6 +2864,9 @@ test('a feedback round takes the pull request feedback back through work, review
   assert.match(roundCard, /item: F2 operator · note: Also mention the flag in the README\./);
   assert.match(roundCard, /Full text: .*feedback\/1\/task\.md/);
   assert.equal(roundWork?.cwd, work.cwd);
+  // Its report answers the round's items, and the planned task's answered none.
+  assert.deepEqual(roundWork?.report, { feedbackItems: ['F1', 'F2'] });
+  assert.deepEqual(work.report, { feedbackItems: [] });
   // The round closes the earlier handoff's own pane, and only that one.
   await waitFor(() => runtime.closedPanes.length > 0);
   assert.deepEqual(runtime.closedPanes, [sessionPane]);
@@ -2874,7 +2877,7 @@ test('a feedback round takes the pull request feedback back through work, review
   );
   assert.match(
     roundWork?.prompt ?? '',
-    /edit factory state\.\nIn this feedback round, end your reply with ## Feedback responses/,
+    /edit factory state\.\nIn this feedback round, the report's feedback_responses answer each item of the task file once/,
   );
   // Deduped per execution, so a rerun's round 1 is a new round.
   const execution = String(

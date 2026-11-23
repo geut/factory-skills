@@ -53,6 +53,6 @@ Do not start the reviewer, commit, push, publish, or create a pull request. The 
 
 ## Output
 
-Return only the `factory.work.v3` template in [references/output.md](references/output.md). No JSON object, no recap after it.
+Your report is the arguments of `subagent_done`, as [references/output.md](references/output.md) describes; the controller reads nothing else, so text or thinking that only states the report never reaches it.
 
-After the template, call `subagent_done` once and emit nothing else. If it replies that the session is shutting down, stop. Do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision. Do not edit the controller database.
+If `subagent_done` refuses the report, fix the fields it names and call it again. Once it replies that the session is shutting down, stop: do not call it again, do not call `caller_ping`, and do not send more text. `caller_ping` is the only other terminal call, and it replaces the report when you need a decision. Do not edit the controller database.

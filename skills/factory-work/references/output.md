@@ -1,58 +1,41 @@
 # Work output
 
-Return only this template (`factory.work.v3`). No JSON object, no Markdown fence around the whole result, no recap after it. Do not list changed paths; the controller already has git.
+Your report is the arguments of `subagent_done`, the one channel the controller reads. Text you write and thinking are not read: a report only written out never reaches it. Do not list changed paths; the controller already has git.
 
-```markdown
-## Status
-
-ready_for_review | blocked
-
-## Summary
-
-One sentence for the observable result.
-
-## Tests
-
-- `npm test`: passed — 22 files / 109 tests
-- `npm run lint`: not_run — unchanged config
-
-## Validation selection
-
-- `tests/filter.test.ts`: checks that disabled entries are excluded
-
-## E2E
-
-passed | failed | not_feasible | qa
-Note: evidence or human path; `qa` when QA runs for the task and owns its end-to-end tests.
-
-## Review responses
-
-none
-
-- R1-01: fixed — tests/filter.test.ts:88
-
-## Feedback responses
-
-none
-
-- F1: addressed — renamed the flag in src/filter.ts
-- F2: declined — the README has no flag section yet
-
-## Plan changed
-
-false
-
-## Blocker
-
-none
-
-## Evidence
-
-none
+```json
+{
+  "status": "ready_for_review",
+  "summary": "Disabled entries are left out of the filtered list.",
+  "tests": [
+    { "command": "npm test", "result": "passed", "note": "22 files / 109 tests" },
+    { "command": "npm run lint", "result": "not_run", "note": "unchanged config" }
+  ],
+  "validation_selection": {
+    "mode": "focused",
+    "tests": [
+      { "path": "tests/filter.test.ts", "reason": "checks that disabled entries are excluded" }
+    ]
+  },
+  "e2e": { "result": "qa", "note": "QA runs for this task and owns its end-to-end tests" },
+  "plan_changed": false
+}
 ```
 
-`Status` is `ready_for_review` or `blocked`. A blocked result must explain the blocker; it must not claim completed verification. Use `none` under `Review responses` when this is not a later round. Use `none` under `Feedback responses` unless the task is a feedback round (`F<n>`). In a feedback round, end the reply with `## Feedback responses`, one line per item of the task file, `addressed` with what changed or `declined` with why; the rest is optional. Review reads those lines, and judges every item either way: one left unaddressed without a reason it can accept is a finding. Use `none` under `Evidence` unless a screenshot or transcript path helps a reviewer. The controller checks the worktree diff and `validation.work.commands`; of this template it reads only `Validation selection`, and no evidence manifest. Each test line is `command: passed|failed|not_run` plus an optional note.
+Required: `status`, `summary`, `validation_selection`.
 
-`Validation selection` is optional. It lists the focused regression tests you found from your own diff, one line each: ``- `path/to/test_file`: why it covers this change``, with the path relative to the repository root. Work validation passes them to `validation.work.commands` as `FACTORY_VALIDATION_SELECTION`, JSON such as `{"version":1,"tests":[{"path":"tests/filter.test.ts","reason":"…"}]}`; the project's validator decides how to run them. To propose no tests, leave the section out, or write `none` alone under the heading, with no test lines beside it: `FACTORY_VALIDATION_SELECTION` is then unset, and the validator uses its default behavior. Each path must be a file in the worktree; a malformed entry comes back as a correction, and the commands wait for it. A selection holds for its round: a correction reply that leaves the section out keeps it, so to fix or drop it, write the section again. A later round, after review or QA returns the task, starts without one. `Tests` stays your report of what you ran; the controller's command results are the independent evidence. Leave the work uncommitted.
+- `status` is `ready_for_review` or `blocked`. A blocked report sets `blocker` to what stops the task, and claims no completed verification.
+- `summary` is one sentence for the observable result.
+- `tests` is your account of what you ran: `command`, `result` (`passed`, `failed`, or `not_run`), and an optional `note`. The controller's own command results are the independent evidence.
+- `validation_selection` goes to `validation.work.commands` as `FACTORY_VALIDATION_SELECTION`, JSON such as `{"version":1,"tests":[{"path":"tests/filter.test.ts","reason":"…"}]}`; the project's validator decides how to run it.
+  - `focused` lists the regression tests you found from your own diff, each a test file relative to the repository root, with a short reason.
+  - `default` proposes none, with a `reason`: `FACTORY_VALIDATION_SELECTION` is then unset, and the validator uses its default behavior.
+  - Every report states it again; a later round, after review or QA returns the task, starts from your new report.
+- `e2e` is `passed`, `failed`, `not_feasible`, or `qa` (QA runs for the task and owns its end-to-end tests), with evidence or the human path in `note`.
+- `review_responses`, in a later round, answers each finding: `{"id": "R1-01", "response": "fixed — tests/filter.test.ts:88"}`.
+- `feedback_responses`, in a feedback round (`F<n>`), answers each item of the task file exactly once: `{"id": "F1", "disposition": "addressed", "note": "renamed the flag in src/filter.ts"}` or `"declined"` with why. Review reads them and judges every item either way; one left unaddressed without a reason it can accept is a finding. Leave it out for a planned task.
+- `plan_changed` is true when you edited `plan.md`.
+- `evidence` lists screenshot or transcript paths that help a reviewer.
 
-After the template, call `subagent_done` and emit nothing else. `caller_ping` is the only other terminal call, and it replaces the template when you need a decision.
+`subagent_done` checks the report before it ends the run: the required fields, that each selected test is a file in the worktree, and in a feedback round that every item is answered once. A refused report comes back as a tool error naming the fields; fix them and call it again. No project checks run until a report is accepted. Leave the work uncommitted.
+
+`caller_ping` is the only other terminal call, and it replaces the report when you need a decision.

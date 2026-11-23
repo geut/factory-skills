@@ -13,12 +13,15 @@ test('every stage builds its prompts from its own skill and contract', () => {
       stage.turn({ answer: 'Use the catalog', kind: 'reply' }),
     ]) {
       assert.match(prompt, new RegExp(`Follow the ${stage.skill} skill`));
-      // The plan is its files: its template is a suggestion.
+      // The plan is its files: its template is a suggestion. Work's report is
+      // subagent_done's arguments, its answers' and corrections' too.
       assert.match(
         prompt,
         stage.name === 'plan'
           ? /factory\.plan\.v3 template in the skill is a suggested summary, not a requirement/
-          : new RegExp(`Return only the ${stage.contract} template`),
+          : stage.name === 'work'
+            ? /call subagent_done with your report as its arguments: the controller reads only them/
+            : new RegExp(`Return only the ${stage.contract} template`),
       );
     }
   }

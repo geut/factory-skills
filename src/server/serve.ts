@@ -133,25 +133,31 @@ function piBinary(env: NodeJS.ProcessEnv): string | null {
   return findOnPath('pi', env);
 }
 
-// The single executable carries the child handshake extension as an asset and
-// writes it into the factory root, where each agent's Pi loads it with -e.
+// The files of the child handshake extension, which it imports side by side.
+const HANDSHAKE_FILES = ['child-handshake.ts', 'work-report.ts'] as const;
+
+// The single executable carries the child handshake extension as assets and
+// writes them into the factory root, where each agent's Pi loads it with -e.
 function handshakePath(factoryRoot: string): string {
   if (!isSea()) {
     return handshakeExtensionPath();
   }
-  const file = path.join(factoryRoot, 'runtime', 'child-handshake.ts');
-  const source = getAsset('child-handshake.ts', 'utf8');
-  let current: string | null = null;
-  try {
-    current = readFileSync(file, 'utf8');
-  } catch {
-    // Not written yet.
+  const directory = path.join(factoryRoot, 'runtime');
+  for (const name of HANDSHAKE_FILES) {
+    const file = path.join(directory, name);
+    const source = getAsset(name, 'utf8');
+    let current: string | null = null;
+    try {
+      current = readFileSync(file, 'utf8');
+    } catch {
+      // Not written yet.
+    }
+    if (current !== source) {
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(file, source);
+    }
   }
-  if (current !== source) {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, source);
-  }
-  return file;
+  return path.join(directory, 'child-handshake.ts');
 }
 
 // The skills directory an untrusted agent's Pi gets its skill from: this

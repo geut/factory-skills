@@ -379,6 +379,12 @@ async function launch(
     projectConfig,
     prompt: action.prompt,
     purpose: run.purpose,
+    // Work reports as subagent_done's arguments, answering a feedback round's
+    // items when the task is one.
+    report:
+      session.stage === 'work'
+        ? { feedbackItems: roundTask?.feedback?.items.map((item) => item.id) ?? [] }
+        : null,
     runId: run.id,
     sessionFile,
     sessionId: session.id,
