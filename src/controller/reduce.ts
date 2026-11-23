@@ -478,13 +478,9 @@ function repeatsLastCorrection(
   return before.length === now.length && before.every((failure, index) => failure === now[index]);
 }
 
-// How many corrections in a row a run that ended without a report gets
-// before the ticket pauses. A missing report is a broken handoff, not a
-// failed check: it has this budget of its own, and spends none of the
-// stage's.
-const MISSING_REPORT_CORRECTIONS = 2;
-
-// Whether a run ended without a report.
+// Whether a run ended without a report. Such a run is a broken handoff, not
+// a failed check: it is corrected on a budget of its own,
+// `limits.missingReportCorrections` in a row, and spends none of the stage's.
 function endedWithoutReport(run: RunRecord | null): boolean {
   return run !== null && missingReport(runOutput(run)) !== null;
 }
@@ -531,7 +527,7 @@ function correct(
       }
       inARow += 1;
     }
-    if (inARow >= MISSING_REPORT_CORRECTIONS) {
+    if (inARow >= snapshot.execution.policy.limits.missingReportCorrections) {
       if (task !== null) {
         task.status = 'blocked';
       }
@@ -540,7 +536,7 @@ function correct(
         failures,
         ids,
         question: [
-          `The ${stage.label.toLowerCase()} agent ended ${inARow + 1} runs in a row without a report, so its work was never checked. This spent no correction.`,
+          `The ${stage.label.toLowerCase()} agent ended ${inARow === 0 ? 'its run' : `${inARow + 1} runs in a row`} without a report, so its work was never checked. This spent no correction.`,
           ...failures.map((failure) => `- ${failure}`),
           'Reply to resume the agent with what it needs.',
         ].join('\n'),

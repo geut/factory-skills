@@ -815,6 +815,48 @@ test('a worker that ends without a report is corrected on a budget of its own, a
   assert.match(works()[6]?.prompt ?? '', /diff is empty/);
 });
 
+test('with no corrections for a missing report, the first run without one pauses', async () => {
+  const { codeRoot, factoryRoot } = repo();
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      limits: { missingReportCorrections: 0 },
+      models: { review: 'review-model', work: 'work-model' },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const runtime = new FakeRuntime();
+  const notified: Array<string> = [];
+  const service = createFactoryService({
+    codeRoot,
+    factoryRoot,
+    github,
+    notify: (message) => {
+      notified.push(message);
+    },
+    runtime,
+  });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => runtime.launches.some((launch) => launch.stage === 'work'));
+  const work = runtime.launches.find((launch) => launch.stage === 'work');
+  runtime.emit(work?.runId ?? planRun, {
+    kind: 'subagent_done',
+    output: renderMissingReport(null),
+    usage: sampleUsage(),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+  assert.ok(
+    notified.some((message) => message.includes('The work agent ended its run without a report')),
+  );
+  assert.equal(runtime.launches.filter((launch) => launch.stage === 'work').length, 1);
+});
+
 test('at the work correction limit a reply resumes the worker with the answer', async () => {
   const { codeRoot, factoryRoot } = repo();
   writeFileSync(
