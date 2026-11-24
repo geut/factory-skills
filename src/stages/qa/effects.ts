@@ -6,7 +6,7 @@ import { factoryRootOf } from '../../controller/keys.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { sha256 } from '../../hash.ts';
-import { basesDiverged, comparisonBases, type ComparisonBases } from '../../validation/bases.ts';
+import { checkBases, roundBase, syncWorktreeRefs } from '../../validation/bases.ts';
 import { commandEnv, ensureValidationLogs } from '../../validation/command-env.ts';
 import {
   errorReport,
@@ -153,13 +153,15 @@ function artifact(
 async function validateQa(input: {
   // Null for a round prepared before QA took one: no file counts as QA's.
   baseline: QaBaseline | null;
-  // The ticket's comparison commits, for the commands.
-  bases: ComparisonBases;
   commands: ReturnType<typeof qaSettings>['commands'];
   factoryDir: string;
   reportCommand: CommandReporter;
+  // The commit the current round of work started from.
+  roundBase: string;
   // The task's latest work selection, for the validation commands.
   selection: Array<SelectedTest>;
+  // The branch the pull request targets, for the worktree's target ref.
+  targetBranch: string | null;
   taskFile: string;
   taskId: string;
   validationCommands: Array<WorkCommand>;
@@ -225,11 +227,23 @@ async function validateQa(input: {
   if (incomplete.length > 0) {
     return failedReport(QA_VALIDATOR_VERSION, checks, incomplete, { reason: 'incomplete' });
   }
-  // A rebased branch no longer descends from the commits its checks compare
-  // against; they would blame the ticket for the target's changes.
-  const diverged = basesDiverged(input.worktree, input.bases);
-  if (diverged !== null) {
-    return errorReport(QA_VALIDATOR_VERSION, diverged);
+  // The refs the project's checks compare against, current before they run.
+  // A HEAD QA moved off the round's start is QA's to bring back; a history
+  // that cannot answer stops here, before any command.
+  const synced = syncWorktreeRefs({
+    roundBase: input.roundBase,
+    targetBranch: input.targetBranch,
+    worktree: input.worktree,
+  });
+  if (synced !== null) {
+    return errorReport(QA_VALIDATOR_VERSION, synced);
+  }
+  const bases = checkBases(input.worktree, input.roundBase);
+  if (bases.kind === 'unreadable') {
+    return errorReport(QA_VALIDATOR_VERSION, bases.message);
+  }
+  if (bases.kind === 'moved') {
+    return failedReport(QA_VALIDATOR_VERSION, checks, [bases.message], { reason: 'incomplete' });
   }
   const failing: Array<string> = [];
   ensureValidationLogs(factoryRoot);
@@ -240,7 +254,7 @@ async function validateQa(input: {
     const result = await runCommand(
       command,
       input.worktree,
-      commandEnv({ bases: input.bases, factoryRoot, tests: null }),
+      commandEnv({ factoryRoot, tests: null }),
     );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -277,7 +291,7 @@ async function validateQa(input: {
     const result = await runCommand(
       command,
       input.worktree,
-      commandEnv({ bases: input.bases, factoryRoot, tests: input.selection }),
+      commandEnv({ factoryRoot, tests: input.selection }),
     );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -332,8 +346,8 @@ export const qaValidator: Validator<'qa'> = {
   validate: ({ deps, run, session, snapshot }) => {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const worktree = snapshot.execution.worktreePath;
-    const bases = comparisonBases(snapshot);
-    if (task === null || worktree === null || bases === null) {
+    const base = roundBase(snapshot);
+    if (task === null || worktree === null || base === null) {
       return Promise.resolve(
         errorReport(QA_VALIDATOR_VERSION, 'The QA task or worktree is missing.'),
       );
@@ -348,11 +362,12 @@ export const qaValidator: Validator<'qa'> = {
     );
     return validateQa({
       baseline: parseBaseline(baseline?.baseline ?? null),
-      bases,
       commands: qaSettings(snapshot.execution.policy).commands,
       factoryDir: snapshot.execution.factoryDir,
       reportCommand: deps.reportCommand,
+      roundBase: base,
       selection: latestSelection(snapshot, task.taskId),
+      targetBranch: snapshot.execution.worktreeBaseBranch,
       taskFile: task.taskFile,
       taskId: task.taskId,
       validationCommands: qaValidationCommands(snapshot.execution.policy),

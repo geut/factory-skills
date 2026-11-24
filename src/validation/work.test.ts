@@ -7,7 +7,7 @@ import type { WorkCommand } from '../config.ts';
 import { taskId } from '../domain.ts';
 import { renderMissingReport } from '../runtime/work-report.ts';
 import { addTasks } from '../stories/fixtures.ts';
-import { ROUND_BASE_ENV, TARGET_BRANCH_ENV, TICKET_BASE_ENV } from './bases.ts';
+import { ROUND_BASE_REF, TARGET_REF } from './bases.ts';
 import { VALIDATION_LOGS, VALIDATION_LOGS_ENV } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { SELECTION_ENV } from './selection.ts';
@@ -218,7 +218,7 @@ test('empty diffs, commits, timeouts, and command results are checks, and whites
   });
   assert.equal(commit.status, 'failed');
   if (commit.status === 'failed') {
-    assert.match(commit.failures.join('\n'), /unexpected commit/);
+    assert.match(commit.failures.join('\n'), /HEAD is at [0-9a-f]{40}, not the round's start/);
   }
 
   const failing = repo();
@@ -338,7 +338,10 @@ test('a feedback round works on top of the round start, and may change nothing',
   assert.equal(passed.status, 'passed', passed.status === 'failed' ? passed.summary : '');
   // Without the round start, the first pass's commit is one work made.
   const committed = await round('', null);
-  assert.match(committed.status === 'failed' ? committed.summary : '', /unexpected commit/);
+  assert.match(
+    committed.status === 'failed' ? committed.summary : '',
+    /HEAD is at [0-9a-f]{40}, not the round's start/,
+  );
   // A round may decline every item and change nothing.
   git(cwd, ['checkout', '--', 'README.md']);
   const empty = await round('', roundBase);
@@ -476,8 +479,9 @@ test('a run that ended without a report is corrected before any command runs', a
   assert.match(failures, /Call subagent_done with your report as its arguments/);
 });
 
-test("a command compares against the ticket's base, which the target's moving tip never shifts", async () => {
+test("a command compares through the worktree's refs, which the target's moving tip never shifts", async () => {
   const { baseSha, cwd } = repo();
+  git(cwd, ['remote', 'add', 'origin', cwd]);
   // The target moves on after the ticket branched: another ticket's start, or
   // any fetch, updates the shared origin/main.
   git(cwd, ['checkout', '-qb', 'upstream']);
@@ -491,8 +495,8 @@ test("a command compares against the ticket's base, which the target's moving ti
   const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'seen');
   roots.push(path.dirname(seen));
   const script = [
-    `echo "$${TICKET_BASE_ENV} $${ROUND_BASE_ENV} $${TARGET_BRANCH_ENV}" > ${JSON.stringify(`${seen}.env`)}`,
-    `git diff --name-only "$${TICKET_BASE_ENV}" > ${JSON.stringify(`${seen}.ticket`)}`,
+    `git rev-parse ${ROUND_BASE_REF} > ${JSON.stringify(`${seen}.round`)}`,
+    `git diff --name-only "$(git merge-base HEAD ${TARGET_REF})" > ${JSON.stringify(`${seen}.ticket`)}`,
     `git diff --name-only origin/main > ${JSON.stringify(`${seen}.tip`)}`,
   ].join(' && ');
   const report = await workValidator.validate(
@@ -506,34 +510,45 @@ test("a command compares against the ticket's base, which the target's moving ti
     }),
   );
   assert.equal(report.status, 'passed');
-  assert.equal(readFileSync(`${seen}.env`, 'utf8').trim(), `${baseSha} ${baseSha} main`);
-  // Against the ticket base: the ticket's change only.
+  assert.equal(readFileSync(`${seen}.round`, 'utf8').trim(), baseSha);
+  // Through the refs: the ticket's change only.
   assert.equal(readFileSync(`${seen}.ticket`, 'utf8').trim(), 'README.md');
   // Against the moving tip, the upstream route change shows up as the ticket's.
   assert.match(readFileSync(`${seen}.tip`, 'utf8'), /routes\.py/);
 });
 
-test('a rebased worktree runs no command: validation stops with why', async () => {
-  const { cwd } = repo();
+test('a worker that moved HEAD off the round base is corrected; one with no history in common with the target runs no command', async () => {
+  const { baseSha, cwd } = repo();
   writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
+  // A commit the branch does not descend from, as the worker's own rebase
+  // leaves the round's start behind.
+  const elsewhere = git(cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
+  const moved = await validate({ allowsEmptyDiff: false, baseSha: elsewhere, commands: [], cwd });
+  assert.equal(moved.status, 'failed');
+  assert.match(
+    moved.status === 'failed' ? moved.failures.join('\n') : '',
+    /uncommitted: HEAD is at [0-9a-f]{40}, not the round's start [0-9a-f]{40}: leave the work uncommitted/,
+  );
+
+  // A target the branch shares no history with.
+  git(cwd, ['remote', 'add', 'origin', cwd]);
+  git(cwd, ['update-ref', 'refs/remotes/origin/main', elsewhere]);
   const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'seen');
   roots.push(path.dirname(seen));
-  // A commit the branch does not descend from, as a base left behind by a
-  // rebase.
-  const elsewhere = git(cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
-  const report = await workValidator.validate(
+  const unrelated = await workValidator.validate(
     validationContext('work', (snapshot) => {
       snapshot.execution.worktreePath = cwd;
-      snapshot.execution.worktreeBaseSha = elsewhere;
+      snapshot.execution.worktreeBaseSha = baseSha;
+      snapshot.execution.worktreeBaseBranch = 'main';
       snapshot.execution.policy.validation.work.commands = [
         { argv: ['touch', seen], name: 'tests', timeoutMs: 5000 },
       ];
     }),
   );
-  assert.equal(report.status, 'error');
+  assert.equal(unrelated.status, 'error');
   assert.match(
-    report.status === 'error' ? report.summary : '',
-    /no longer descends from the ticket base [0-9a-f]{12} \(FACTORY_TICKET_BASE\).*No project check ran/,
+    unrelated.status === 'error' ? unrelated.summary : '',
+    /shares no history with the target \(refs\/worktree\/factory\/target\).*no project check ran/,
   );
   assert.equal(existsSync(seen), false);
 });

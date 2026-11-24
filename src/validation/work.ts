@@ -9,7 +9,7 @@ import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
-import { basesDiverged, comparisonBases, type ComparisonBases } from './bases.ts';
+import { checkBases, roundBase, syncWorktreeRefs } from './bases.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
   errorReport,
@@ -117,7 +117,9 @@ function commitCheck(cwd: string, baseSha: string): ValidationCheck | { message:
   const committed = sha !== baseSha;
   return {
     command: null,
-    details: committed ? `unexpected commit ${sha}` : `HEAD matches ${baseSha}`,
+    details: committed
+      ? `HEAD is at ${sha}, not the round's start ${baseSha}: leave the work uncommitted on ${baseSha}, without committing, rebasing, or resetting the branch`
+      : `HEAD matches ${baseSha}`,
     durationMs: null,
     exitCode: null,
     kind: 'policy',
@@ -249,8 +251,6 @@ function selectionCheck(input: {
 
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
-  // The ticket's comparison commits, for the commands.
-  bases: ComparisonBases;
   // The commit work leaves its changes uncommitted on: the ticket's base, or
   // the start of the feedback round.
   baseSha: string;
@@ -264,6 +264,8 @@ async function validateWork(input: {
   reportCommand: CommandReporter;
   // The tests the worker proposed, for the commands.
   selection: ParsedSelection;
+  // The branch the pull request targets, for the worktree's target ref.
+  targetBranch: string | null;
 }): Promise<WorkValidationReport> {
   // A run without a report has no selection to give the commands, nor
   // answers for review: it is corrected before anything runs.
@@ -285,11 +287,20 @@ async function validateWork(input: {
     ];
     return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
   }
-  // A rebased branch no longer descends from the commits its checks compare
-  // against; they would blame the ticket for the target's changes.
-  const diverged = basesDiverged(input.cwd, input.bases);
-  if (diverged !== null) {
-    return errorReport(WORK_VALIDATOR_VERSION, diverged);
+  // The refs the project's checks compare against, current before they run.
+  // A HEAD that left the round's start is the commit check's to correct; a
+  // history that cannot answer stops here, before any command.
+  const synced = syncWorktreeRefs({
+    roundBase: input.baseSha,
+    targetBranch: input.targetBranch,
+    worktree: input.cwd,
+  });
+  if (synced !== null) {
+    return errorReport(WORK_VALIDATOR_VERSION, synced);
+  }
+  const bases = checkBases(input.cwd, input.baseSha);
+  if (bases.kind === 'unreadable') {
+    return errorReport(WORK_VALIDATOR_VERSION, bases.message);
   }
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -344,7 +355,7 @@ async function validateWork(input: {
     const result = await runCommand(
       command,
       input.cwd,
-      commandEnv({ bases: input.bases, factoryRoot: input.factoryRoot, tests }),
+      commandEnv({ factoryRoot: input.factoryRoot, tests }),
     );
     if (result.spawnError !== null) {
       return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
@@ -371,22 +382,18 @@ async function validateWork(input: {
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
   validate: ({ deps, run, session, snapshot }) => {
-    const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
-    if (worktreePath === null || worktreeBaseSha === null) {
+    const { factoryDir, policy, worktreeBaseBranch, worktreePath } = snapshot.execution;
+    const base = roundBase(snapshot);
+    if (worktreePath === null || base === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
     }
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const round = task === null ? null : feedbackRoundOf(task);
-    const bases = comparisonBases(snapshot);
-    if (bases === null) {
-      return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
-    }
     return validateWork({
       // A feedback round may decline every item and change nothing; review
       // judges each item either way.
       allowsEmptyDiff: round !== null || allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
-      bases,
-      baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
+      baseSha: base,
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
@@ -396,6 +403,7 @@ export const workValidator: Validator<'work'> = {
       reportCommand: deps.reportCommand,
       // The selection as of the run validated: a retry of it gets the same.
       selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),
+      targetBranch: worktreeBaseBranch,
     });
   },
   version: WORK_VALIDATOR_VERSION,

@@ -9,7 +9,6 @@ import { isOsMetadata } from '../os-metadata.ts';
 import type { PullRequestInfo } from '../ports/code-host.ts';
 import type { MaybePromise } from '../ports/gh.ts';
 import { shellQuote } from '../shell.ts';
-import { feedbackRounds } from '../stages/feedback.ts';
 import { qaPaths, taskCriteria, testPlan } from '../stages/qa/criteria.ts';
 import { citations, latestReviews } from '../stages/review/parse.ts';
 import { changedRules } from '../stages/review/rules.ts';
@@ -27,6 +26,7 @@ import {
   titleExample,
   titleMatches,
 } from '../stages/wrapup/title.ts';
+import { roundStart } from './bases.ts';
 import { VALIDATION_LOGS } from './command-env.ts';
 import {
   errorReport,
@@ -795,7 +795,7 @@ export const wrapupValidator: Validator<'wrapup'> = {
         sha: execution.worktreeBaseSha,
       }),
       pullRequests: execution.policy.pullRequests,
-      roundBase: feedbackRounds(snapshot.tasks) === 0 ? null : execution.roundBaseSha,
+      roundBase: roundStart(snapshot),
       ticketDir: ticketDirOf(execution.factoryDir),
       title: ticketTitle(snapshot),
       usage: deps.usage,

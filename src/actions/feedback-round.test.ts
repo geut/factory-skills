@@ -137,6 +137,8 @@ test('a round renders its task file from the worktree head, and the file is writ
         skipped: [],
         taken: ['11'],
       },
+      // The test repository has no remote: nothing to fetch.
+      fetchFailure: null,
       round: 1,
       startHead: head,
       taskFile: 'feedback/1/task.md',
