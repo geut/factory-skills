@@ -7,6 +7,7 @@ import type { WorkCommand } from '../config.ts';
 import { taskId } from '../domain.ts';
 import { renderMissingReport } from '../runtime/work-report.ts';
 import { addTasks } from '../stories/fixtures.ts';
+import { ROUND_BASE_ENV, TARGET_BRANCH_ENV, TICKET_BASE_ENV } from './bases.ts';
 import { VALIDATION_LOGS, VALIDATION_LOGS_ENV } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { SELECTION_ENV } from './selection.ts';
@@ -473,6 +474,68 @@ test('a run that ended without a report is corrected before any command runs', a
   assert.match(failures, /The run ended without a report/);
   assert.match(failures, /- summary: one sentence for the observable result\./);
   assert.match(failures, /Call subagent_done with your report as its arguments/);
+});
+
+test("a command compares against the ticket's base, which the target's moving tip never shifts", async () => {
+  const { baseSha, cwd } = repo();
+  // The target moves on after the ticket branched: another ticket's start, or
+  // any fetch, updates the shared origin/main.
+  git(cwd, ['checkout', '-qb', 'upstream']);
+  writeFileSync(path.join(cwd, 'routes.py'), 'urlpatterns = []\n');
+  git(cwd, ['add', 'routes.py']);
+  git(cwd, ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'reorganize routes']);
+  git(cwd, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  git(cwd, ['checkout', '-q', 'main']);
+  // The ticket's own, uncommitted change.
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
+  const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'seen');
+  roots.push(path.dirname(seen));
+  const script = [
+    `echo "$${TICKET_BASE_ENV} $${ROUND_BASE_ENV} $${TARGET_BRANCH_ENV}" > ${JSON.stringify(`${seen}.env`)}`,
+    `git diff --name-only "$${TICKET_BASE_ENV}" > ${JSON.stringify(`${seen}.ticket`)}`,
+    `git diff --name-only origin/main > ${JSON.stringify(`${seen}.tip`)}`,
+  ].join(' && ');
+  const report = await workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreePath = cwd;
+      snapshot.execution.worktreeBaseSha = baseSha;
+      snapshot.execution.worktreeBaseBranch = 'main';
+      snapshot.execution.policy.validation.work.commands = [
+        { argv: ['sh', '-c', script], name: 'placement', timeoutMs: 5000 },
+      ];
+    }),
+  );
+  assert.equal(report.status, 'passed');
+  assert.equal(readFileSync(`${seen}.env`, 'utf8').trim(), `${baseSha} ${baseSha} main`);
+  // Against the ticket base: the ticket's change only.
+  assert.equal(readFileSync(`${seen}.ticket`, 'utf8').trim(), 'README.md');
+  // Against the moving tip, the upstream route change shows up as the ticket's.
+  assert.match(readFileSync(`${seen}.tip`, 'utf8'), /routes\.py/);
+});
+
+test('a rebased worktree runs no command: validation stops with why', async () => {
+  const { cwd } = repo();
+  writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
+  const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'seen');
+  roots.push(path.dirname(seen));
+  // A commit the branch does not descend from, as a base left behind by a
+  // rebase.
+  const elsewhere = git(cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
+  const report = await workValidator.validate(
+    validationContext('work', (snapshot) => {
+      snapshot.execution.worktreePath = cwd;
+      snapshot.execution.worktreeBaseSha = elsewhere;
+      snapshot.execution.policy.validation.work.commands = [
+        { argv: ['touch', seen], name: 'tests', timeoutMs: 5000 },
+      ];
+    }),
+  );
+  assert.equal(report.status, 'error');
+  assert.match(
+    report.status === 'error' ? report.summary : '',
+    /no longer descends from the ticket base [0-9a-f]{12} \(FACTORY_TICKET_BASE\).*No project check ran/,
+  );
+  assert.equal(existsSync(seen), false);
 });
 
 test('parallel validations of different tickets each give their commands only their own selection', async () => {

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { BASES_ENV, basesEnv, type ComparisonBases } from './bases.ts';
 import { SELECTION_ENV, type SelectedTest, type ValidationSelection } from './selection.ts';
 
 // The environment a validation command runs in: work's commands, QA's own,
@@ -32,13 +33,18 @@ export function ensureValidationLogs(factoryRoot: string): void {
 }
 
 // A fresh environment for one command: the server's own, with where to log,
-// and the worker's selection when there is one.
+// the ticket's comparison commits, and the worker's selection when there is
+// one. The server's own copies of these never leak into a ticket's command.
 export function commandEnv(input: {
+  bases: ComparisonBases;
   factoryRoot: string;
   tests: Array<SelectedTest> | null;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env[SELECTION_ENV];
+  for (const name of [SELECTION_ENV, ...BASES_ENV]) {
+    delete env[name];
+  }
+  Object.assign(env, basesEnv(input.bases));
   env[VALIDATION_LOGS_ENV] = validationLogsDir(input.factoryRoot);
   if (input.tests !== null && input.tests.length > 0) {
     env[SELECTION_ENV] = JSON.stringify({

@@ -9,6 +9,7 @@ import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
+import { basesDiverged, comparisonBases, type ComparisonBases } from './bases.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
   errorReport,
@@ -248,6 +249,8 @@ function selectionCheck(input: {
 
 async function validateWork(input: {
   allowsEmptyDiff: boolean;
+  // The ticket's comparison commits, for the commands.
+  bases: ComparisonBases;
   // The commit work leaves its changes uncommitted on: the ticket's base, or
   // the start of the feedback round.
   baseSha: string;
@@ -281,6 +284,12 @@ async function validateWork(input: {
       },
     ];
     return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
+  }
+  // A rebased branch no longer descends from the commits its checks compare
+  // against; they would blame the ticket for the target's changes.
+  const diverged = basesDiverged(input.cwd, input.bases);
+  if (diverged !== null) {
+    return errorReport(WORK_VALIDATOR_VERSION, diverged);
   }
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -335,7 +344,7 @@ async function validateWork(input: {
     const result = await runCommand(
       command,
       input.cwd,
-      commandEnv({ factoryRoot: input.factoryRoot, tests }),
+      commandEnv({ bases: input.bases, factoryRoot: input.factoryRoot, tests }),
     );
     if (result.spawnError !== null) {
       return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
@@ -368,10 +377,15 @@ export const workValidator: Validator<'work'> = {
     }
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const round = task === null ? null : feedbackRoundOf(task);
+    const bases = comparisonBases(snapshot);
+    if (bases === null) {
+      return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
+    }
     return validateWork({
       // A feedback round may decline every item and change nothing; review
       // judges each item either way.
       allowsEmptyDiff: round !== null || allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
+      bases,
       baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.

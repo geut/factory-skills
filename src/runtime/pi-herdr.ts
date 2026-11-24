@@ -11,6 +11,7 @@ import {
   type UsageTotals,
 } from '../domain.ts';
 import { shellQuote } from '../shell.ts';
+import { basesEnv, type ComparisonBases } from '../validation/bases.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
@@ -314,6 +315,15 @@ function projectConfigArgs(config: ProjectConfig, skillsPath: string): string {
   }
 }
 
+// The ticket's comparison commits, for checks the agent runs in its shell.
+function basesLines(bases: ComparisonBases | null): string {
+  return bases === null
+    ? ''
+    : Object.entries(basesEnv(bases))
+        .map(([name, value]) => `export ${name}=${shellQuote(value)}\n`)
+        .join('');
+}
+
 // The report environment of a launch: which report subagent_done takes, and
 // the feedback items it answers.
 function reportLines(report: LaunchReport | null): string {
@@ -324,6 +334,7 @@ function reportLines(report: LaunchReport | null): string {
 }
 
 export function renderLaunchScript(input: {
+  bases: ComparisonBases | null;
   env: ForwardedEnv;
   handshakePath: string;
   model: string;
@@ -355,7 +366,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 export FACTORY_WORKTREE=${shellQuote(input.worktree)}
 export FACTORY_RUN_ID=${runId}
-${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${reportLines(input.report)}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
+${basesLines(input.bases)}${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${reportLines(input.report)}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -949,6 +960,7 @@ export function createPiHerdrRuntime(options?: {
     writeFileSync(
       scriptFile,
       renderLaunchScript({
+        bases: spec.bases,
         env,
         handshakePath,
         model: spec.model,

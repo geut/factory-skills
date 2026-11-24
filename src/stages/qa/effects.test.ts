@@ -106,6 +106,11 @@ function validate(
         task(snapshot, '01').taskFile = '01-task.md';
         snapshot.execution.factoryDir = factoryDir;
         snapshot.execution.worktreePath = cwd;
+        // The commit the ticket branched from: its worktree descends from it.
+        snapshot.execution.worktreeBaseSha = spawnSync('git', ['rev-parse', 'HEAD'], {
+          cwd,
+          encoding: 'utf8',
+        }).stdout.trim();
         snapshot.execution.policy.stages['qa'] = {
           commands: [input.e2e ?? command('e2e')],
           enabled: true,

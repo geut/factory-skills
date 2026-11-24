@@ -2993,6 +2993,14 @@ test('a feedback round takes the pull request feedback back through work, review
   // Its report answers the round's items, and the planned task's answered none.
   assert.deepEqual(roundWork?.report, { feedbackItems: ['F1', 'F2'] });
   assert.deepEqual(work.report, { feedbackItems: [] });
+  // The planned task compared against where the ticket branched; the round
+  // compares against its own start, the pull request's head, on the same
+  // ticket base.
+  const ticketBase = work.bases?.ticketBase ?? '';
+  assert.equal(work.bases?.roundBase, ticketBase);
+  assert.equal(roundWork?.bases?.ticketBase, ticketBase);
+  assert.equal(roundWork?.bases?.roundBase, git(work.cwd, ['rev-parse', 'HEAD']));
+  assert.notEqual(roundWork?.bases?.roundBase, ticketBase);
   // The round closes the earlier handoff's own pane, and only that one.
   await waitFor(() => runtime.closedPanes.length > 0);
   assert.deepEqual(runtime.closedPanes, [sessionPane]);

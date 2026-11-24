@@ -38,6 +38,7 @@ import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
 import { contextGaps } from '../stages/plan/context.ts';
 import { readPlanLinks, type PlanLinks } from '../stages/plan/links.ts';
+import { comparisonBases } from '../validation/bases.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -371,6 +372,7 @@ async function launch(
     return null;
   }
   const spec: LaunchSpec = {
+    bases: comparisonBases(snapshot),
     cwd: action.cwd,
     mode,
     model: session.model,

@@ -130,6 +130,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
     ],
   );
   const script = renderLaunchScript({
+    bases: null,
     env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
@@ -166,6 +167,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
   // A work run takes its report as subagent_done's arguments, so the text
   // nudge is off and the round's feedback items travel with it.
   const work = renderLaunchScript({
+    bases: { roundBase: 'b'.repeat(40), targetBranch: 'main', ticketBase: 'a'.repeat(40) },
     env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'work-model',
@@ -183,6 +185,12 @@ test('herdr launch opens the factory plugin argv pane', () => {
   });
   assert.match(work, /\nexport FACTORY_REPORT=work\nexport FACTORY_FEEDBACK_ITEMS='F1,F2'\n/);
   assert.doesNotMatch(work, /FACTORY_REPLY_REQUIRED/);
+  // The agent's shell compares as validation does: the ticket's own commits.
+  assert.match(
+    work,
+    /\nexport FACTORY_ROUND_BASE='b{40}'\nexport FACTORY_TICKET_BASE='a{40}'\nexport FACTORY_TARGET_BRANCH='main'\n/,
+  );
+  assert.doesNotMatch(script, /FACTORY_TICKET_BASE/);
   assert.deepEqual(herdrRenameArgs('pane-1', '🔎 owner/repo#3'), [
     'pane',
     'rename',
@@ -223,6 +231,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
   writeFileSync(
     script,
     renderLaunchScript({
+      bases: null,
       env,
       handshakePath: '/pkg/child-handshake.ts',
       model: 'work-model',
@@ -597,6 +606,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     targetPaneId: 'parent',
   });
   const spec = {
+    bases: null,
     cwd: directory,
     mode: 'resume' as const,
     model: 'work-model',
@@ -905,6 +915,7 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     return { code: 0, stderr: '', stdout: '' };
   };
   const spec = (ticket: string, id: string, previousPaneId: string | null = null) => ({
+    bases: null,
     cwd: directory,
     mode: 'launch' as const,
     model: 'work-model',
@@ -1017,6 +1028,7 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     targetPaneId: 'server',
   });
   await runtime.launch({
+    bases: null,
     cwd: directory,
     mode: 'launch',
     model: 'm',
@@ -1067,6 +1079,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
   });
   const launch = (id: string) =>
     runtime.launch({
+      bases: null,
       cwd: directory,
       mode: 'launch',
       model: 'm',
@@ -1099,6 +1112,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
 
 test('a reviewer launch runs untrusted, with its skill by path and the prompts it was given', () => {
   const script = renderLaunchScript({
+    bases: null,
     env: { PI_CODING_AGENT_DIR: '/opt/pi' },
     handshakePath: '/pkg/child-handshake.ts',
     model: 'review-model',
@@ -1127,6 +1141,7 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
   assert.match(script, /export PI_CODING_AGENT_DIR='\/opt\/pi'/);
   // Without a base commit SYSTEM.md, Pi finds its own.
   const discovered = renderLaunchScript({
+    bases: null,
     env: {},
     handshakePath: '/pkg/child-handshake.ts',
     model: 'review-model',

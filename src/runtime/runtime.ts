@@ -6,6 +6,7 @@ import type {
   StageName,
   TerminalOutcome,
 } from '../domain.ts';
+import type { ComparisonBases } from '../validation/bases.ts';
 
 // The Herdr tab a ticket's panes open in: one per ticket, named after it.
 export type TicketTab = { key: string; label: string };
@@ -31,6 +32,9 @@ export type ProjectConfig =
 export type LaunchReport = { feedbackItems: Array<string> };
 
 export type LaunchSpec = {
+  // The ticket's comparison commits, exported to the agent's shell so a
+  // check it runs compares as validation does; null before its worktree.
+  bases: ComparisonBases | null;
   cwd: string;
   mode: 'launch' | 'resume';
   model: string;

@@ -6,6 +6,7 @@ import { factoryRootOf } from '../../controller/keys.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { sha256 } from '../../hash.ts';
+import { basesDiverged, comparisonBases, type ComparisonBases } from '../../validation/bases.ts';
 import { commandEnv, ensureValidationLogs } from '../../validation/command-env.ts';
 import {
   errorReport,
@@ -152,6 +153,8 @@ function artifact(
 async function validateQa(input: {
   // Null for a round prepared before QA took one: no file counts as QA's.
   baseline: QaBaseline | null;
+  // The ticket's comparison commits, for the commands.
+  bases: ComparisonBases;
   commands: ReturnType<typeof qaSettings>['commands'];
   factoryDir: string;
   reportCommand: CommandReporter;
@@ -222,6 +225,12 @@ async function validateQa(input: {
   if (incomplete.length > 0) {
     return failedReport(QA_VALIDATOR_VERSION, checks, incomplete, { reason: 'incomplete' });
   }
+  // A rebased branch no longer descends from the commits its checks compare
+  // against; they would blame the ticket for the target's changes.
+  const diverged = basesDiverged(input.worktree, input.bases);
+  if (diverged !== null) {
+    return errorReport(QA_VALIDATOR_VERSION, diverged);
+  }
   const failing: Array<string> = [];
   ensureValidationLogs(factoryRoot);
   // QA's commands, then the validation commands: one count for the step.
@@ -231,7 +240,7 @@ async function validateQa(input: {
     const result = await runCommand(
       command,
       input.worktree,
-      commandEnv({ factoryRoot, tests: null }),
+      commandEnv({ bases: input.bases, factoryRoot, tests: null }),
     );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -268,7 +277,7 @@ async function validateQa(input: {
     const result = await runCommand(
       command,
       input.worktree,
-      commandEnv({ factoryRoot, tests: input.selection }),
+      commandEnv({ bases: input.bases, factoryRoot, tests: input.selection }),
     );
     if (result.spawnError !== null) {
       return errorReport(QA_VALIDATOR_VERSION, result.spawnError);
@@ -323,7 +332,8 @@ export const qaValidator: Validator<'qa'> = {
   validate: ({ deps, run, session, snapshot }) => {
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
     const worktree = snapshot.execution.worktreePath;
-    if (task === null || worktree === null) {
+    const bases = comparisonBases(snapshot);
+    if (task === null || worktree === null || bases === null) {
       return Promise.resolve(
         errorReport(QA_VALIDATOR_VERSION, 'The QA task or worktree is missing.'),
       );
@@ -338,6 +348,7 @@ export const qaValidator: Validator<'qa'> = {
     );
     return validateQa({
       baseline: parseBaseline(baseline?.baseline ?? null),
+      bases,
       commands: qaSettings(snapshot.execution.policy).commands,
       factoryDir: snapshot.execution.factoryDir,
       reportCommand: deps.reportCommand,
