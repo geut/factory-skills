@@ -253,3 +253,30 @@ test('a dry run reads the worktree’s refs, and what they would name, and write
   assert.equal(result.kind === 'carried' ? result.pass.dropped.length : null, 4);
   assert.equal(refs(), '');
 });
+
+test('carrying one ticket’s pass over leaves another ticket’s worktree, refs, and the shared repository as they were', () => {
+  const value = ticket();
+  // Another ticket, active in its own worktree of the same code root.
+  const other = path.join(value.root, 'other');
+  git(value.codeRoot, ['worktree', 'add', '-qb', 'factory/other', other, value.branched]);
+  write(other, 'other.ts', 'export const other = 1;\n');
+  git(other, ['update-ref', 'refs/worktree/factory/round-base', value.branched]);
+  git(other, ['symbolic-ref', 'refs/worktree/factory/target', 'refs/remotes/origin/main']);
+  const state = (cwd: string) => ({
+    head: git(cwd, ['rev-parse', 'HEAD']),
+    // Every ref the repository shares, and this worktree's own.
+    refs: spawnSync('git', ['for-each-ref', '--format=%(refname) %(objectname) %(symref)'], {
+      cwd,
+      encoding: 'utf8',
+    }).stdout,
+    status: git(cwd, ['status', '--porcelain']),
+  });
+  upstream(value.codeRoot, 6);
+  git(value.worktree, ['rebase', '-q', 'origin/main']);
+  const before = { other: state(other), shared: state(value.codeRoot) };
+  const result = carry(value, capture(value, value.branched));
+  assert.equal(result.kind, 'carried');
+  // The carried ticket's own refs moved; nothing else did.
+  assert.deepEqual({ other: state(other), shared: state(value.codeRoot) }, before);
+  assert.equal(git(other, ['rev-parse', 'refs/worktree/factory/round-base']), value.branched);
+});
