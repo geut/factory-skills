@@ -57,6 +57,7 @@ import { stages } from '../stages/index.ts';
 import { runReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
+import { roundStart } from '../validation/bases.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import { createCommandBoard, type CommandProgress } from './command-progress.ts';
@@ -788,6 +789,8 @@ export function createFactoryService(input: {
           kept: pass.kept.length,
           previousCompareBase: previousBaseline.compareBase,
           previousHead: previousBaseline.head,
+          previousRoundStart: roundStart(snapshot),
+          roundStart: pass.roundStart,
         },
         idempotencyKey: key,
         kind: 'retry_rebased',
@@ -809,6 +812,8 @@ export function createFactoryService(input: {
           kept: pass.kept.length,
           previousCompareBase: previousBaseline.compareBase,
           previousHead: previousBaseline.head,
+          previousRoundStart: roundStart(snapshot),
+          roundStart: pass.roundStart,
         },
         executionId: snapshot.execution.id,
         now: new Date().toISOString(),

@@ -17,6 +17,9 @@ export type CarriedPass = {
   // The paths dropped as the target's own, and those kept.
   dropped: Array<string>;
   kept: Array<string>;
+  // The feedback round's start on the rebased branch, or null before a
+  // round: the round's diff and its pull-request comment compare against it.
+  roundStart: string | null;
 };
 
 export type CarryResult =
@@ -40,13 +43,16 @@ function git(cwd: string, args: Array<string>, input?: string): Git {
 }
 
 // Each commit of `range` that changes something, oldest first, with its
-// patch-id: what the commit changes, whatever it sits on. Merges carry none.
+// patch-id: what the commit changes, whitespace included, whatever it sits
+// on. Merges carry none.
 function patchIds(worktree: string, range: string): Array<{ commit: string; id: string }> | string {
   const log = git(worktree, ['log', '--reverse', '-p', '--no-color', '--format=commit %H', range]);
   if (log.code !== 0) {
     return log.stderr || `git log ${range} failed`;
   }
-  const ids = git(worktree, ['patch-id', '--stable'], log.stdout);
+  // Verbatim: a change in indentation alone, which can change what Python
+  // code does, is a different patch.
+  const ids = git(worktree, ['patch-id', '--verbatim'], log.stdout);
   if (ids.code !== 0) {
     return ids.stderr || 'git patch-id failed';
   }
@@ -160,20 +166,21 @@ export function carryPassOver(input: {
   // Where the ticket branched.
   branched: string;
   codeRoot: string;
-  // The commit the current round of work started from.
-  roundBase: string;
+  // The feedback round's start, or null before a round.
+  roundStart: string | null;
   worktree: string;
 }): CarryResult {
   const { baseline, worktree } = input;
+  const roundBase = input.roundStart ?? input.branched;
   const synced = syncWorktreeRefs({
-    roundBase: input.roundBase,
+    roundBase,
     targetBranch: input.baseBranch,
     worktree,
   });
   if (synced !== null) {
     return { kind: 'refused', message: synced };
   }
-  const unreadable = unreadableHistory(worktree, input.roundBase);
+  const unreadable = unreadableHistory(worktree, roundBase);
   if (unreadable !== null) {
     return { kind: 'refused', message: unreadable };
   }
@@ -186,6 +193,29 @@ export function carryPassOver(input: {
   });
   if ('message' in start) {
     return { kind: 'refused', message: start.message };
+  }
+  // The round's start moves with the rebase as the pass's does, so the
+  // round's diff never holds what the target gained.
+  const round =
+    input.roundStart === null
+      ? null
+      : mappedStart({
+          compareBase,
+          from: baseline.compareBase ?? input.branched,
+          start: input.roundStart,
+          worktree,
+        });
+  if (round !== null && 'message' in round) {
+    return { kind: 'refused', message: round.message };
+  }
+  const roundStart = round?.commit ?? null;
+  const resynced = syncWorktreeRefs({
+    roundBase: roundStart ?? input.branched,
+    targetBranch: input.baseBranch,
+    worktree,
+  });
+  if (resynced !== null) {
+    return { kind: 'refused', message: resynced };
   }
   const paths = Object.keys(baseline.worktree).sort();
   const target = contentHashes(worktree, compareBase, paths);
@@ -235,6 +265,7 @@ export function carryPassOver(input: {
       },
       dropped,
       kept,
+      roundStart,
     },
   };
 }

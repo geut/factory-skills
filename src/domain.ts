@@ -461,6 +461,9 @@ export type CarriedRecord = {
   kept: number;
   previousCompareBase: string | null;
   previousHead: string;
+  // The feedback round's start, before and after; null before a round.
+  previousRoundStart: string | null;
+  roundStart: string | null;
 };
 
 export type ControllerResponse =

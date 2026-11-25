@@ -47,7 +47,7 @@ export function readRebased(snapshot: FactorySnapshot):
     baseline,
     branched: worktreeBaseSha,
     codeRoot: snapshot.execution.policy.codeRoot,
-    roundBase: roundStart(snapshot) ?? worktreeBaseSha,
+    roundStart: roundStart(snapshot),
     worktree: worktreePath,
   });
   return carried.kind === 'refused'
@@ -83,6 +83,9 @@ export function rebasedPreview(snapshot: FactorySnapshot): string {
     `${snapshot.ticket.displayRef}: --rebased would carry the wrap-up pass over to the rebased branch, then validate again.`,
     `compare base: ${short(previousBaseline.compareBase)} → ${short(pass.baseline.compareBase)}`,
     `pass start: ${short(previousBaseline.head)} → ${short(pass.baseline.head)}`,
+    ...(pass.roundStart === null
+      ? []
+      : [`feedback round start: ${short(roundStart(snapshot))} → ${short(pass.roundStart)}`]),
     `dropped as the target's own (${pass.dropped.length}): ${sample(pass.dropped)}`,
     `kept (${pass.kept.length}): ${sample(pass.kept)}`,
     'Nothing changed.',

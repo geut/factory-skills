@@ -3019,6 +3019,8 @@ test('a wrap-up pass paused on the target’s files after an authorized rebase c
       kept: 1,
       previousCompareBase: null,
       previousHead: legacy.head,
+      previousRoundStart: null,
+      roundStart: null,
     },
   );
   // The pass's first run keeps the baseline it started with.

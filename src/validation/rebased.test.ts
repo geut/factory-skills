@@ -102,7 +102,7 @@ function carry(value: ReturnType<typeof ticket>, baseline: WrapupBaseline) {
     baseline,
     branched: value.branched,
     codeRoot: value.codeRoot,
-    roundBase: value.branched,
+    roundStart: null,
     worktree: value.worktree,
   });
 }
@@ -178,4 +178,53 @@ test('a rebase whose conflict resolution changed a ticket commit is refused, nam
     result.kind === 'refused' ? result.message : '',
     /^The rebase changed [0-9a-f]{12} "Ticket work": no commit on the rebased branch makes the same change, so a conflict resolution changed it\./,
   );
+});
+
+test('a rebase that changed only a commit’s indentation, which can change what Python does, is refused', () => {
+  const value = ticket();
+  write(value.worktree, 'calc.py', 'def f(x):\n    if x:\n        y = 1\n    return 2\n');
+  git(value.worktree, ['add', 'calc.py']);
+  git(value.worktree, ['commit', '-qm', 'Return the result']);
+  const before = capture(value, value.branched);
+  upstream(value.codeRoot, 3);
+  git(value.worktree, ['rebase', '-q', 'origin/main']);
+  // The rebase's resolution indented the return: f(False) is None now.
+  write(value.worktree, 'calc.py', 'def f(x):\n    if x:\n        y = 1\n        return 2\n');
+  git(value.worktree, ['commit', '-q', '--amend', '-a', '--no-edit']);
+  const result = carry(value, before);
+  assert.equal(result.kind, 'refused');
+  assert.match(
+    result.kind === 'refused' ? result.message : '',
+    /^The rebase changed [0-9a-f]{12} "Return the result": no commit on the rebased branch makes the same change/,
+  );
+});
+
+test('a feedback round’s start moves with the rebase, so the round’s diff holds only the round’s change', () => {
+  const value = ticket();
+  // The round started at the pull request's head, and changed one file.
+  const roundStart = git(value.worktree, ['rev-parse', 'HEAD']);
+  write(value.worktree, 'src/b.ts', 'export const b = 2;\n');
+  git(value.worktree, ['commit', '-qam', 'Round 1']);
+  const before = capture(value, value.branched);
+  upstream(value.codeRoot, 5);
+  git(value.worktree, ['rebase', '-q', 'origin/main']);
+  // Against the old start, the target's files show up as the round's.
+  assert.match(
+    git(value.worktree, ['diff', '--name-only', roundStart, 'HEAD']),
+    /upstream\/file0\.ts/,
+  );
+  const result = carryPassOver({
+    baseBranch: 'main',
+    baseline: before,
+    branched: value.branched,
+    codeRoot: value.codeRoot,
+    roundStart,
+    worktree: value.worktree,
+  });
+  assert.equal(result.kind, 'carried');
+  const moved = result.kind === 'carried' ? (result.pass.roundStart ?? '') : '';
+  assert.notEqual(moved, roundStart);
+  assert.equal(git(value.worktree, ['diff', '--name-only', moved, 'HEAD']), 'src/b.ts');
+  // The worktree's round-base ref follows it.
+  assert.equal(git(value.worktree, ['rev-parse', 'refs/worktree/factory/round-base']), moved);
 });
