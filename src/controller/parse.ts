@@ -3,7 +3,9 @@ import type { TicketSource } from '../tickets.ts';
 export type ParsedCommand =
   | { kind: 'start'; source: TicketSource }
   | { answer: string; kind: 'reply'; ref: string }
-  | { kind: 'retry'; ref: string }
+  // `rebased` carries a paused wrap-up pass over to a branch a person
+  // rebased, then validates again; `rebased_dry_run` shows what it would do.
+  | { kind: 'retry'; mode: 'rebased' | 'rebased_dry_run' | 'retry'; ref: string }
   | { kind: 'complete'; ref: string }
   // `--list` shows the pending comments and changes nothing; otherwise a round
   // starts on all of them, `--only` some, or all but `--skip` ones.
@@ -120,11 +122,34 @@ export function parseFactoryCommand(args: string): ParsedCommand {
       }
       return { answer, kind: 'reply', ref };
     }
-    case 'retry':
-      if (rest.length === 0) {
-        return { kind: 'invalid', message: 'Usage: /factory retry <ticket>' };
+    case 'retry': {
+      const words = rest.split(/\s+/).filter((word) => word.length > 0);
+      const ref = words.find((word) => !word.startsWith('--'));
+      const flags = new Set(words.filter((word) => word.startsWith('--')));
+      const known =
+        flags.size ===
+        [...flags].filter((flag) => flag === '--rebased' || flag === '--dry-run').length;
+      if (
+        ref === undefined ||
+        words.filter((word) => !word.startsWith('--')).length !== 1 ||
+        !known ||
+        (flags.has('--dry-run') && !flags.has('--rebased'))
+      ) {
+        return {
+          kind: 'invalid',
+          message: 'Usage: /factory retry <ticket> [--rebased [--dry-run]]',
+        };
       }
-      return { kind: 'retry', ref: rest };
+      return {
+        kind: 'retry',
+        mode: flags.has('--rebased')
+          ? flags.has('--dry-run')
+            ? 'rebased_dry_run'
+            : 'rebased'
+          : 'retry',
+        ref,
+      };
+    }
     case 'complete':
       if (rest.length === 0) {
         return { kind: 'invalid', message: 'Usage: /factory complete <ticket>' };

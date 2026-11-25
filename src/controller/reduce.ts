@@ -33,7 +33,9 @@ import { latestReviews } from '../stages/review/parse.ts';
 import type { IssueChecklist } from '../stages/wrapup/checklist.ts';
 import { pullRequestBody } from '../stages/wrapup/pr-body.ts';
 import { describePrFormat, type PrFormatInUse } from '../stages/wrapup/pr-format.ts';
+import { latestPassRun, passBaselineText, rebasedRefusal } from '../stages/wrapup/rebased.ts';
 import { roundComment } from '../stages/wrapup/round-comment.ts';
+import { roundStart } from '../validation/bases.ts';
 import { worktreeSlugFor } from './keys.ts';
 import { currentStep, nextAction, progressText } from './progress.ts';
 import {
@@ -2099,6 +2101,57 @@ export function reduce(input: {
       });
       snapshot.execution.status = 'resuming';
       return finish(snapshot, 'Reply stored. Resuming the session.');
+    }
+    case 'retry_rebased': {
+      if (event.ticketId !== snapshot.ticket.id) {
+        return reject(existing, 'Retry does not match the current ticket.');
+      }
+      const refusal = rebasedRefusal(snapshot);
+      if (refusal !== null) {
+        return reject(existing, refusal);
+      }
+      // Carried over from the pass as the command read it: a pass that moved
+      // on since is read again.
+      const run = latestPassRun(snapshot);
+      if (
+        run?.id !== event.runId ||
+        passBaselineText(snapshot) !== event.previousBaseline ||
+        roundStart(snapshot) !== event.carried.previousRoundStart
+      ) {
+        return reject(
+          existing,
+          'The wrap-up pass changed since it was read; run /factory retry --rebased again.',
+        );
+      }
+      run.baseline = event.baseline;
+      // The round's diff and its pull-request comment compare against the
+      // round's start as the rebased branch has it.
+      if (event.carried.roundStart !== null) {
+        snapshot.execution.roundBaseSha = event.carried.roundStart;
+      }
+      resolveOpen(snapshot);
+      snapshot.execution.status = 'active';
+      snapshot.execution.retry = null;
+      snapshot.execution.statusReasonCode = null;
+      snapshot.execution.statusReason = null;
+      snapshot.actions.push({
+        attempts: 0,
+        attentionReplyId: null,
+        attentionRequestId: null,
+        id: ids.action(),
+        idempotencyKey: `rebased-validate:${snapshot.execution.id}:${event.idempotencyKey}`,
+        kind: 'validate_run',
+        lastError: null,
+        maxAttempts: snapshot.execution.policy.limits.infrastructureRetries,
+        retryOfActionId: null,
+        runId: run.id,
+        status: 'pending',
+      });
+      const { dropped, kept } = event.carried;
+      return finish(
+        snapshot,
+        `Carried the wrap-up pass over to the rebased branch: ${dropped} of the target's path${dropped === 1 ? '' : 's'} dropped, ${kept} kept. Validating again.`,
+      );
     }
     case 'retry': {
       if (event.ticketId !== snapshot.ticket.id) {

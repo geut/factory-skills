@@ -343,6 +343,11 @@ export type WrapupBaseline = {
   // its prompt, corrections, and validation all use these.
   boxes: Array<IssueBox>;
   branch: string;
+  // The commit the pass compares the worktree against: the merge-base of
+  // HEAD with the target when the pass started, which follows a rebase onto
+  // a newer target. Null in a baseline stored before it was kept, which
+  // compares against where the ticket branched.
+  compareBase: string | null;
   factory: Record<string, string>;
   head: string;
   remotes: Record<string, string>;
@@ -432,7 +437,34 @@ export type ControllerEvent =
       ticketId: TicketId;
     }
   | { idempotencyKey: string; kind: 'retry'; ticketId: TicketId }
+  // A person rebased the ticket's branch and carries the paused wrap-up pass
+  // over to it (`/factory retry --rebased`): the run's new baseline, and the
+  // one it replaces, kept here for the record.
+  | {
+      actor?: Actor;
+      baseline: string;
+      carried: CarriedRecord;
+      idempotencyKey: string;
+      kind: 'retry_rebased';
+      previousBaseline: string;
+      runId: RunId;
+      ticketId: TicketId;
+    }
   | { kind: 'reconciled'; observation: ReconcileObservation; runId: RunId };
+
+// What carrying a wrap-up pass over to a rebased branch changed.
+export type CarriedRecord = {
+  compareBase: string;
+  // How many of the pass's paths were the target's own, and how many stay.
+  dropped: number;
+  head: string;
+  kept: number;
+  previousCompareBase: string | null;
+  previousHead: string;
+  // The feedback round's start, before and after; null before a round.
+  previousRoundStart: string | null;
+  roundStart: string | null;
+};
 
 export type ControllerResponse =
   | {

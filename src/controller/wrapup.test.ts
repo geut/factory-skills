@@ -535,3 +535,46 @@ test('wrap-up corrections have no limit, but the same failure after a correction
     1,
   );
 });
+
+test('carrying a paused pass over moves the feedback round’s start with it, and a pass read before a change is refused', () => {
+  const { runId, snapshot } = finishedWrapup();
+  const round = feedbackRoundWorking().snapshot.tasks.find((item) => item.taskId === 'F1');
+  if (round !== undefined) {
+    snapshot.tasks.push({ ...round, status: 'done' });
+  }
+  snapshot.execution.roundBaseSha = 'old-round';
+  snapshot.execution.status = 'paused';
+  snapshot.actions = snapshot.actions.filter((action) => action.status !== 'pending');
+  const run = snapshot.runs.find((item) => item.id === runId);
+  if (run === undefined) {
+    throw new Error('missing wrap-up run');
+  }
+  run.baseline = '{"head":"old","worktree":{},"factory":{},"remotes":{}}';
+  const event = (previousRoundStart: string | null) => ({
+    baseline: '{"head":"new","compareBase":"base","worktree":{},"factory":{},"remotes":{}}',
+    carried: {
+      compareBase: 'base',
+      dropped: 3,
+      head: 'new',
+      kept: 1,
+      previousCompareBase: null,
+      previousHead: 'old',
+      previousRoundStart,
+      roundStart: 'new-round',
+    },
+    idempotencyKey: 'retry-rebased:1',
+    kind: 'retry_rebased' as const,
+    previousBaseline: run.baseline ?? '',
+    runId,
+    ticketId: snapshot.ticket.id,
+  });
+  const stale = reduce({ event: event('another-round'), ids: randomIds(), now, snapshot });
+  assert.equal(stale.response.kind, 'rejected');
+  const carried = reduce({ event: event('old-round'), ids: randomIds(), now, snapshot });
+  assert.notEqual(carried.response.kind, 'rejected');
+  const after = carried.snapshot ?? snapshot;
+  assert.equal(after.execution.roundBaseSha, 'new-round');
+  assert.equal(after.execution.status, 'active');
+  assert.match(after.runs.find((item) => item.id === runId)?.baseline ?? '', /"head":"new"/);
+  assert.equal(validation(after).runId, runId);
+});

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readIssueBoxes } from './effects.ts';
+import { blank, run, session } from '../../stories/fixtures.ts';
+import { passCompareBase, readIssueBoxes } from './effects.ts';
 
 test('wrap-up numbers the open checklist items B1..Bn and keeps the tracker’s keys', async () => {
   assert.deepEqual(
@@ -27,4 +28,23 @@ test('no tracker checklist is no boxes, and an unreadable tracker says why', asy
     }),
     { boxes: [], unread: 'gh: rate limited' },
   );
+});
+
+// A wrap-up baseline as a pass stores it, with `compareBase`.
+const baseline = (compareBase: string | null) =>
+  JSON.stringify({ branch: 'b', compareBase, factory: {}, head: 'h', remotes: {}, worktree: {} });
+
+test("the handoff diff runs from the latest pass's compare base, not one worked out again", () => {
+  const snapshot = blank();
+  assert.equal(passCompareBase(snapshot), null);
+  const wrapup = session(snapshot, 'wrapup');
+  run(snapshot, wrapup).baseline = baseline('a'.repeat(40));
+  // A correction keeps its pass's baseline; a later pass stores its own.
+  run(snapshot, wrapup);
+  assert.equal(passCompareBase(snapshot), 'a'.repeat(40));
+  run(snapshot, wrapup).baseline = baseline('b'.repeat(40));
+  assert.equal(passCompareBase(snapshot), 'b'.repeat(40));
+  // A pass stored before passes kept one falls back to where the ticket branched.
+  run(snapshot, wrapup).baseline = baseline(null);
+  assert.equal(passCompareBase(snapshot), null);
 });

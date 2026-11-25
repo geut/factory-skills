@@ -13,6 +13,7 @@ export const unusedCommands: FactoryCommands = {
   reply: unused,
   rerun: unused,
   retry: unused,
+  retryRebased: unused,
   start: unused,
   stopRun: unused,
 };
