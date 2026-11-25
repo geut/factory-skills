@@ -304,6 +304,11 @@ async function validateWork(input: {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
+  // Work leaves its changes uncommitted on the round's start: a commit, a
+  // rebase, or a reset is corrected before any command runs on it.
+  if (commit.status === 'failed') {
+    return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
+  }
   // A selection the worker got wrong is corrected before the commands run
   // on it.
   const { selection } = input;

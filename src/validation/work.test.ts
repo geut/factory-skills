@@ -523,7 +523,16 @@ test('a worker that moved HEAD off the round base is corrected; one with no hist
   // A commit the branch does not descend from, as the worker's own rebase
   // leaves the round's start behind.
   const elsewhere = git(cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
-  const moved = await validate({ allowsEmptyDiff: false, baseSha: elsewhere, commands: [], cwd });
+  // A configured command never runs on a HEAD that left the round's start.
+  const ran = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'ran');
+  roots.push(path.dirname(ran));
+  const moved = await validate({
+    allowsEmptyDiff: false,
+    baseSha: elsewhere,
+    commands: [{ argv: ['touch', ran], name: 'tests', timeoutMs: 5000 }],
+    cwd,
+  });
+  assert.equal(existsSync(ran), false);
   assert.equal(moved.status, 'failed');
   assert.match(
     moved.status === 'failed' ? moved.failures.join('\n') : '',

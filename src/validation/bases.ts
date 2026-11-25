@@ -70,10 +70,23 @@ function remotesOf(worktree: string): Array<string> {
 
 // The remote the worktree's target ref names, as written when the ticket's
 // first run started, or null when there is none yet.
+// Branch and remote names may both hold slashes (`fork` and
+// `release/stable`), so the remote is what sits between `refs/remotes/` and
+// the known branch.
 function recordedRemote(worktree: string, branch: string): string | null {
   const current = git(worktree, ['symbolic-ref', '--quiet', TARGET_REF]);
-  const remote = /^refs\/remotes\/(.+)\/([^/]+)$/.exec(current.stdout);
-  return current.code === 0 && remote?.[2] === branch ? (remote[1] ?? null) : null;
+  const prefix = 'refs/remotes/';
+  const suffix = `/${branch}`;
+  const ref = current.stdout;
+  if (
+    current.code !== 0 ||
+    !ref.startsWith(prefix) ||
+    !ref.endsWith(suffix) ||
+    ref.length <= prefix.length + suffix.length
+  ) {
+    return null;
+  }
+  return ref.slice(prefix.length, -suffix.length);
 }
 
 // Points the worktree's refs at the ticket's current state; repeating it

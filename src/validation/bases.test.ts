@@ -221,3 +221,26 @@ test('a fetch that hangs, its helper included, ends at the timeout', async () =>
   );
   assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started}ms`);
 });
+
+test('a target branch with slashes keeps the remote it was recorded with', async () => {
+  const { root, upstream, wt1 } = factory();
+  git(upstream, ['branch', 'release/stable']);
+  // The ticket targets fork's release/stable; an origin added later points
+  // elsewhere, and is not where the round fetches from.
+  git(root, ['remote', 'rename', 'origin', 'fork']);
+  git(root, ['fetch', '-q', 'fork']);
+  const elsewhere = path.join(path.dirname(root), 'elsewhere');
+  git(path.dirname(root), ['init', '-qb', 'main', elsewhere]);
+  const base = git(wt1, ['rev-parse', 'HEAD']);
+  git(wt1, ['symbolic-ref', TARGET_REF, 'refs/remotes/fork/release/stable']);
+  git(root, ['remote', 'add', 'origin', elsewhere]);
+  assert.equal(
+    syncWorktreeRefs({ roundBase: base, targetBranch: 'release/stable', worktree: wt1 }),
+    null,
+  );
+  assert.equal(git(wt1, ['symbolic-ref', TARGET_REF]), 'refs/remotes/fork/release/stable');
+  git(upstream, ['checkout', '-q', 'release/stable']);
+  const moved = commit(upstream, 'release.txt', 'stable\n');
+  assert.equal(await fetchTarget({ targetBranch: 'release/stable', worktree: wt1 }), null);
+  assert.equal(git(wt1, ['rev-parse', TARGET_REF]), moved);
+});
