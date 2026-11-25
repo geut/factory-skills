@@ -250,6 +250,14 @@ function run(cwd: string, args: Array<string>): string {
   const result = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], {
     cwd,
     encoding: 'utf8',
+    // CI has no git identity of its own; stash and rebase commit too.
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: 'factory@example.com',
+      GIT_AUTHOR_NAME: 'Factory',
+      GIT_COMMITTER_EMAIL: 'factory@example.com',
+      GIT_COMMITTER_NAME: 'Factory',
+    },
   });
   if (result.status !== 0) {
     throw new Error(result.stderr);
