@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { FactorySnapshot } from '../domain.ts';
 import { feedbackRounds } from '../stages/feedback.ts';
+import type { ValidationCheck } from './report.ts';
 
 // What a project's checks compare a ticket against. A remote branch's tip,
 // such as `origin/main`, moves under a running ticket: every ticket the
@@ -48,14 +49,37 @@ function git(cwd: string, args: Array<string>): Git {
   };
 }
 
-// The remote a ticket's target comes from, as worktree preparation chose
-// it: `origin`, or the only remote. Null without one.
+// The remote a ticket's target comes from, as worktree preparation chooses
+// it: `origin`, or the only remote. Null without one, or among several with
+// no `origin`.
 export function targetRemote(names: ReadonlyArray<string>): string | null {
   return names.includes('origin') ? 'origin' : names.length === 1 ? (names[0] ?? null) : null;
 }
 
+// The fetch that brings `remote`'s `branch` into its remote-tracking ref:
+// worktree preparation's and a feedback round's.
+export function targetFetchArgs(remote: string, branch: string): Array<string> {
+  return ['fetch', '--no-tags', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`];
+}
+
+function remotesOf(worktree: string): Array<string> {
+  return git(worktree, ['remote'])
+    .stdout.split('\n')
+    .filter((name) => name.length > 0);
+}
+
+// The remote the worktree's target ref names, as written when the ticket's
+// first run started, or null when there is none yet.
+function recordedRemote(worktree: string, branch: string): string | null {
+  const current = git(worktree, ['symbolic-ref', '--quiet', TARGET_REF]);
+  const remote = /^refs\/remotes\/(.+)\/([^/]+)$/.exec(current.stdout);
+  return current.code === 0 && remote?.[2] === branch ? (remote[1] ?? null) : null;
+}
+
 // Points the worktree's refs at the ticket's current state; repeating it
-// changes nothing. Null on success, or why it failed.
+// changes nothing. The target ref is written once, from the remote the
+// repository has then, and kept: a remote added later never moves it to
+// another. Null on success, or why it failed.
 export function syncWorktreeRefs(input: {
   roundBase: string;
   targetBranch: string | null;
@@ -68,108 +92,130 @@ export function syncWorktreeRefs(input: {
   if (input.targetBranch === null) {
     return null;
   }
-  const remotes = git(input.worktree, ['remote']);
-  const remote = targetRemote(remotes.stdout.split('\n').filter((name) => name.length > 0));
+  if (git(input.worktree, ['symbolic-ref', '--quiet', TARGET_REF]).code === 0) {
+    return null;
+  }
+  const remotes = remotesOf(input.worktree);
+  const remote = targetRemote(remotes);
+  if (remote === null && remotes.length > 0) {
+    // Several remotes, none of them origin: no target ref, and a check falls
+    // back to its own default.
+    return null;
+  }
   const target =
     remote === null
       ? `refs/heads/${input.targetBranch}`
       : `refs/remotes/${remote}/${input.targetBranch}`;
-  const current = git(input.worktree, ['symbolic-ref', '--quiet', TARGET_REF]);
-  if (current.code === 0 && current.stdout === target) {
-    return null;
-  }
   const pointed = git(input.worktree, ['symbolic-ref', TARGET_REF, target]);
   return pointed.code === 0
     ? null
     : `Cannot record the target branch in ${input.worktree}: ${pointed.stderr}`;
 }
 
-export type BaseCheck =
-  | { kind: 'ok' }
-  // HEAD left the round's start: something in the worktree rebased, reset,
-  // or committed.
-  | { kind: 'moved'; message: string }
-  // The history cannot answer: no common history with the target, or git
-  // failed. Never taken as a clean diff.
-  | { kind: 'unreadable'; message: string };
-
-// Whether the worktree still compares cleanly: HEAD descends from the round
-// base, and shares history with the target.
-export function checkBases(worktree: string, base: string): BaseCheck {
-  const short = base.slice(0, 12);
-  const descends = git(worktree, ['merge-base', '--is-ancestor', base, 'HEAD']);
-  if (descends.code === 1) {
-    return {
-      kind: 'moved',
-      message: `HEAD no longer descends from the round's start ${short} (${ROUND_BASE_REF}): the branch was rebased or reset. Bring HEAD back to ${short} and leave the work uncommitted on it.`,
-    };
+// Whether HEAD is still the round's start, as work and QA leave it: their
+// changes stay uncommitted on it. A commit, a rebase, or a reset is a check
+// that fails, for the stage's agent to correct.
+export function headCheck(worktree: string, base: string): ValidationCheck | { message: string } {
+  const head = git(worktree, ['rev-parse', 'HEAD']);
+  if (head.code !== 0) {
+    return { message: head.stderr || 'cannot read HEAD' };
   }
-  if (descends.code !== 0) {
-    return {
-      kind: 'unreadable',
-      message: `Cannot check that HEAD descends from the round base ${short}: ${descends.stderr || `git exited with ${descends.code}`}. No project check ran.`,
-    };
-  }
-  const target = git(worktree, ['rev-parse', '--verify', '--quiet', TARGET_REF]);
-  if (target.code !== 0) {
-    // No target recorded, as for a repository without a branch to target.
-    return { kind: 'ok' };
-  }
-  const shared = git(worktree, ['merge-base', 'HEAD', TARGET_REF]);
-  if (shared.code !== 0) {
-    return {
-      kind: 'unreadable',
-      message: `HEAD shares no history with the target (${TARGET_REF}): ${shared.stderr || 'git merge-base found none'}. Comparing against it would count every file as the ticket's, so no project check ran.`,
-    };
-  }
-  return { kind: 'ok' };
+  const moved = head.stdout !== base;
+  return {
+    command: null,
+    details: moved
+      ? `HEAD is at ${head.stdout}, not the round's start ${base}: leave the work uncommitted on ${base}, without committing, rebasing, or resetting the branch`
+      : `HEAD matches ${base}`,
+    durationMs: null,
+    exitCode: null,
+    kind: 'policy',
+    name: 'uncommitted',
+    outputExcerpt: null,
+    status: moved ? 'failed' : 'passed',
+  };
 }
 
-// A fetch that waits on a password or host-key prompt fails instead.
+// Why the worktree's history cannot answer what the ticket changed, or null
+// when it can: the round base is not a commit git has, or HEAD shares no
+// history with the target. Validation stops on it before any command, since
+// a comparison then would count every file as the ticket's; it is never
+// taken as a clean diff.
+export function unreadableHistory(worktree: string, base: string): string | null {
+  const known = git(worktree, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+  if (known.code !== 0) {
+    return `The round base ${base.slice(0, 12)} is not a commit in this repository. No project check ran.`;
+  }
+  if (git(worktree, ['rev-parse', '--verify', '--quiet', TARGET_REF]).code !== 0) {
+    // No target recorded, as for a repository without a branch to target.
+    return null;
+  }
+  const shared = git(worktree, ['merge-base', 'HEAD', TARGET_REF]);
+  return shared.code === 0
+    ? null
+    : `HEAD shares no history with the target (${TARGET_REF}): ${shared.stderr || 'git merge-base found none'}. Comparing against it would count every file as the ticket's, so no project check ran.`;
+}
+
+// A fetch that waits on a password, a host-key prompt, or a host that never
+// answers fails instead.
 const FETCH_TIMEOUT_MS = 120_000;
 
 // Brings the target's remote-tracking branch up to date in the worktree's
 // repository, so the merge-base with it sees a branch rebased onto a newer
-// target, or the target merged in. Awaited, so the server keeps answering.
-// Null when it is current, or when there is no remote to fetch from; else
-// why the fetch failed, which leaves the older ref in place.
+// target, or the target merged in. It fetches from the remote the target ref
+// names. Awaited, so the server keeps answering; the fetch runs in a process
+// group of its own, which the timeout ends whole, ssh included. Null when the
+// target is current, or when the repository has no remote; else why not,
+// which leaves the older ref in place.
 export async function fetchTarget(input: {
   targetBranch: string;
   timeoutMs?: number;
   worktree: string;
 }): Promise<string | null> {
-  const remotes = git(input.worktree, ['remote']);
-  const remote = targetRemote(remotes.stdout.split('\n').filter((name) => name.length > 0));
-  if (remote === null) {
-    return null;
-  }
   const branch = input.targetBranch;
+  const remotes = remotesOf(input.worktree);
+  const remote = recordedRemote(input.worktree, branch) ?? targetRemote(remotes);
+  if (remote === null) {
+    return remotes.length === 0
+      ? null
+      : `Cannot choose a remote to fetch ${branch} from among ${remotes.join(', ')}; name one origin.`;
+  }
+  const timeoutMs = input.timeoutMs ?? FETCH_TIMEOUT_MS;
   const result = await new Promise<Git>((resolve) => {
-    const child = spawn(
-      'git',
-      ['fetch', '--no-tags', remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
-      {
-        cwd: input.worktree,
-        env: {
-          ...process.env,
-          GIT_SSH_COMMAND: process.env['GIT_SSH_COMMAND'] ?? 'ssh -o BatchMode=yes',
-          GIT_TERMINAL_PROMPT: '0',
-        },
-        stdio: ['ignore', 'ignore', 'pipe'],
-        timeout: input.timeoutMs ?? FETCH_TIMEOUT_MS,
+    const child = spawn('git', targetFetchArgs(remote, branch), {
+      cwd: input.worktree,
+      detached: true,
+      env: {
+        ...process.env,
+        GIT_SSH_COMMAND: process.env['GIT_SSH_COMMAND'] ?? 'ssh -o BatchMode=yes',
+        GIT_TERMINAL_PROMPT: '0',
       },
-    );
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
     const stderr: Array<Buffer> = [];
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        // The whole group: git, and the ssh or helper it started.
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGKILL');
+        }
+      } catch {
+        // Already gone.
+      }
+    }, timeoutMs);
     child.on('error', (error) => {
+      clearTimeout(timer);
       resolve({ code: 1, stderr: error.message, stdout: '' });
     });
-    child.on('close', (code, signal) => {
+    // Exit, not close: a child that kept the pipe open never holds this up.
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      const said = Buffer.concat(stderr).toString('utf8').trim();
       resolve({
-        code: code ?? 1,
-        stderr:
-          Buffer.concat(stderr).toString('utf8').trim() ||
-          (signal === null ? '' : `stopped by ${signal}`),
+        code: timedOut ? 1 : (code ?? 1),
+        stderr: timedOut ? `timed out after ${Math.ceil(timeoutMs / 1000)}s` : said,
         stdout: '',
       });
     });

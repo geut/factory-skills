@@ -6,7 +6,12 @@ import { factoryRootOf } from '../../controller/keys.ts';
 import { changedPaths, diffSections } from '../../diff.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import { sha256 } from '../../hash.ts';
-import { checkBases, roundBase, syncWorktreeRefs } from '../../validation/bases.ts';
+import {
+  headCheck,
+  roundBase,
+  syncWorktreeRefs,
+  unreadableHistory,
+} from '../../validation/bases.ts';
 import { commandEnv, ensureValidationLogs } from '../../validation/command-env.ts';
 import {
   errorReport,
@@ -228,8 +233,9 @@ async function validateQa(input: {
     return failedReport(QA_VALIDATOR_VERSION, checks, incomplete, { reason: 'incomplete' });
   }
   // The refs the project's checks compare against, current before they run.
-  // A HEAD QA moved off the round's start is QA's to bring back; a history
-  // that cannot answer stops here, before any command.
+  // A HEAD QA moved off the round's start, by a commit, a rebase, or a reset,
+  // is QA's to bring back; a history that cannot answer stops here, before
+  // any command.
   const synced = syncWorktreeRefs({
     roundBase: input.roundBase,
     targetBranch: input.targetBranch,
@@ -238,12 +244,18 @@ async function validateQa(input: {
   if (synced !== null) {
     return errorReport(QA_VALIDATOR_VERSION, synced);
   }
-  const bases = checkBases(input.worktree, input.roundBase);
-  if (bases.kind === 'unreadable') {
-    return errorReport(QA_VALIDATOR_VERSION, bases.message);
+  const unreadable = unreadableHistory(input.worktree, input.roundBase);
+  if (unreadable !== null) {
+    return errorReport(QA_VALIDATOR_VERSION, unreadable);
   }
-  if (bases.kind === 'moved') {
-    return failedReport(QA_VALIDATOR_VERSION, checks, [bases.message], { reason: 'incomplete' });
+  const head = headCheck(input.worktree, input.roundBase);
+  if ('message' in head) {
+    return errorReport(QA_VALIDATOR_VERSION, head.message);
+  }
+  if (head.status === 'failed') {
+    return failedReport(QA_VALIDATOR_VERSION, [...checks, head], [head.details], {
+      reason: 'incomplete',
+    });
   }
   const failing: Array<string> = [];
   ensureValidationLogs(factoryRoot);

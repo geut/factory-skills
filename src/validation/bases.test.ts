@@ -7,13 +7,14 @@ import { after, test } from 'node:test';
 import { feedbackTaskId } from '../stages/feedback.ts';
 import { addTasks, blank } from '../stories/fixtures.ts';
 import {
-  checkBases,
   fetchTarget,
+  headCheck,
   ROUND_BASE_REF,
   roundBase,
   roundStart,
   syncWorktreeRefs,
   TARGET_REF,
+  unreadableHistory,
 } from './bases.ts';
 
 const dirs: Array<string> = [];
@@ -132,38 +133,66 @@ test('a ticket rebased onto a newer target, or with the target merged in, still 
   assert.deepEqual(ticketFiles(wt2), ['other.txt']);
 });
 
-test('HEAD that left the round base has moved; a history with no target in common, or an unknown commit, cannot answer', () => {
+test('HEAD that left the round base fails the HEAD check, a commit on top included', () => {
+  const { wt1 } = factory();
+  const base = git(wt1, ['rev-parse', 'HEAD']);
+  const passed = headCheck(wt1, base);
+  assert.equal('status' in passed ? passed.status : null, 'passed');
+  // A commit on top still descends from the base, and still moved HEAD.
+  commit(wt1, 'feature.txt', 'one\n');
+  const committed = headCheck(wt1, base);
+  assert.equal('status' in committed ? committed.status : null, 'failed');
+  assert.match(
+    'details' in committed ? committed.details : '',
+    /^HEAD is at [0-9a-f]{40}, not the round's start [0-9a-f]{40}: leave the work uncommitted/,
+  );
+});
+
+test('a history with no target in common, or a round base git does not have, cannot answer', () => {
   const { wt1 } = factory();
   const base = git(wt1, ['rev-parse', 'HEAD']);
   syncWorktreeRefs({ roundBase: base, targetBranch: 'main', worktree: wt1 });
-  assert.deepEqual(checkBases(wt1, base), { kind: 'ok' });
-  // Committing on top still descends: the commit check is work's to judge.
-  commit(wt1, 'feature.txt', 'one\n');
-  assert.deepEqual(checkBases(wt1, base), { kind: 'ok' });
-
-  const elsewhere = git(wt1, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
-  const moved = checkBases(wt1, elsewhere);
-  assert.equal(moved.kind, 'moved');
+  assert.equal(unreadableHistory(wt1, base), null);
   assert.match(
-    moved.kind === 'moved' ? moved.message : '',
-    /HEAD no longer descends from the round's start [0-9a-f]{12} \(refs\/worktree\/factory\/round-base\)/,
+    unreadableHistory(wt1, 'f'.repeat(40)) ?? '',
+    /^The round base f{12} is not a commit in this repository\. No project check ran\.$/,
   );
-
-  const unknown = checkBases(wt1, 'f'.repeat(40));
-  assert.equal(unknown.kind, 'unreadable');
-
   // A HEAD with no history in common with the target.
+  const elsewhere = git(wt1, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
   git(wt1, ['checkout', '-q', elsewhere]);
-  const unrelated = checkBases(wt1, elsewhere);
-  assert.equal(unrelated.kind, 'unreadable');
   assert.match(
-    unrelated.kind === 'unreadable' ? unrelated.message : '',
+    unreadableHistory(wt1, elsewhere) ?? '',
     /shares no history with the target .* no project check ran/,
   );
 });
 
-test('a round fetches its target; with no remote there is nothing to fetch, and a failed fetch says why', async () => {
-  const { root, upstream, wt1 } = factory();
+test('the target ref keeps the remote it was written with when another is added', async () => {
+  const { root, upstream, wt1, wt2 } = factory();
+  const base = git(wt1, ['rev-parse', 'HEAD']);
+  syncWorktreeRefs({ roundBase: base, targetBranch: 'main', worktree: wt1 });
+  // A second remote, and origin renamed: no rule would pick a remote now.
+  git(root, ['remote', 'rename', 'origin', 'fork']);
+  git(root, ['remote', 'add', 'upstream', upstream]);
+  git(root, ['update-ref', 'refs/remotes/origin/main', base]);
+  git(wt1, ['symbolic-ref', TARGET_REF, 'refs/remotes/fork/main']);
+  assert.equal(syncWorktreeRefs({ roundBase: base, targetBranch: 'main', worktree: wt1 }), null);
+  assert.equal(git(wt1, ['symbolic-ref', TARGET_REF]), 'refs/remotes/fork/main');
+  // The round fetches from the remote the ref names.
+  const moved = commit(upstream, 'routes.py', 'urlpatterns = []\n');
+  assert.equal(await fetchTarget({ targetBranch: 'main', worktree: wt1 }), null);
+  assert.equal(git(wt1, ['rev-parse', TARGET_REF]), moved);
+  // A worktree with no target ref yet, among remotes none of which is
+  // origin: no target is written, and the fetch says why it cannot choose.
+  assert.equal(syncWorktreeRefs({ roundBase: base, targetBranch: 'main', worktree: wt2 }), null);
+  assert.equal(spawnSync('git', ['symbolic-ref', '--quiet', TARGET_REF], { cwd: wt2 }).status, 1);
+  assert.equal(
+    await fetchTarget({ targetBranch: 'main', worktree: wt2 }),
+    'Cannot choose a remote to fetch main from among fork, upstream; name one origin.',
+  );
+});
+
+test('a round fetches its target; a failed fetch says why, and with no remote there is nothing to fetch', async () => {
+  const { root, upstream, wt1, wt2 } = factory();
   syncWorktreeRefs({
     roundBase: git(wt1, ['rev-parse', 'HEAD']),
     targetBranch: 'main',
@@ -177,5 +206,18 @@ test('a round fetches its target; with no remote there is nothing to fetch, and 
     /^Cannot fetch origin\/no-such-branch: /,
   );
   git(root, ['remote', 'remove', 'origin']);
-  assert.equal(await fetchTarget({ targetBranch: 'main', worktree: wt1 }), null);
+  assert.equal(await fetchTarget({ targetBranch: 'main', worktree: wt2 }), null);
+});
+
+test('a fetch that hangs, its helper included, ends at the timeout', async () => {
+  const { root, wt1 } = factory();
+  // A remote whose upload-pack never answers, and leaves a child holding the
+  // pipe, as an ssh stuck connecting does.
+  git(root, ['config', 'remote.origin.uploadpack', 'sh -c "sleep 30 & sleep 30"']);
+  const started = Date.now();
+  assert.equal(
+    await fetchTarget({ targetBranch: 'main', timeoutMs: 300, worktree: wt1 }),
+    'Cannot fetch origin/main: timed out after 1s',
+  );
+  assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started}ms`);
 });

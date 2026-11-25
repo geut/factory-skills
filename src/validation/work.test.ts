@@ -518,7 +518,7 @@ test("a command compares through the worktree's refs, which the target's moving 
 });
 
 test('a worker that moved HEAD off the round base is corrected; one with no history in common with the target runs no command', async () => {
-  const { baseSha, cwd } = repo();
+  const { cwd } = repo();
   writeFileSync(path.join(cwd, 'README.md'), '# demo\nchanged\n');
   // A commit the branch does not descend from, as the worker's own rebase
   // leaves the round's start behind.
@@ -530,15 +530,18 @@ test('a worker that moved HEAD off the round base is corrected; one with no hist
     /uncommitted: HEAD is at [0-9a-f]{40}, not the round's start [0-9a-f]{40}: leave the work uncommitted/,
   );
 
-  // A target the branch shares no history with.
-  git(cwd, ['remote', 'add', 'origin', cwd]);
-  git(cwd, ['update-ref', 'refs/remotes/origin/main', elsewhere]);
+  // Another ticket, whose target shares no history with its branch.
+  const other = repo();
+  git(other.cwd, ['remote', 'add', 'origin', other.cwd]);
+  const orphan = git(other.cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'orphan']);
+  git(other.cwd, ['update-ref', 'refs/remotes/origin/main', orphan]);
+  writeFileSync(path.join(other.cwd, 'README.md'), '# demo\nchanged\n');
   const seen = path.join(mkdtempSync(path.join(process.cwd(), '.scratch-bases-')), 'seen');
   roots.push(path.dirname(seen));
   const unrelated = await workValidator.validate(
     validationContext('work', (snapshot) => {
-      snapshot.execution.worktreePath = cwd;
-      snapshot.execution.worktreeBaseSha = baseSha;
+      snapshot.execution.worktreePath = other.cwd;
+      snapshot.execution.worktreeBaseSha = other.baseSha;
       snapshot.execution.worktreeBaseBranch = 'main';
       snapshot.execution.policy.validation.work.commands = [
         { argv: ['touch', seen], name: 'tests', timeoutMs: 5000 },

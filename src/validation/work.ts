@@ -9,7 +9,7 @@ import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
-import { checkBases, roundBase, syncWorktreeRefs } from './bases.ts';
+import { headCheck, roundBase, syncWorktreeRefs, unreadableHistory } from './bases.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
   errorReport,
@@ -106,27 +106,6 @@ export function collectWorkDiff(
     parts.push(diff.stdout);
   }
   return { diff: parts.filter((part) => part.trim().length > 0).join('\n') };
-}
-
-function commitCheck(cwd: string, baseSha: string): ValidationCheck | { message: string } {
-  const head = git(cwd, ['rev-parse', 'HEAD']);
-  if (head.code !== 0) {
-    return { message: head.stderr.trim() || 'cannot read HEAD' };
-  }
-  const sha = head.stdout.trim();
-  const committed = sha !== baseSha;
-  return {
-    command: null,
-    details: committed
-      ? `HEAD is at ${sha}, not the round's start ${baseSha}: leave the work uncommitted on ${baseSha}, without committing, rebasing, or resetting the branch`
-      : `HEAD matches ${baseSha}`,
-    durationMs: null,
-    exitCode: null,
-    kind: 'policy',
-    name: 'uncommitted',
-    outputExcerpt: null,
-    status: committed ? 'failed' : 'passed',
-  };
 }
 
 type CommandResult = {
@@ -288,7 +267,7 @@ async function validateWork(input: {
     return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
   }
   // The refs the project's checks compare against, current before they run.
-  // A HEAD that left the round's start is the commit check's to correct; a
+  // A HEAD that left the round's start is the HEAD check's to correct; a
   // history that cannot answer stops here, before any command.
   const synced = syncWorktreeRefs({
     roundBase: input.baseSha,
@@ -298,9 +277,9 @@ async function validateWork(input: {
   if (synced !== null) {
     return errorReport(WORK_VALIDATOR_VERSION, synced);
   }
-  const bases = checkBases(input.cwd, input.baseSha);
-  if (bases.kind === 'unreadable') {
-    return errorReport(WORK_VALIDATOR_VERSION, bases.message);
+  const unreadable = unreadableHistory(input.cwd, input.baseSha);
+  if (unreadable !== null) {
+    return errorReport(WORK_VALIDATOR_VERSION, unreadable);
   }
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
@@ -320,7 +299,7 @@ async function validateWork(input: {
       status: present ? 'passed' : 'failed',
     });
   }
-  const commit = commitCheck(input.cwd, input.baseSha);
+  const commit = headCheck(input.cwd, input.baseSha);
   if ('message' in commit) {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
