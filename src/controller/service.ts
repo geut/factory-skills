@@ -778,7 +778,7 @@ export function createFactoryService(input: {
   }
 
   function rebasedCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
-    const read = readRebased(snapshot);
+    const read = readRebased(snapshot, true);
     if (read.kind === 'refused') {
       return { kind: 'refused', message: read.message, reason: 'invalid_state' };
     }

@@ -89,6 +89,23 @@ function recordedRemote(worktree: string, branch: string): string | null {
   return ref.slice(prefix.length, -suffix.length);
 }
 
+// The ref the worktree's target ref names, or would name once written,
+// without writing it: what a read compares against. Null when no remote can
+// be chosen among several, none of them origin, so a check falls back to its
+// own default.
+export function targetRefFor(worktree: string, targetBranch: string): string | null {
+  const current = git(worktree, ['symbolic-ref', '--quiet', TARGET_REF]);
+  if (current.code === 0 && current.stdout.length > 0) {
+    return current.stdout;
+  }
+  const remotes = remotesOf(worktree);
+  const remote = targetRemote(remotes);
+  if (remote === null && remotes.length > 0) {
+    return null;
+  }
+  return remote === null ? `refs/heads/${targetBranch}` : `refs/remotes/${remote}/${targetBranch}`;
+}
+
 // Points the worktree's refs at the ticket's current state; repeating it
 // changes nothing. The target ref is written once, from the remote the
 // repository has then, and kept: a remote added later never moves it to
@@ -108,17 +125,10 @@ export function syncWorktreeRefs(input: {
   if (git(input.worktree, ['symbolic-ref', '--quiet', TARGET_REF]).code === 0) {
     return null;
   }
-  const remotes = remotesOf(input.worktree);
-  const remote = targetRemote(remotes);
-  if (remote === null && remotes.length > 0) {
-    // Several remotes, none of them origin: no target ref, and a check falls
-    // back to its own default.
+  const target = targetRefFor(input.worktree, input.targetBranch);
+  if (target === null) {
     return null;
   }
-  const target =
-    remote === null
-      ? `refs/heads/${input.targetBranch}`
-      : `refs/remotes/${remote}/${input.targetBranch}`;
   const pointed = git(input.worktree, ['symbolic-ref', TARGET_REF, target]);
   return pointed.code === 0
     ? null
@@ -152,11 +162,11 @@ export function headCheck(worktree: string, base: string): ValidationCheck | { m
 // target, which follows the branch rebased onto a newer target or the target
 // merged in. `branched` (where the ticket started) without a target, or when
 // git finds none.
-export function ticketBase(worktree: string, branched: string): string {
-  if (git(worktree, ['rev-parse', '--verify', '--quiet', TARGET_REF]).code !== 0) {
+export function ticketBase(worktree: string, branched: string, target = TARGET_REF): string {
+  if (git(worktree, ['rev-parse', '--verify', '--quiet', target]).code !== 0) {
     return branched;
   }
-  const shared = git(worktree, ['merge-base', 'HEAD', TARGET_REF]);
+  const shared = git(worktree, ['merge-base', 'HEAD', target]);
   return shared.code === 0 && shared.stdout.length > 0 ? shared.stdout : branched;
 }
 
@@ -165,16 +175,20 @@ export function ticketBase(worktree: string, branched: string): string {
 // history with the target. Validation stops on it before any command, since
 // a comparison then would count every file as the ticket's; it is never
 // taken as a clean diff.
-export function unreadableHistory(worktree: string, base: string): string | null {
+export function unreadableHistory(
+  worktree: string,
+  base: string,
+  target = TARGET_REF,
+): string | null {
   const known = git(worktree, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
   if (known.code !== 0) {
     return `The round base ${base.slice(0, 12)} is not a commit in this repository. No project check ran.`;
   }
-  if (git(worktree, ['rev-parse', '--verify', '--quiet', TARGET_REF]).code !== 0) {
+  if (git(worktree, ['rev-parse', '--verify', '--quiet', target]).code !== 0) {
     // No target recorded, as for a repository without a branch to target.
     return null;
   }
-  const shared = git(worktree, ['merge-base', 'HEAD', TARGET_REF]);
+  const shared = git(worktree, ['merge-base', 'HEAD', target]);
   return shared.code === 0
     ? null
     : `HEAD shares no history with the target (${TARGET_REF}): ${shared.stderr || 'git merge-base found none'}. Comparing against it would count every file as the ticket's, so no project check ran.`;

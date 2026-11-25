@@ -10,7 +10,11 @@ import { parseBaseline } from '../validation/wrapup.ts';
 // The pass carried over to the rebased branch, read from git before the
 // event: the reducer checks the pass is still the one read, so a pass that
 // moved on meanwhile is refused rather than overwritten.
-export function readRebased(snapshot: FactorySnapshot):
+export function readRebased(
+  snapshot: FactorySnapshot,
+  // Whether to bring the worktree's refs up to date: the command does, a preview does not.
+  write: boolean,
+):
   | {
       kind: 'carried';
       pass: CarriedPass;
@@ -49,6 +53,7 @@ export function readRebased(snapshot: FactorySnapshot):
     codeRoot: snapshot.execution.policy.codeRoot,
     roundStart: roundStart(snapshot),
     worktree: worktreePath,
+    write,
   });
   return carried.kind === 'refused'
     ? carried
@@ -76,7 +81,7 @@ function sample(files: Array<string>): string {
 export function rebasedPreview(
   snapshot: FactorySnapshot,
 ): { kind: 'preview'; text: string } | { kind: 'refused'; message: string } {
-  const read = readRebased(snapshot);
+  const read = readRebased(snapshot, false);
   if (read.kind === 'refused') {
     return read;
   }

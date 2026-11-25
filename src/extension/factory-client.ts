@@ -178,11 +178,13 @@ export function createFactoryClient(input: {
     };
   }
 
-  // The pull request's pending feedback, through the server, which reads GitHub.
-  async function pendingFeedback(
+  // A read through the server: the body as `schema` parses it, or the
+  // problem it answered with.
+  async function get<T>(
     url: string,
-    key: string,
-  ): Promise<{ problem: string } | z.infer<typeof PendingFeedback>> {
+    route: string,
+    schema: z.ZodType<T>,
+  ): Promise<{ problem: string } | { value: T }> {
     let token: string;
     try {
       token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
@@ -191,7 +193,7 @@ export function createFactoryClient(input: {
     }
     let response: Response;
     try {
-      response = await send(`${url}/v1/tickets/${key}/feedback`, {
+      response = await send(`${url}${route}`, {
         headers: { authorization: `Bearer ${token}` },
         method: 'GET',
       });
@@ -201,9 +203,9 @@ export function createFactoryClient(input: {
       };
     }
     const payload: unknown = await response.json().catch(() => ({}));
-    const listed = PendingFeedback.safeParse(payload);
-    if (response.status === 200 && listed.success) {
-      return listed.data;
+    const parsed = schema.safeParse(payload);
+    if (response.status === 200 && parsed.success) {
+      return { value: parsed.data };
     }
     const problem = ProblemBody.safeParse(payload);
     return {
@@ -213,40 +215,23 @@ export function createFactoryClient(input: {
     };
   }
 
+  // The pull request's pending feedback, through the server, which reads GitHub.
+  async function pendingFeedback(
+    url: string,
+    key: string,
+  ): Promise<{ problem: string } | z.infer<typeof PendingFeedback>> {
+    const read = await get(url, `/v1/tickets/${key}/feedback`, PendingFeedback);
+    return 'problem' in read ? read : read.value;
+  }
+
   // What `/factory retry --rebased` would carry over, through the server,
   // which reads the ticket's git.
   async function rebasedPreview(
     url: string,
     key: string,
   ): Promise<{ problem: string } | z.infer<typeof RebasedRetryPreview>> {
-    let token: string;
-    try {
-      token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
-    } catch {
-      return { problem: `Cannot read ${localTokenPath(input.factoryRoot)}; restart the server.` };
-    }
-    let response: Response;
-    try {
-      response = await send(`${url}/v1/tickets/${key}/retries/rebased`, {
-        headers: { authorization: `Bearer ${token}` },
-        method: 'GET',
-      });
-    } catch (error: unknown) {
-      return {
-        problem: `Cannot reach the factory server at ${url}: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    const payload: unknown = await response.json().catch(() => ({}));
-    const previewed = RebasedRetryPreview.safeParse(payload);
-    if (response.status === 200 && previewed.success) {
-      return previewed.data;
-    }
-    const problem = ProblemBody.safeParse(payload);
-    return {
-      problem:
-        (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
-        `The server answered ${response.status}.`,
-    };
+    const read = await get(url, `/v1/tickets/${key}/retries/rebased`, RebasedRetryPreview);
+    return 'problem' in read ? read : read.value;
   }
 
   // The commands long controller steps are running, by ticket key, from the
