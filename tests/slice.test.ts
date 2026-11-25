@@ -45,6 +45,7 @@ import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
 import { ROUND_BASE_REF, TARGET_REF } from '../src/validation/bases.ts';
+import { captureWrapupState } from '../src/validation/wrapup.ts';
 import { git, initRepo } from './git-repo.ts';
 
 const roots: Array<string> = [];
@@ -2919,6 +2920,124 @@ test('a ticket keeps the communication settings it started with; a later ticket 
 });
 
 // A code host whose open pull request has one review thread to address.
+test('a wrap-up pass paused on the target’s files after an authorized rebase carries over with retry --rebased, and the next round starts', async () => {
+  const harness = await reachWrapup({ limits: { feedbackRounds: 1 } }, () =>
+    codeHostWithFeedback([]),
+  );
+  const { branch, db, runtime, service, work, wrapup } = harness;
+  // Only a paused or failed pass is carried over, and a dry run is of one.
+  assert.match(
+    await service.command('retry proj-123 --rebased'),
+    /proj-123 is wrapup\/active; --rebased carries over a wrap-up pass that is paused or failed\./,
+  );
+  assert.match(
+    await service.command('retry proj-123 --dry-run'),
+    /^Usage: \/factory retry <ticket> \[--rebased \[--dry-run\]\]$/,
+  );
+  const codeRoot = path.resolve(wrapup.cwd, '../../..');
+  const branched = String(
+    db.prepare('SELECT worktree_base_sha FROM ticket_executions WHERE is_current = 1').get()?.[
+      'worktree_base_sha'
+    ],
+  );
+  // The target moves on by 40 files, and a person rebases the ticket onto it.
+  mkdirSync(path.join(codeRoot, 'upstream'));
+  for (let index = 0; index < 40; index += 1) {
+    writeFileSync(path.join(codeRoot, `upstream/file${index}.ts`), `${index}\n`);
+  }
+  git(codeRoot, ['add', 'upstream']);
+  git(codeRoot, ['commit', '-qm', 'upstream']);
+  git(work.cwd, ['stash', '-q', '-u']);
+  git(work.cwd, ['rebase', '-q', 'main']);
+  git(work.cwd, ['stash', 'pop', '-q']);
+  // The pass started before passes kept their compare base: its baseline was
+  // taken against where the ticket branched.
+  const legacy = {
+    ...captureWrapupState({
+      baseBranch: 'main',
+      baseSha: branched,
+      branch,
+      codeRoot,
+      factoryRoot: path.resolve(wrapup.cwd, '../..'),
+      ticketDir: String(
+        db.prepare('SELECT factory_dir FROM ticket_executions WHERE is_current = 1').get()?.[
+          'factory_dir'
+        ],
+      ),
+      worktree: work.cwd,
+    }),
+    boxes: [],
+  };
+  const { compareBase: _dropped, ...withoutBase } = legacy;
+  db.prepare(
+    "UPDATE agent_runs SET lifecycle_json = json_set(lifecycle_json, '$.baseline', ?) WHERE id = ?",
+  ).run(JSON.stringify(withoutBase), wrapup.runId);
+  // Its validation demands every upstream file, and the agent cannot list
+  // them as its own: the pass pauses.
+  const output = handoff(wrapup.cwd, branch);
+  runtime.emit(wrapup.runId, { kind: 'subagent_done', output, usage: sampleUsage(30) });
+  await waitFor(() => launchesOf(runtime, 'wrapup').length === 2);
+  assert.match(
+    launchesOf(runtime, 'wrapup')[1]?.prompt ?? '',
+    /## Files does not list changed path upstream\/file0\.ts/,
+  );
+  runtime.emit(launchesOf(runtime, 'wrapup')[1]?.runId ?? wrapup.runId, {
+    kind: 'subagent_done',
+    output,
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('paused'));
+
+  // A dry run says what would change, and changes nothing.
+  const preview = await service.command('retry proj-123 --rebased --dry-run');
+  assert.match(preview, /dropped as the target's own \(40\): upstream\/file0\.ts/);
+  assert.match(preview, /kept \(1\): change\.txt/);
+  assert.match(preview, /Nothing changed\./);
+  assert.match(service.status('proj-123'), /paused/);
+
+  // Carried over, the pass validates with the ticket's own path only.
+  assert.match(await service.command('retry proj-123 --rebased'), /status: ready_for_handoff/);
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  // The ticket's events keep the pass as it was, for the record, with what
+  // carrying it over changed.
+  const recorded: unknown = JSON.parse(
+    String(
+      db.prepare("SELECT payload_json FROM events WHERE kind = 'wrapup_pass_carried'").get()?.[
+        'payload_json'
+      ],
+    ),
+  );
+  assert.ok(typeof recorded === 'object' && recorded !== null);
+  assert.ok('previousBaseline' in recorded && 'carried' in recorded);
+  assert.equal(JSON.parse(String(recorded.previousBaseline)).compareBase, undefined);
+  assert.deepEqual(
+    { ...(recorded.carried as object) },
+    {
+      compareBase: git(codeRoot, ['rev-parse', 'main']),
+      dropped: 40,
+      head: legacy.head,
+      kept: 1,
+      previousCompareBase: null,
+      previousHead: legacy.head,
+    },
+  );
+  // The pass's first run keeps the baseline it started with.
+  assert.match(
+    String(
+      db.prepare('SELECT lifecycle_json FROM agent_runs WHERE id = ?').get(wrapup.runId)?.[
+        'lifecycle_json'
+      ],
+    ),
+    /upstream\/file0\.ts/,
+  );
+  // And the pull request's feedback starts the next round.
+  await service.syncPullRequests();
+  git(work.cwd, ['add', '-A']);
+  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
+  assert.match(await service.command('feedback proj-123'), /stage: work/);
+  await closeWhenIdle(db);
+});
+
 function codeHostWithFeedback(sinces: Array<string>): CodeHost {
   const found: Array<string> = [];
   const host = codeHostWith('open', found);

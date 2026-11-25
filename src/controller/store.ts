@@ -15,6 +15,7 @@ import {
   type ActionId,
   type ActionRecord,
   type Actor,
+  type CarriedRecord,
   type AttentionRecord,
   type ControllerEvent,
   type ControllerResponse,
@@ -475,6 +476,39 @@ export function recordCard(db: DatabaseSync, card: string, now: string): number 
     )
     .run(id, `card:${id}`, JSON.stringify({ card }), now, now);
   return Number(inserted.lastInsertRowid);
+}
+
+// A wrap-up pass carried over to a rebased branch: kept as a domain event on
+// the ticket for audit, with the baseline it replaced, who asked, and what
+// changed.
+export function recordCarriedPass(
+  db: DatabaseSync,
+  input: {
+    actor: Actor | null;
+    carried: CarriedRecord;
+    executionId: ExecutionId;
+    now: string;
+    previousBaseline: string;
+    runId: RunId;
+  },
+): void {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO events
+      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json,
+       processing_status, received_at, processed_at, actor, actor_on_behalf_of)
+     VALUES (?, ?, ?, 'domain', 'controller', 'wrapup_pass_carried', ?, ?, 'processed', ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.executionId,
+    input.runId,
+    `carried:${id}`,
+    JSON.stringify({ carried: input.carried, previousBaseline: input.previousBaseline }),
+    input.now,
+    input.now,
+    input.actor?.client ?? null,
+    input.actor?.onBehalfOf ?? null,
+  );
 }
 
 // A process the stray sweep stopped, or failed to stop, before one of this
@@ -1382,6 +1416,13 @@ function updateRun(db: DatabaseSync, run: RunRecord, now: string): void {
     now,
     run.id,
   );
+  // A finished run's lifecycle stays as it ended, but for the baseline its
+  // pass compares against: `/factory retry --rebased` carries it over.
+  if (run.status === 'terminal') {
+    db.prepare(
+      `UPDATE agent_runs SET lifecycle_json = ?, updated_at = ? WHERE id = ? AND status = 'terminal'`,
+    ).run(lifecycleJson(run), now, run.id);
+  }
 }
 
 function insertAttention(
@@ -1640,6 +1681,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
       return loadCurrentByTicketKey(db, event.ticket.id);
     case 'reply':
     case 'retry':
+    case 'retry_rebased':
     case 'complete':
     case 'feedback':
     case 'pull_request_closed':
@@ -1691,6 +1733,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'launch_failed':
     case 'reconciled':
     case 'stop':
+    case 'retry_rebased':
       return event.runId;
     case 'start':
     case 'reply':

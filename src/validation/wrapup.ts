@@ -185,7 +185,7 @@ function worktreeChanges(worktree: string, baseSha: string): Record<string, stri
   return changes;
 }
 
-function remoteRefs(worktree: string, branch: string): Record<string, string> {
+export function remoteRefs(worktree: string, branch: string): Record<string, string> {
   const refs: Record<string, string> = {};
   const listed = git(worktree, [
     'for-each-ref',
@@ -201,7 +201,7 @@ function remoteRefs(worktree: string, branch: string): Record<string, string> {
   return refs;
 }
 
-function refSha(cwd: string, ref: string): string | null {
+export function refSha(cwd: string, ref: string): string | null {
   const result = git(cwd, ['rev-parse', '--verify', '--quiet', ref]);
   return result.code === 0 ? result.stdout.trim() : null;
 }

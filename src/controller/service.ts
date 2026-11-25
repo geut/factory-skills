@@ -17,6 +17,7 @@ import {
   writeFeedbackTask,
 } from '../actions/feedback-round.ts';
 import { archiveLeftoverDir, archiveStamp } from '../actions/leftovers.ts';
+import { readRebased, rebasedPreview } from '../actions/rebased-retry.ts';
 import { listProcesses } from '../actions/strays.ts';
 import { pullRequestLookup } from '../actions/wrapup.ts';
 import { pullRequestsAllowed, readFactoryConfig } from '../config.ts';
@@ -94,6 +95,7 @@ import {
   loadSnapshotByExecution,
   loadSnapshotByRun,
   recordCard,
+  recordCarriedPass,
   requeueOrphanedPanes,
   requeueOrphanedTrackerUpdates,
   requeueOrphanedWorktrees,
@@ -150,6 +152,9 @@ export type FactoryCommands = {
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
+  // Carries a paused wrap-up pass over to a branch a person rebased, then
+  // validates again.
+  retryRebased: (key: string, options: CommandOptions) => CommandOutcome;
   start: (source: TicketSource, options: CommandOptions) => Promise<CommandOutcome>;
   // Stops one running agent by its run id; the ticket pauses.
   stopRun: (runId: string, options: CommandOptions) => CommandOutcome;
@@ -765,6 +770,55 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
+  function rebasedCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
+    const read = readRebased(snapshot);
+    if (read.kind === 'refused') {
+      return { kind: 'refused', message: read.message, reason: 'invalid_state' };
+    }
+    const { pass, previousBaseline } = read;
+    const key = `retry-rebased:${snapshot.execution.version}`;
+    const applied = apply(
+      {
+        ...(options.actor === null ? {} : { actor: options.actor }),
+        baseline: JSON.stringify(pass.baseline),
+        carried: {
+          compareBase: pass.baseline.compareBase ?? '',
+          dropped: pass.dropped.length,
+          head: pass.baseline.head,
+          kept: pass.kept.length,
+          previousCompareBase: previousBaseline.compareBase,
+          previousHead: previousBaseline.head,
+        },
+        idempotencyKey: key,
+        kind: 'retry_rebased',
+        previousBaseline: read.previous,
+        runId: read.runId,
+        ticketId: snapshot.ticket.id,
+      },
+      dedupe(options, `${key}:${snapshot.execution.id}`),
+      'command',
+      options.actor,
+    );
+    if (applied.response.kind !== 'rejected' && !applied.response.message.startsWith('Duplicate')) {
+      recordCarriedPass(db, {
+        actor: options.actor,
+        carried: {
+          compareBase: pass.baseline.compareBase ?? '',
+          dropped: pass.dropped.length,
+          head: pass.baseline.head,
+          kept: pass.kept.length,
+          previousCompareBase: previousBaseline.compareBase,
+          previousHead: previousBaseline.head,
+        },
+        executionId: snapshot.execution.id,
+        now: new Date().toISOString(),
+        previousBaseline: read.previous,
+        runId: read.runId,
+      });
+    }
+    return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
   // The human marks a ready-for-handoff ticket done. Repeating it is a no-op.
   function completeCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
     const applied = apply(
@@ -954,6 +1008,22 @@ export function createFactoryService(input: {
       return snapshot;
     }
     const result = retryCommitted(snapshot, piCommand);
+    if (result.kind === 'refused') {
+      return result.message;
+    }
+    await drain();
+    return report(result.applied, ref);
+  }
+
+  async function retryRebased(ref: string, dryRun: boolean): Promise<string> {
+    const snapshot = requireSnapshot(ref);
+    if (typeof snapshot === 'string') {
+      return snapshot;
+    }
+    if (dryRun) {
+      return rebasedPreview(snapshot);
+    }
+    const result = rebasedCommitted(snapshot, piCommand);
     if (result.kind === 'refused') {
       return result.message;
     }
@@ -1193,6 +1263,7 @@ export function createFactoryService(input: {
       return accepted(await rerunCommitted(snapshot, options));
     },
     retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
+    retryRebased: (key, options) => byKey(key, (snapshot) => rebasedCommitted(snapshot, options)),
     start: async (source, options) => accepted(await startCommitted(source, options)),
     stopRun: (id, options) => {
       const snapshot = loadSnapshotByRun(db, runIdOf(id));
@@ -1244,7 +1315,9 @@ export function createFactoryService(input: {
         case 'reply':
           return reply(parsed.ref, parsed.answer);
         case 'retry':
-          return retry(parsed.ref);
+          return parsed.mode === 'retry'
+            ? retry(parsed.ref)
+            : retryRebased(parsed.ref, parsed.mode === 'rebased_dry_run');
         case 'complete':
           return complete(parsed.ref);
         case 'feedback':

@@ -123,12 +123,28 @@ const replyToTicket = defineRoute({
 });
 
 const retryTicket = defineRoute({
-  handler: ({ actor, context, headers, params }) =>
-    answer(context.commands.retry(params.key, options(actor, headers))),
+  handler: ({ actor, body, context, headers, params }) =>
+    answer(
+      body?.rebased === true
+        ? context.commands.retryRebased(params.key, options(actor, headers))
+        : context.commands.retry(params.key, options(actor, headers)),
+    ),
   method: 'POST',
   operationId: 'retryTicket',
   path: '/v1/tickets/{key}/retries',
-  request: { headers: CommandHeaders, params: TicketParams },
+  request: {
+    body: z
+      .object({
+        rebased: z.boolean().optional().meta({
+          description:
+            "A person rebased the ticket's branch onto a newer target: carry the paused wrap-up pass over to it, dropping the paths that are the target's own, then validate again. A commit the rebase changed is refused.",
+        }),
+      })
+      .optional()
+      .meta({ id: 'RetryTicket' }),
+    headers: CommandHeaders,
+    params: TicketParams,
+  },
   responses: accepted,
   scope: 'act',
   summary: 'Retry the step that failed for infrastructure reasons',

@@ -1587,6 +1587,16 @@
             "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryTicket"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "The command is committed.",
@@ -2193,6 +2203,15 @@
         "required": [
           "answer"
         ]
+      },
+      "RetryTicket": {
+        "type": "object",
+        "properties": {
+          "rebased": {
+            "description": "A person rebased the ticket's branch onto a newer target: carry the paused wrap-up pass over to it, dropping the paths that are the target's own, then validate again. A commit the rebase changed is refused.",
+            "type": "boolean"
+          }
+        }
       },
       "CancelTicket": {
         "type": "object",
