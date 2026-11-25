@@ -8,6 +8,7 @@ import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { runOutput } from '../stages/output.ts';
 import { latestReviews } from '../stages/review/parse.ts';
 import { diffNotes } from '../stages/wrapup/notes.ts';
+import { roundBase } from '../validation/bases.ts';
 import { collectWorkDiff } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 
@@ -87,8 +88,7 @@ export async function openHandoffPane(
         // Wrap-up may have committed the work, so the diff runs from the
         // commit the worktree started at; after a feedback round, from the
         // commit the round started at, so it shows only what the round did.
-        const { roundBaseSha, worktreeBaseSha } = snapshot.execution;
-        const collected = collectWorkDiff(action.cwd, roundBaseSha ?? worktreeBaseSha ?? 'HEAD');
+        const collected = collectWorkDiff(action.cwd, roundBase(snapshot) ?? 'HEAD');
         const file = `${sessionFile}.diff`;
         mkdirSync(path.dirname(file), { recursive: true });
         const patch = 'diff' in collected ? collected.diff : `# ${collected.message}\n`;

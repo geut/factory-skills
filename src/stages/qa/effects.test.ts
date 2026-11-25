@@ -77,6 +77,8 @@ function validate(
     proof?: string;
     // Collects the commands the validator reports as it starts each one.
     reported?: Array<string>;
+    // The round's start, when HEAD has moved off it; else HEAD.
+    roundBase?: string;
     typecheck?: WorkCommand;
     // The reply of the task's last work run.
     workReply?: string;
@@ -106,6 +108,11 @@ function validate(
         task(snapshot, '01').taskFile = '01-task.md';
         snapshot.execution.factoryDir = factoryDir;
         snapshot.execution.worktreePath = cwd;
+        // The commit the ticket branched from: QA leaves its tests uncommitted
+        // on it.
+        snapshot.execution.worktreeBaseSha =
+          input.roundBase ??
+          spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim();
         snapshot.execution.policy.stages['qa'] = {
           commands: [input.e2e ?? command('e2e')],
           enabled: true,
@@ -153,6 +160,22 @@ test('QA runs every work command after its own, and hands on both groups of chec
     report.status === 'passed' ? report.detail.qaChecks.map((check) => check.name) : null,
     ['test plan', 'test-gap ledger', 'AC1 covered', 'e2e'],
   );
+});
+
+test('a commit QA made on top of the round base is QA’s to undo, before any command runs', async () => {
+  const cwd = worktree();
+  const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim();
+  // QA committed the worker's change with its own: HEAD still descends from
+  // the base, and the diff against HEAD would no longer show either.
+  spawnSync('git', ['-c', 'commit.gpgsign=false', 'commit', '-qam', 'qa'], { cwd });
+  const reported: Array<string> = [];
+  const report = await validate(cwd, { reported, roundBase: base });
+  assert.equal(report.status === 'failed' && report.detail.reason, 'incomplete');
+  assert.match(
+    report.status === 'failed' ? report.failures.join('\n') : '',
+    /^HEAD is at [0-9a-f]{40}, not the round's start [0-9a-f]{40}: leave the work uncommitted/,
+  );
+  assert.deepEqual(reported, []);
 });
 
 test('a lint failure in a file QA wrote is QA’s to correct', async () => {

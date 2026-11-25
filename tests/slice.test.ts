@@ -44,6 +44,7 @@ import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
+import { ROUND_BASE_REF } from '../src/validation/bases.ts';
 import { git, initRepo } from './git-repo.ts';
 
 const roots: Array<string> = [];
@@ -2993,6 +2994,9 @@ test('a feedback round takes the pull request feedback back through work, review
   // Its report answers the round's items, and the planned task's answered none.
   assert.deepEqual(roundWork?.report, { feedbackItems: ['F1', 'F2'] });
   assert.deepEqual(work.report, { feedbackItems: [] });
+  // The round's agent finds its round's start, the pull request's head, in
+  // the worktree's own ref, and the target beside it.
+  assert.equal(git(work.cwd, ['rev-parse', ROUND_BASE_REF]), git(work.cwd, ['rev-parse', 'HEAD']));
   // The round closes the earlier handoff's own pane, and only that one.
   await waitFor(() => runtime.closedPanes.length > 0);
   assert.deepEqual(runtime.closedPanes, [sessionPane]);

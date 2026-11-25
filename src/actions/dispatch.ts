@@ -38,6 +38,7 @@ import { effects } from '../stages/effects.ts';
 import { stages, stageTools } from '../stages/index.ts';
 import { contextGaps } from '../stages/plan/context.ts';
 import { readPlanLinks, type PlanLinks } from '../stages/plan/links.ts';
+import { roundBase, syncWorktreeRefs } from '../validation/bases.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
@@ -352,6 +353,19 @@ async function launch(
         `${snapshot.ticket.displayRef}: the stray process sweep failed: ${messageOf(error)}`,
       );
     });
+  }
+  // The refs a check the agent runs compares against, current before it
+  // starts. A failure to write them never holds up the run.
+  const base = roundBase(snapshot);
+  if (snapshot.execution.worktreePath !== null && base !== null) {
+    const synced = syncWorktreeRefs({
+      roundBase: base,
+      targetBranch: snapshot.execution.worktreeBaseBranch,
+      worktree: snapshot.execution.worktreePath,
+    });
+    if (synced !== null) {
+      input.notify(`${snapshot.ticket.displayRef}: ${synced}`);
+    }
   }
   let projectConfig: ProjectConfig;
   try {

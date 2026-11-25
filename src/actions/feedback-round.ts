@@ -17,6 +17,7 @@ import {
   selectFeedback,
 } from '../stages/feedback.ts';
 import { stageEnabled } from '../stages/flow.ts';
+import { fetchTarget } from '../validation/bases.ts';
 
 // Prepares a feedback round on a ticket's open pull request: reads the
 // feedback posted since the factory's last push and renders the round's task
@@ -26,6 +27,9 @@ import { stageEnabled } from '../stages/flow.ts';
 export type PreparedRound = {
   // What the controller keeps about the round.
   feedback: FeedbackRound;
+  // Why the target could not be fetched, or null: the round goes on, and
+  // its checks compare against the target as last fetched.
+  fetchFailure: string | null;
   round: number;
   startHead: string;
   // Where the task file goes, relative to the ticket directory, and its text.
@@ -164,6 +168,13 @@ export async function prepareFeedbackRound(input: {
     return refuse(noneLeft(input.pullRequestUrl, feedback));
   }
   const round = feedbackRounds(input.snapshot.tasks) + 1;
+  // The pull request has sat in review while the target moved, and may have
+  // been rebased onto it: the target is fetched, so the round's checks find
+  // the merge-base the branch has now.
+  const fetchFailure =
+    execution.worktreeBaseBranch === null
+      ? null
+      : await fetchTarget({ targetBranch: execution.worktreeBaseBranch, worktree });
   return {
     feedback: roundRecord({
       dismissed: chosen.dismissed,
@@ -172,6 +183,7 @@ export async function prepareFeedbackRound(input: {
       pullRequestUrl: input.pullRequestUrl,
       round,
     }),
+    fetchFailure,
     round,
     startHead: head,
     taskFile: feedbackTaskFile(round),

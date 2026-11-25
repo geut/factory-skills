@@ -9,6 +9,7 @@ import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
+import { headCheck, roundBase, syncWorktreeRefs, unreadableHistory } from './bases.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
 import {
   errorReport,
@@ -105,25 +106,6 @@ export function collectWorkDiff(
     parts.push(diff.stdout);
   }
   return { diff: parts.filter((part) => part.trim().length > 0).join('\n') };
-}
-
-function commitCheck(cwd: string, baseSha: string): ValidationCheck | { message: string } {
-  const head = git(cwd, ['rev-parse', 'HEAD']);
-  if (head.code !== 0) {
-    return { message: head.stderr.trim() || 'cannot read HEAD' };
-  }
-  const sha = head.stdout.trim();
-  const committed = sha !== baseSha;
-  return {
-    command: null,
-    details: committed ? `unexpected commit ${sha}` : `HEAD matches ${baseSha}`,
-    durationMs: null,
-    exitCode: null,
-    kind: 'policy',
-    name: 'uncommitted',
-    outputExcerpt: null,
-    status: committed ? 'failed' : 'passed',
-  };
 }
 
 type CommandResult = {
@@ -261,6 +243,8 @@ async function validateWork(input: {
   reportCommand: CommandReporter;
   // The tests the worker proposed, for the commands.
   selection: ParsedSelection;
+  // The branch the pull request targets, for the worktree's target ref.
+  targetBranch: string | null;
 }): Promise<WorkValidationReport> {
   // A run without a report has no selection to give the commands, nor
   // answers for review: it is corrected before anything runs.
@@ -282,6 +266,21 @@ async function validateWork(input: {
     ];
     return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
   }
+  // The refs the project's checks compare against, current before they run.
+  // A HEAD that left the round's start is the HEAD check's to correct; a
+  // history that cannot answer stops here, before any command.
+  const synced = syncWorktreeRefs({
+    roundBase: input.baseSha,
+    targetBranch: input.targetBranch,
+    worktree: input.cwd,
+  });
+  if (synced !== null) {
+    return errorReport(WORK_VALIDATOR_VERSION, synced);
+  }
+  const unreadable = unreadableHistory(input.cwd, input.baseSha);
+  if (unreadable !== null) {
+    return errorReport(WORK_VALIDATOR_VERSION, unreadable);
+  }
   const collected = collectWorkDiff(input.cwd);
   if ('message' in collected) {
     return errorReport(WORK_VALIDATOR_VERSION, collected.message);
@@ -300,11 +299,16 @@ async function validateWork(input: {
       status: present ? 'passed' : 'failed',
     });
   }
-  const commit = commitCheck(input.cwd, input.baseSha);
+  const commit = headCheck(input.cwd, input.baseSha);
   if ('message' in commit) {
     return errorReport(WORK_VALIDATOR_VERSION, commit.message);
   }
   checks.push(commit);
+  // Work leaves its changes uncommitted on the round's start: a commit, a
+  // rebase, or a reset is corrected before any command runs on it.
+  if (commit.status === 'failed') {
+    return failedReport(WORK_VALIDATOR_VERSION, checks, failuresOf(checks), null);
+  }
   // A selection the worker got wrong is corrected before the commands run
   // on it.
   const { selection } = input;
@@ -362,8 +366,9 @@ async function validateWork(input: {
 export const workValidator: Validator<'work'> = {
   leaseMs: (snapshot) => validationLeaseMs(snapshot.execution.policy.validation.work.commands),
   validate: ({ deps, run, session, snapshot }) => {
-    const { factoryDir, policy, roundBaseSha, worktreeBaseSha, worktreePath } = snapshot.execution;
-    if (worktreePath === null || worktreeBaseSha === null) {
+    const { factoryDir, policy, worktreeBaseBranch, worktreePath } = snapshot.execution;
+    const base = roundBase(snapshot);
+    if (worktreePath === null || base === null) {
       return Promise.resolve(errorReport(WORK_VALIDATOR_VERSION, 'Worktree is missing.'));
     }
     const task = snapshot.tasks.find((item) => item.taskId === session.taskId) ?? null;
@@ -372,7 +377,7 @@ export const workValidator: Validator<'work'> = {
       // A feedback round may decline every item and change nothing; review
       // judges each item either way.
       allowsEmptyDiff: round !== null || allowsEmptyDiff(snapshot.ticket.labels, policy.labels.map),
-      baseSha: round === null ? worktreeBaseSha : (roundBaseSha ?? worktreeBaseSha),
+      baseSha: base,
       commands: policy.validation.work.commands,
       // Read for review; work itself does not check them.
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
@@ -382,6 +387,7 @@ export const workValidator: Validator<'work'> = {
       reportCommand: deps.reportCommand,
       // The selection as of the run validated: a retry of it gets the same.
       selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),
+      targetBranch: worktreeBaseBranch,
     });
   },
   version: WORK_VALIDATOR_VERSION,

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
 import { ignoreCommands, type CommandReporter } from '../controller/command-progress.ts';
+import { targetFetchArgs, targetRemote } from '../validation/bases.ts';
 import { runCommand } from '../validation/work.ts';
 import { archiveLeftoverDir, archivePath } from './leftovers.ts';
 
@@ -55,8 +56,8 @@ export function resolveBase(codeRoot: string): Base | WorktreeFailure {
     return { kind: 'failed', message: remotes.stderr.trim() || 'cannot list git remotes' };
   }
   const names = remotes.stdout.split('\n').filter((name) => name.length > 0);
-  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : undefined;
-  if (remote === undefined) {
+  const remote = targetRemote(names);
+  if (remote === null) {
     if (names.length > 1) {
       return {
         kind: 'failed',
@@ -82,11 +83,7 @@ export function resolveBase(codeRoot: string): Base | WorktreeFailure {
     };
   }
   const ref = `refs/remotes/${remote}/${named}`;
-  const fetched = git(
-    codeRoot,
-    ['fetch', '--no-tags', remote, `+refs/heads/${named}:${ref}`],
-    NETWORK_TIMEOUT_MS,
-  );
+  const fetched = git(codeRoot, targetFetchArgs(remote, named), NETWORK_TIMEOUT_MS);
   if (fetched.code !== 0) {
     return {
       kind: 'failed',

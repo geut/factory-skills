@@ -889,6 +889,11 @@ export function createFactoryService(input: {
       if (posted.length > 0) {
         notify(posted);
       }
+      if (prepared.fetchFailure !== null) {
+        notify(
+          `${snapshot.ticket.displayRef}: ${prepared.fetchFailure}. The round's checks compare against the target as last fetched.`,
+        );
+      }
     }
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
