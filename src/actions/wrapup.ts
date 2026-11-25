@@ -7,8 +7,9 @@ import type { CodeHost } from '../ports/code-host.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
 import { runOutput } from '../stages/output.ts';
 import { latestReviews } from '../stages/review/parse.ts';
+import { passCompareBase } from '../stages/wrapup/effects.ts';
 import { diffNotes } from '../stages/wrapup/notes.ts';
-import { roundStart, ticketBase } from '../validation/bases.ts';
+import { roundStart } from '../validation/bases.ts';
 import { collectWorkDiff } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 
@@ -85,14 +86,16 @@ export async function openHandoffPane(
   for (let attempt = 1; attempt <= action.maxAttempts; attempt += 1) {
     try {
       if (action.kind === 'open_diff') {
-        // Wrap-up may have committed the work, so the diff runs from where
-        // the ticket's changes begin, its merge-base with the target, which
-        // follows a rebase onto a newer one; after a feedback round, from the
-        // commit the round started at, so it shows only what the round did.
-        const { worktreeBaseSha } = snapshot.execution;
+        // Wrap-up may have committed the work, so the diff runs from the
+        // commit the pass checked ## Files against: the merge-base with the
+        // target when it started, which follows a rebase onto a newer one.
+        // After a feedback round, from the commit the round started at, so it
+        // shows only what the round did.
         const from =
           roundStart(snapshot) ??
-          (worktreeBaseSha === null ? 'HEAD' : ticketBase(action.cwd, worktreeBaseSha));
+          passCompareBase(snapshot) ??
+          snapshot.execution.worktreeBaseSha ??
+          'HEAD';
         const collected = collectWorkDiff(action.cwd, from);
         const file = `${sessionFile}.diff`;
         mkdirSync(path.dirname(file), { recursive: true });

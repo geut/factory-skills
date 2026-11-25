@@ -3,7 +3,12 @@ import { inspectWrapupInput } from '../../actions/wrapup-input.ts';
 import { factoryRootOf, ticketDirOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import type { ChecklistItem } from '../../ports/tracker.ts';
-import { roundBase, syncWorktreeRefs, ticketBase } from '../../validation/bases.ts';
+import {
+  roundStart,
+  syncWorktreeRefs,
+  ticketBase,
+  unreadableHistory,
+} from '../../validation/bases.ts';
 import { captureWrapupState, parseBaseline } from '../../validation/wrapup.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import { qaPaths, testPlan } from '../qa/criteria.ts';
@@ -37,6 +42,13 @@ export async function readIssueBoxes(read: () => Promise<Array<ChecklistItem> | 
 function wrapupRuns(snapshot: FactorySnapshot) {
   const session = snapshot.sessions.find((item) => item.stage === 'wrapup') ?? null;
   return session === null ? [] : snapshot.runs.filter((run) => run.sessionId === session.id);
+}
+
+// The commit the latest wrap-up pass compared the worktree against, or null
+// before a pass, or for one stored before passes kept it.
+export function passCompareBase(snapshot: FactorySnapshot): string | null {
+  const stored = wrapupRuns(snapshot).findLast((run) => run.baseline !== null)?.baseline ?? null;
+  return stored === null ? null : (parseBaseline(stored)?.compareBase ?? null);
 }
 
 // Checks the wrap-up input outside the controller transaction, so the reducer
@@ -73,13 +85,22 @@ export async function prepareWrapupInput({
     }
     // The pass compares against the merge-base with the target: after a
     // person rebased the branch onto a newer target, the target's own changes
-    // are not the ticket's paths.
-    const base = roundBase(snapshot) ?? worktreeBaseSha;
-    syncWorktreeRefs({
-      roundBase: base,
+    // are not the ticket's paths. It rests on the worktree's refs, so a
+    // failure to write them, or a history that shares none with the target,
+    // stops the pass here rather than leave it comparing against a base the
+    // rebase left behind.
+    const synced = syncWorktreeRefs({
+      roundBase: roundStart(snapshot) ?? worktreeBaseSha,
       targetBranch: snapshot.execution.worktreeBaseBranch,
       worktree: worktreePath,
     });
+    if (synced !== null) {
+      return { kind: 'failed', message: synced };
+    }
+    const unreadable = unreadableHistory(worktreePath, roundStart(snapshot) ?? worktreeBaseSha);
+    if (unreadable !== null) {
+      return { kind: 'failed', message: unreadable };
+    }
     try {
       baseline = JSON.stringify({
         ...captureWrapupState({

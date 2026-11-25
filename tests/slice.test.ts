@@ -44,7 +44,7 @@ import { CONTEXT_SECTIONS } from '../src/stages/plan/context.ts';
 import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
-import { ROUND_BASE_REF } from '../src/validation/bases.ts';
+import { ROUND_BASE_REF, TARGET_REF } from '../src/validation/bases.ts';
 import { git, initRepo } from './git-repo.ts';
 
 const roots: Array<string> = [];
@@ -1237,6 +1237,19 @@ test('an approving review marks the task done and launches one wrap-up run', asy
     .prepare('SELECT status, validator_version FROM validation_runs WHERE run_id = ?')
     .get(review.runId);
   assert.deepEqual({ ...(validation ?? {}) }, { status: 'passed', validator_version: 'review.v1' });
+  await closeWhenIdle(db);
+});
+
+test('a wrap-up pass whose branch shares no history with the target stops before it takes a baseline', async () => {
+  const { db, review, runtime, service, work } = await reachReview();
+  // A person rewrote the branch's history apart from the target's.
+  const orphan = git(work.cwd, ['commit-tree', 'HEAD^{tree}', '-m', 'elsewhere']);
+  git(work.cwd, ['update-ref', 'refs/heads/elsewhere', orphan]);
+  git(work.cwd, ['symbolic-ref', TARGET_REF, 'refs/heads/elsewhere']);
+  const approval = reviewOutput('approve', minorFinding);
+  runtime.emit(review.runId, { kind: 'subagent_done', output: approval, usage: sampleUsage() });
+  await waitFor(() => service.status('proj-123').includes('shares no history with the target'));
+  assert.equal(launchesOf(runtime, 'wrapup').length, 0);
   await closeWhenIdle(db);
 });
 
