@@ -40,20 +40,33 @@ export function feedbackTaskFile(round: number): string {
   return `feedback/${round}/task.md`;
 }
 
-// An item's ids are F1..Fn in order; the operator's note comes last.
-export type RoundItem = { feedback: FeedbackItem; id: string } | { id: string; note: string };
+// An item's ids are F1..Fn in order: the pull request's feedback, then what
+// a rebase or merge changed since the handoff, then the operator's note.
+export type RoundItem =
+  | { feedback: FeedbackItem; id: string; kind: 'feedback' }
+  | { id: string; kind: 'note'; note: string }
+  // The branch's history changed since the handoff, before the round starts:
+  // a resolution no one reviewed. `detail` shows it, when git still can.
+  | { detail: string | null; id: string; kind: 'rewrite'; summary: string };
+
+export type RoundRewrite = { detail: string | null; summary: string };
 
 export function roundItems(
   selected: ReadonlyArray<FeedbackItem>,
   note: string | null,
+  rewrite: RoundRewrite | null = null,
 ): Array<RoundItem> {
   const items: Array<RoundItem> = selected.map((item, index) => ({
     feedback: item,
     id: `F${index + 1}`,
+    kind: 'feedback',
   }));
+  if (rewrite !== null) {
+    items.push({ ...rewrite, id: `F${items.length + 1}`, kind: 'rewrite' });
+  }
   return note === null || note.trim().length === 0
     ? items
-    : [...items, { id: `F${items.length + 1}`, note: note.trim() }];
+    : [...items, { id: `F${items.length + 1}`, kind: 'note', note: note.trim() }];
 }
 
 const SUMMARY_LIMIT = 160;
@@ -69,8 +82,11 @@ function firstLine(text: string): string {
 
 // The one-line criterion for an item.
 function criterion(item: RoundItem): string {
-  if ('note' in item) {
+  if (item.kind === 'note') {
     return `${item.id}: the operator's note: ${firstLine(item.note)}`;
+  }
+  if (item.kind === 'rewrite') {
+    return `${item.id}: the branch's history changed since the handoff: ${firstLine(item.summary)}`;
   }
   const { feedback } = item;
   switch (feedback.kind) {
@@ -101,8 +117,19 @@ function quoted(author: string, body: string, url: string | null): Array<string>
 
 // The full text of an item, as the worker reads it.
 function detail(item: RoundItem): Array<string> {
-  if ('note' in item) {
+  if (item.kind === 'note') {
     return [`### ${item.id}: the operator's note`, '', item.note, ''];
+  }
+  if (item.kind === 'rewrite') {
+    return [
+      `### ${item.id}: the branch's history changed since the handoff`,
+      '',
+      item.summary,
+      '',
+      "This change sits before the commit this round starts from, so the round's diff does not show it, and no one has reviewed it. Check that it keeps what the ticket does and what review approved: address what it broke, or decline with why it is right as it is.",
+      '',
+      ...(item.detail === null ? [] : ['```diff', item.detail, '```', '']),
+    ];
   }
   const { feedback } = item;
   switch (feedback.kind) {
@@ -257,18 +284,34 @@ export function roundRecord(input: {
   return {
     dismissed: [...input.dismissed],
     items: input.items.map((item): FeedbackRoundItem => {
-      if ('note' in item) {
-        return {
-          author: 'operator',
-          id: item.id,
-          kind: 'note',
-          location: null,
-          ref: null,
-          summary: firstLine(item.note),
-          url: null,
-        };
+      switch (item.kind) {
+        case 'note':
+          return {
+            author: 'operator',
+            id: item.id,
+            kind: 'note',
+            location: null,
+            ref: null,
+            summary: firstLine(item.note),
+            url: null,
+          };
+        case 'rewrite':
+          return {
+            author: 'factory',
+            id: item.id,
+            kind: 'note',
+            location: null,
+            ref: null,
+            summary: firstLine(item.summary),
+            url: null,
+          };
+        case 'feedback':
+          return { ...candidateOf(item.feedback), id: item.id };
+        default: {
+          const _exhaustive: never = item;
+          return _exhaustive;
+        }
       }
-      return { ...candidateOf(item.feedback), id: item.id };
     }),
     pullRequestUrl: input.pullRequestUrl,
     round: input.round,
@@ -278,7 +321,7 @@ export function roundRecord(input: {
       url: item.url,
     })),
     taken: [
-      ...input.items.flatMap((item) => ('note' in item ? [] : item.feedback.commentIds)),
+      ...input.items.flatMap((item) => (item.kind === 'feedback' ? item.feedback.commentIds : [])),
       ...input.feedback.skipped.map((item) => item.id),
     ],
   };

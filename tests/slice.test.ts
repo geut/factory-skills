@@ -1799,7 +1799,7 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
   const url = 'https://github.com/geut/factory-skills/pull/7';
   let opened: PullRequestInfo | null = null;
   const bodies: Array<{ body: string; url: string }> = [];
-  const { branch, runtime, service, wrapup } = await reachWrapup({}, () => ({
+  const { branch, db, runtime, service, wrapup } = await reachWrapup({}, () => ({
     ...codeHostWith('open', []),
     pullRequest: () => opened,
     setPullRequestBody: async (target, body) => {
@@ -1824,6 +1824,16 @@ test('the diff pane shows the ticket’s changes, with wrap-up’s notes, after 
     usage: sampleUsage(30),
   });
   await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  // The handoff keeps the pull request's head, for a later round to find a
+  // rebase by.
+  assert.match(
+    String(
+      db.prepare('SELECT lifecycle_json FROM agent_runs WHERE id = ?').get(wrapup.runId)?.[
+        'lifecycle_json'
+      ],
+    ),
+    new RegExp(`"handoffHead":"${opened.headSha ?? ''}"`),
+  );
   await waitFor(() => runtime.panes.length === 2);
   const diff = runtime.panes.find((pane) => pane.target.kind === 'diff');
   assert.equal(diff?.target.kind, 'diff');
@@ -3086,6 +3096,65 @@ const skippedByFake: Array<SkippedFeedback> = [
 function noPullRequest(): never {
   throw new Error('the fake code host has no pull request');
 }
+
+// A handed-off ticket whose wrap-up committed its work, and whose code root's
+// main then gains `upstream` as change.txt.
+async function handedOffThenUpstream(upstream: string) {
+  const harness = await reachWrapup({}, () => codeHostWithFeedback([]));
+  const { branch, runtime, service, work, wrapup } = harness;
+  runtime.emit(wrapup.runId, {
+    kind: 'subagent_done',
+    output: handoff(wrapup.cwd, branch),
+    usage: sampleUsage(30),
+  });
+  await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
+  await service.syncPullRequests();
+  git(work.cwd, ['add', '-A']);
+  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
+  const codeRoot = path.resolve(wrapup.cwd, '../../..');
+  writeFileSync(path.join(codeRoot, upstream), 'upstream\n');
+  git(codeRoot, ['add', upstream]);
+  git(codeRoot, ['commit', '-qm', 'upstream']);
+  return harness;
+}
+
+function roundTask(factoryRoot: string): string {
+  return readFileSync(path.join(ticketDir(factoryRoot), 'feedback', '1', 'task.md'), 'utf8');
+}
+
+test('a rebase that resolved a conflict after the handoff becomes an item of the next round, with what it changed', async () => {
+  const harness = await handedOffThenUpstream('change.txt');
+  const { db, service, work } = harness;
+  // The pull request conflicts; a person rebases and resolves it.
+  spawnSync('git', ['-c', 'commit.gpgsign=false', 'rebase', '-q', 'main'], { cwd: work.cwd });
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed and upstream\n');
+  git(work.cwd, ['add', 'change.txt']);
+  git(work.cwd, ['-c', 'core.editor=true', 'rebase', '--continue']);
+  assert.match(await service.command('feedback proj-123'), /stage: work/);
+  const factoryRoot = path.resolve(work.cwd, '../..');
+  const task = roundTask(factoryRoot);
+  assert.match(
+    task,
+    /^- \[ \] F2: the branch's history changed since the handoff: Since the handoff at [0-9a-f]{12}, the branch was rebased, and the rebase changed a commit: "Persist the filter"\.$/m,
+  );
+  assert.match(task, /```diff\n[\s\S]*changed and upstream[\s\S]*```/);
+  // The round's card names it beside the reviewer's comment.
+  assert.ok(
+    harness.notified.some((card) => /item: F2 factory · note: Since the handoff at/.test(card)),
+  );
+  await closeWhenIdle(db);
+});
+
+test('a clean rebase after the handoff adds nothing to the next round', async () => {
+  const harness = await handedOffThenUpstream('other.txt');
+  const { db, service, work } = harness;
+  git(work.cwd, ['-c', 'commit.gpgsign=false', 'rebase', '-q', 'main']);
+  assert.match(await service.command('feedback proj-123'), /stage: work/);
+  const task = roundTask(path.resolve(work.cwd, '../..'));
+  assert.doesNotMatch(task, /history changed since the handoff/);
+  assert.doesNotMatch(task, /^- \[ \] F2/m);
+  await closeWhenIdle(db);
+});
 
 test('a feedback round takes the pull request feedback back through work, review, and wrap-up', async () => {
   const sinces: Array<string> = [];

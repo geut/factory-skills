@@ -159,6 +159,7 @@ function addRun(
     // A resumed reviewer still answers for the diff its session was given.
     diffHash: parent !== null && parent.sessionId === session.id ? parent.diffHash : null,
     endedAt: null,
+    handoffHead: null,
     id: ids.run(),
     inputHash: sha256(prompt),
     origin: null,
@@ -1234,6 +1235,9 @@ function handOff(
   const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine('factory', rules)];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
+  // Where the pull request was when it was handed off: a later round finds a
+  // rebase by it.
+  run.handoffHead = closing.pullRequestHead;
   snapshot.execution.status = 'ready_for_handoff';
   snapshot.execution.retry = null;
   snapshot.execution.statusReasonCode = null;

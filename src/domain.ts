@@ -615,6 +615,10 @@ export type RunRecord = {
   description: string | null;
   diffHash: string | null;
   endedAt: string | null;
+  // A wrap-up run that handed the ticket off: the pull request's head then.
+  // The next feedback round compares it with the head it starts from, to
+  // find a rebase that changed what was handed off.
+  handoffHead: string | null;
   id: RunId;
   inputHash: string | null;
   // For a return_to_work run: the per-task stage that sent the task back.

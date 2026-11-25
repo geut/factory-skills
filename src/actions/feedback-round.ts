@@ -13,11 +13,13 @@ import {
   renderFeedbackTask,
   roundItems,
   roundRecord,
+  type RoundRewrite,
   seenComments,
   selectFeedback,
 } from '../stages/feedback.ts';
 import { stageEnabled } from '../stages/flow.ts';
-import { fetchTarget } from '../validation/bases.ts';
+import { fetchTarget, targetRefFor } from '../validation/bases.ts';
+import { findRewrite, reflogHead } from '../validation/rewrite.ts';
 
 // Prepares a feedback round on a ticket's open pull request: reads the
 // feedback posted since the factory's last push and renders the round's task
@@ -119,6 +121,39 @@ export async function listFeedback(input: {
   };
 }
 
+// What changed in the branch's history since the ticket was last handed off,
+// besides commits on top, as the round's item, or null when nothing did. The
+// handoff's head is the one the factory kept; a ticket handed off before it
+// kept them uses the branch's reflog.
+function rewriteSinceHandoff(snapshot: FactorySnapshot, worktree: string): RoundRewrite | null {
+  const { execution } = snapshot;
+  const previous =
+    snapshot.runs.findLast((run) => run.handoffHead !== null)?.handoffHead ??
+    (execution.worktreeBranch === null ? null : reflogHead(worktree, execution.worktreeBranch));
+  if (previous === null) {
+    return null;
+  }
+  const target =
+    (execution.worktreeBaseBranch === null
+      ? null
+      : targetRefFor(worktree, execution.worktreeBaseBranch)) ??
+    execution.worktreeBaseSha ??
+    'HEAD';
+  const found = findRewrite({ previous, target, worktree });
+  switch (found.kind) {
+    case 'none':
+      return null;
+    case 'changed':
+      return { detail: found.detail, summary: found.summary };
+    case 'unknown':
+      return { detail: null, summary: found.summary };
+    default: {
+      const _exhaustive: never = found;
+      return _exhaustive;
+    }
+  }
+}
+
 export async function prepareFeedbackRound(input: {
   choice?: FeedbackChoice;
   codeHost: CodeHost;
@@ -163,11 +198,6 @@ export async function prepareFeedbackRound(input: {
       `${chosen.unknown.join(', ')} ${chosen.unknown.length === 1 ? 'is' : 'are'} not pending feedback on ${input.pullRequestUrl}. Pending: ${pending.length === 0 ? 'none' : pending.join(', ')}.`,
     );
   }
-  const items = roundItems(chosen.items, input.note);
-  if (items.length === 0) {
-    return refuse(noneLeft(input.pullRequestUrl, feedback));
-  }
-  const round = feedbackRounds(input.snapshot.tasks) + 1;
   // The pull request has sat in review while the target moved, and may have
   // been rebased onto it: the target is fetched, so the round's checks find
   // the merge-base the branch has now.
@@ -175,6 +205,12 @@ export async function prepareFeedbackRound(input: {
     execution.worktreeBaseBranch === null
       ? null
       : await fetchTarget({ targetBranch: execution.worktreeBaseBranch, worktree });
+  const rewrite = rewriteSinceHandoff(input.snapshot, worktree);
+  const items = roundItems(chosen.items, input.note, rewrite);
+  if (items.length === 0) {
+    return refuse(noneLeft(input.pullRequestUrl, feedback));
+  }
+  const round = feedbackRounds(input.snapshot.tasks) + 1;
   return {
     feedback: roundRecord({
       dismissed: chosen.dismissed,

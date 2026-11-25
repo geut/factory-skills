@@ -578,3 +578,42 @@ test('carrying a paused pass over moves the feedback round’s start with it, an
   assert.match(after.runs.find((item) => item.id === runId)?.baseline ?? '', /"head":"new"/);
   assert.equal(validation(after).runId, runId);
 });
+
+test('a handoff keeps the pull request’s head on its run, for the next round to find a rebase by', () => {
+  const { runId, snapshot } = finishedWrapup();
+  snapshot.execution.policy.pullRequests = true;
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: noIssue,
+        prFormat: { path: null, source: 'default' },
+        pullRequest: {
+          author: 'dpaez',
+          body: '',
+          closedAt: null,
+          headBranch: 'factory/demo',
+          headSha: 'abc',
+          mergedAt: null,
+          number: 9,
+          openedAt: null,
+          state: 'open',
+          title: 'Persist the filter',
+          url: 'https://github.com/geut/app/pull/9',
+        },
+        roundFiles: [],
+        rules: [],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  const after = passed.snapshot ?? snapshot;
+  assert.equal(after.execution.status, 'ready_for_handoff');
+  assert.equal(after.runs.find((item) => item.id === runId)?.handoffHead, 'abc');
+});
