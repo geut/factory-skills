@@ -28,11 +28,15 @@ export function passBaselineText(snapshot: FactorySnapshot): string | null {
 export function rebasedRefusal(snapshot: FactorySnapshot): string | null {
   const { execution, ticket } = snapshot;
   const ref = ticket.displayRef;
+  // A wrap-up agent that asked a question is idle too: carrying the pass over
+  // answers it, and validates the pass instead.
   if (
     execution.stage !== 'wrapup' ||
-    (execution.status !== 'paused' && execution.status !== 'failed')
+    (execution.status !== 'paused' &&
+      execution.status !== 'failed' &&
+      execution.status !== 'waiting_for_user')
   ) {
-    return `${ref} is ${execution.stage}/${execution.status}; --rebased carries over a wrap-up pass that is paused or failed.`;
+    return `${ref} is ${execution.stage}/${execution.status}; --rebased carries over a wrap-up pass that is paused, failed, or waiting for you.`;
   }
   if (snapshot.runs.some((run) => run.status !== 'terminal')) {
     return `${ref} has an agent running; stop it first.`;

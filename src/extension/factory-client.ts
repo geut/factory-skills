@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { PendingFeedback } from '../api/commands.ts';
+import { PendingFeedback, RebasedRetryPreview } from '../api/commands.ts';
 import { TicketControllerSteps } from '../api/reads.ts';
 import type { CommandProgress } from '../controller/command-progress.ts';
 import type { ParsedCommand } from '../controller/parse.ts';
@@ -204,6 +204,42 @@ export function createFactoryClient(input: {
     const listed = PendingFeedback.safeParse(payload);
     if (response.status === 200 && listed.success) {
       return listed.data;
+    }
+    const problem = ProblemBody.safeParse(payload);
+    return {
+      problem:
+        (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
+        `The server answered ${response.status}.`,
+    };
+  }
+
+  // What `/factory retry --rebased` would carry over, through the server,
+  // which reads the ticket's git.
+  async function rebasedPreview(
+    url: string,
+    key: string,
+  ): Promise<{ problem: string } | z.infer<typeof RebasedRetryPreview>> {
+    let token: string;
+    try {
+      token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
+    } catch {
+      return { problem: `Cannot read ${localTokenPath(input.factoryRoot)}; restart the server.` };
+    }
+    let response: Response;
+    try {
+      response = await send(`${url}/v1/tickets/${key}/retries/rebased`, {
+        headers: { authorization: `Bearer ${token}` },
+        method: 'GET',
+      });
+    } catch (error: unknown) {
+      return {
+        problem: `Cannot reach the factory server at ${url}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const payload: unknown = await response.json().catch(() => ({}));
+    const previewed = RebasedRetryPreview.safeParse(payload);
+    if (response.status === 200 && previewed.success) {
+      return previewed.data;
     }
     const problem = ProblemBody.safeParse(payload);
     return {
@@ -450,14 +486,20 @@ export function createFactoryClient(input: {
       if (key === null) {
         return `No factory execution matches ${parsed.ref}.`;
       }
+      if (parsed.kind === 'retry' && parsed.mode === 'rebased_dry_run') {
+        const previewed = await rebasedPreview(url, key);
+        return 'problem' in previewed ? previewed.problem : previewed.preview;
+      }
       sent =
         parsed.kind === 'reply'
           ? await post(url, `/v1/tickets/${key}/replies`, { answer: parsed.answer })
-          : await post(
-              url,
-              `/v1/tickets/${key}/${parsed.kind === 'retry' ? 'retries' : 'complete'}`,
-              undefined,
-            );
+          : parsed.kind === 'retry'
+            ? await post(
+                url,
+                `/v1/tickets/${key}/retries`,
+                parsed.mode === 'rebased' ? { rebased: true } : undefined,
+              )
+            : await post(url, `/v1/tickets/${key}/complete`, undefined);
     }
     return 'problem' in sent ? sent.problem : statusOf(open, sent.ticket);
   }

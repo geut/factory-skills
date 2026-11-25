@@ -1621,6 +1621,55 @@
         }
       }
     },
+    "/v1/tickets/{key}/retries/rebased": {
+      "get": {
+        "operationId": "previewRebasedRetry",
+        "security": [
+          {
+            "bearer": [
+              "read"
+            ]
+          }
+        ],
+        "summary": "Preview carrying a paused, failed, or waiting wrap-up pass over to a rebased branch, without doing it",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What a rebased retry would carry over.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RebasedRetryPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets/{key}/complete": {
       "post": {
         "operationId": "completeTicket",
@@ -5634,6 +5683,23 @@
           "tokensInput",
           "tokensOutput",
           "type"
+        ],
+        "additionalProperties": false
+      },
+      "RebasedRetryPreview": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "string",
+            "description": "The old and new compare base, pass start, and feedback round start, and the paths it would drop as the target’s own and keep."
+          },
+          "ticket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "preview",
+          "ticket"
         ],
         "additionalProperties": false
       },

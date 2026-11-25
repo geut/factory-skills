@@ -94,7 +94,7 @@ The wrap-up agent returns the `factory.wrapup.v2` handoff. The controller keeps 
 - with `codeHost.pullRequests` off, nothing was committed or pushed, and `## Merge commands` prints the commands;
 - with it on, wrap-up commits the approved work on the ticket branch. Its commits sit on top of the commit wrap-up started from, with no merge and no rewritten history, and hold only paths `## Files` lists. Once anything is committed the worktree must be clean, and with a clean worktree the pull request must exist for the branch with the local HEAD as its head and the title `codeHost.pullRequestTitle` gives. If committing fails, the worktree stays uncommitted, nothing is pushed, and the commands are printed instead.
 
-A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. When validation fails with exactly the failures of the latest correction, the agent could not fix them, so the ticket pauses with `wrapup_failure_repeated` instead: `/factory retry` validates the latest run again once the cause is fixed, and a reply resumes the agent. A pass that started before passes kept their compare base compares against where the ticket branched, so after an authorized rebase it demands every path the target gained. `/factory retry <ticket> --rebased` carries the paused or failed pass over to the rebased branch, then validates it again:
+A failed validation resumes the same wrap-up session with the exact failures; wrap-up corrections have no limit. When validation fails with exactly the failures of the latest correction, the agent could not fix them, so the ticket pauses with `wrapup_failure_repeated` instead: `/factory retry` validates the latest run again once the cause is fixed, and a reply resumes the agent. A pass that started before passes kept their compare base compares against where the ticket branched, so after an authorized rebase it demands every path the target gained. `/factory retry <ticket> --rebased` carries the paused or failed pass over to the rebased branch, then validates it again. So does a pass whose agent is waiting on a question, as when it asks what to do about files it never changed: carrying the pass over resolves the question.
 
 - The pass's start is kept when the rebase kept it. Otherwise each of its commits is found on the rebased branch by its patch, whitespace included, since an indentation change can change what Python code does. A commit whose patch the rebase changed, as a conflict resolution does, is refused by name, never carried over.
 - After a feedback round, the round's start moves with the rebase the same way. The round's `🔀` diff and its pull-request comment compare against it, so neither shows what the target gained.
@@ -103,7 +103,9 @@ A failed validation resumes the same wrap-up session with the exact failures; wr
 - The pass's first run keeps the baseline it started with, and the carried one goes on its latest run. A `wrapup_pass_carried` event on the ticket records who asked, the replaced baseline, the old and new compare base, pass start and round start, and how many paths were dropped and kept.
 - Validation runs again, and nothing is marked passed by the carry-over itself.
 
-`--dry-run` shows the old and new commits and the paths it would drop and keep, and changes nothing. The API takes `{ "rebased": true }` on `POST /v1/tickets/{key}/retries`. A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session on its own model, `🔀 <ticket>` shows the ticket's diff since its merge-base with the target (after a feedback round, only the round's diff, since the commit it started at), in [Hunk](https://hunk.dev) when `hunk` is on PATH, else in Fresh; `FACTORY_HUNK_BIN` and `FACTORY_FRESH_BIN` name other binaries; in Hunk the diff carries notes from the handoff: what each `## Files` line says about its file, each decision on the lines it cites, and each open review finding at its location), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. On a tracker issue, the controller ticks the met items through the tracker and posts one handoff comment with the decisions and the items left open; a rerun replaces that comment. An item someone changed on the issue stays unticked, and the comment and a warning on the ticket say so. None of this can fail the handoff.
+`--dry-run` shows the old and new commits and the paths it would drop and keep, and changes nothing. The API takes `{ "rebased": true }` on `POST /v1/tickets/{key}/retries`, and previews with `GET /v1/tickets/{key}/retries/rebased`; Pi's `/factory retry` sends both through the server.
+
+A pass sets the ticket to `wrapup / ready_for_handoff`, opens two panes without a model turn (`📦 <ticket>` reopens the wrap-up session on its own model, `🔀 <ticket>` shows the ticket's diff since its merge-base with the target (after a feedback round, only the round's diff, since the commit it started at), in [Hunk](https://hunk.dev) when `hunk` is on PATH, else in Fresh; `FACTORY_HUNK_BIN` and `FACTORY_FRESH_BIN` name other binaries; in Hunk the diff carries notes from the handoff: what each `## Files` line says about its file, each decision on the lines it cites, and each open review finding at its location), and posts a notice with the all-stage usage table. A pane that fails to open retries and never fails the handoff. On a tracker issue, the controller ticks the met items through the tracker and posts one handoff comment with the decisions and the items left open; a rerun replaces that comment. An item someone changed on the issue stays unticked, and the comment and a warning on the ticket say so. None of this can fail the handoff.
 
 ### Feedback rounds
 
@@ -258,17 +260,19 @@ Reads need a `read` token.
 
 Commands need an `act` token. Each one returns `202 {ticket, revision, message}` once it is committed. `ticket` is the ticket key used in the other URLs: its factory directory's name, such as `proj-123-ab12cd34`. `revision` is the `events.revision` that recorded the command. Agent launches happen afterwards, so a client that wants the result waits for the event stream to pass that revision.
 
-| Route                                                          | Pi equivalent              |
-| -------------------------------------------------------------- | -------------------------- |
-| `POST /v1/tickets {ref}` or `{id, text}`                       | `/factory start`           |
-| `POST /v1/tickets/{key}/replies {answer}`                      | `/factory reply`           |
-| `POST /v1/tickets/{key}/retries`                               | `/factory retry`           |
-| `POST /v1/tickets/{key}/complete`                              | `/factory complete`        |
-| `POST /v1/tickets/{key}/feedback-rounds {note?, only?, skip?}` | `/factory feedback`        |
-| `GET /v1/tickets/{key}/feedback`                               | `/factory feedback --list` |
-| `POST /v1/tickets/{key}/cancel {reason?}`                      | `/factory cancel`          |
-| `POST /v1/tickets/{key}/reruns`                                | `/factory rerun`           |
-| `POST /v1/runs/{id}/stop`                                      | `/factory stop`            |
+| Route                                                          | Pi equivalent                        |
+| -------------------------------------------------------------- | ------------------------------------ |
+| `POST /v1/tickets {ref}` or `{id, text}`                       | `/factory start`                     |
+| `POST /v1/tickets/{key}/replies {answer}`                      | `/factory reply`                     |
+| `POST /v1/tickets/{key}/retries`                               | `/factory retry`                     |
+| `POST /v1/tickets/{key}/retries {rebased: true}`               | `/factory retry --rebased`           |
+| `GET /v1/tickets/{key}/retries/rebased`                        | `/factory retry --rebased --dry-run` |
+| `POST /v1/tickets/{key}/complete`                              | `/factory complete`                  |
+| `POST /v1/tickets/{key}/feedback-rounds {note?, only?, skip?}` | `/factory feedback`                  |
+| `GET /v1/tickets/{key}/feedback`                               | `/factory feedback --list`           |
+| `POST /v1/tickets/{key}/cancel {reason?}`                      | `/factory cancel`                    |
+| `POST /v1/tickets/{key}/reruns`                                | `/factory rerun`                     |
+| `POST /v1/runs/{id}/stop`                                      | `/factory stop`                      |
 
 - Problems found before anything changes come back at once: `validation_error` for a reference that cannot be resolved, `umbrella_issue`, `tracker_unavailable`, `code_host_unavailable`, `ticket_not_found`, `not_waiting_for_reply`, or `invalid_state`.
 - Cancel ends a ticket for good: its agents stop, its tab closes, open questions and tasks are cancelled, and the ticket is `done / cancelled`. Its worktree, branch, and pull request stay for you to keep or clean up. A ticket from the tracker gets a comment, and its factory status label is removed.

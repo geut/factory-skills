@@ -73,13 +73,15 @@ function sample(files: Array<string>): string {
 }
 
 // What --rebased would do, changing nothing but the worktree's refs.
-export function rebasedPreview(snapshot: FactorySnapshot): string {
+export function rebasedPreview(
+  snapshot: FactorySnapshot,
+): { kind: 'preview'; text: string } | { kind: 'refused'; message: string } {
   const read = readRebased(snapshot);
   if (read.kind === 'refused') {
-    return read.message;
+    return read;
   }
   const { pass, previousBaseline } = read;
-  return [
+  const text = [
     `${snapshot.ticket.displayRef}: --rebased would carry the wrap-up pass over to the rebased branch, then validate again.`,
     `compare base: ${short(previousBaseline.compareBase)} → ${short(pass.baseline.compareBase)}`,
     `pass start: ${short(previousBaseline.head)} → ${short(pass.baseline.head)}`,
@@ -90,4 +92,5 @@ export function rebasedPreview(snapshot: FactorySnapshot): string {
     `kept (${pass.kept.length}): ${sample(pass.kept)}`,
     'Nothing changed.',
   ].join('\n');
+  return { kind: 'preview', text };
 }

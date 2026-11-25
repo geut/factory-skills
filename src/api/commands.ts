@@ -267,6 +267,38 @@ export const PendingFeedback = z
   })
   .meta({ id: 'PendingFeedback' });
 
+export const RebasedRetryPreview = z
+  .object({
+    preview: z.string().meta({
+      description:
+        'The old and new compare base, pass start, and feedback round start, and the paths it would drop as the target’s own and keep.',
+    }),
+    ticket: z.string(),
+  })
+  .meta({ id: 'RebasedRetryPreview' });
+
+const previewRebasedRetry = defineRoute({
+  handler: ({ context, params }) => {
+    const previewed = context.commands.retryRebasedPreview(params.key);
+    if (previewed.kind === 'refused') {
+      throw new ProblemError(refusals[previewed.reason], previewed.message);
+    }
+    const { kind: _kind, ...body } = previewed;
+    return { body, status: 200 };
+  },
+  method: 'GET',
+  operationId: 'previewRebasedRetry',
+  path: '/v1/tickets/{key}/retries/rebased',
+  request: { params: TicketParams },
+  responses: {
+    200: { description: 'What a rebased retry would carry over.', schema: RebasedRetryPreview },
+  },
+  scope: 'read',
+  summary:
+    'Preview carrying a paused, failed, or waiting wrap-up pass over to a rebased branch, without doing it',
+  tags: ['commands'],
+});
+
 const listPendingFeedback = defineRoute({
   handler: async ({ context, params }) => {
     const listed = await context.commands.pendingFeedback(params.key);
@@ -323,6 +355,7 @@ export const commandRoutes = [
   startTicket,
   replyToTicket,
   retryTicket,
+  previewRebasedRetry,
   completeTicket,
   cancelTicket,
   startFeedbackRound,
