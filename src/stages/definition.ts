@@ -45,6 +45,9 @@ export type Outcome =
       checklist?: IssueChecklist;
       // For a per-task stage, what the next per-task stage is given.
       handoff?: Handoff;
+      // For the closing stage: the worktree's HEAD it checked, the head the
+      // ticket is handed off at when the pull request gives none.
+      head?: string;
       kind: 'accept';
       // For the closing stage: what the person reads at handoff.
       notice?: string;

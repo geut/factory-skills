@@ -319,6 +319,9 @@ export type ReviewValidationReport = ValidationReport<
 export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
+  // The worktree's HEAD as validation found it: where the ticket is handed
+  // off when the pull request gives no head of its own.
+  head: string;
   // The format the pull request's body follows: the project's own (`agents`
   // or `github`), or the factory's `default`, and the file it came from.
   prFormat: PrFormatInUse;

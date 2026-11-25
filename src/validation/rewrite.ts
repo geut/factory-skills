@@ -64,10 +64,11 @@ function subjects(worktree: string, commits: Array<string>): string {
 
 // What changed between `previous`, where the ticket was handed off, and the
 // worktree's HEAD, besides new commits on top. `target` is the ref the
-// ticket's target branch is read from.
+// ticket's target branch is read from; null when none can be chosen, and a
+// rebase then cannot be compared.
 export function findRewrite(input: {
   previous: string;
-  target: string;
+  target: string | null;
   worktree: string;
 }): Rewrite {
   const { previous, target, worktree } = input;
@@ -83,36 +84,50 @@ export function findRewrite(input: {
     const merges = git(worktree, ['rev-list', '--merges', '--reverse', `${previous}..HEAD`])
       .stdout.split('\n')
       .filter((line) => line.length > 0);
-    // A merge git would have made alone shows nothing: only a hand
-    // resolution, or a change made in the merge, remains.
-    const resolved = merges.filter(
-      (merge) =>
-        git(worktree, ['show', '--remerge-diff', '--format=', '--no-color', merge]).stdout.trim()
-          .length > 0,
-    );
-    if (resolved.length === 0) {
+    // A merge git would have made alone shows nothing past its header: only
+    // a hand resolution, or a change made in the merge, remains. A merge git
+    // cannot recreate, or a git without --remerge-diff, is never taken as
+    // clean.
+    const shown: Array<{ merge: string; text: string }> = [];
+    for (const merge of merges) {
+      const shownMerge = git(worktree, [
+        'show',
+        '--remerge-diff',
+        '--no-color',
+        '--format=commit %h %s',
+        merge,
+      ]);
+      if (shownMerge.code !== 0) {
+        return {
+          kind: 'unknown',
+          summary: `Since the handoff at ${short}, ${subjects(worktree, [merge])} merged into the branch, and git cannot show what the merge changed by hand: ${shownMerge.stderr || `git exited with ${shownMerge.code}`}. Review the merge against what git would have merged.`,
+        };
+      }
+      const body = shownMerge.stdout.split('\n').slice(1).join('\n').trim();
+      if (body.length > 0) {
+        shown.push({ merge, text: shownMerge.stdout });
+      }
+    }
+    if (shown.length === 0) {
       return { kind: 'none' };
     }
     return {
-      detail: bounded(
-        resolved
-          .map(
-            (merge) =>
-              git(worktree, [
-                'show',
-                '--remerge-diff',
-                '--no-color',
-                '--format=commit %h %s',
-                merge,
-              ]).stdout,
-          )
-          .join('\n'),
-      ),
+      detail: bounded(shown.map((item) => item.text).join('\n')),
       kind: 'changed',
-      summary: `Since the handoff at ${short}, ${resolved.length === 1 ? 'a merge' : `${resolved.length} merges`} into the branch (${subjects(worktree, resolved)}) changed the code by hand, beyond what git would have merged alone.`,
+      summary: `Since the handoff at ${short}, ${shown.length === 1 ? 'a merge' : `${shown.length} merges`} into the branch (${subjects(
+        worktree,
+        shown.map((item) => item.merge),
+      )}) changed the code by hand, beyond what git would have merged alone.`,
     };
   }
-  // Rewritten: compare each commit as it was with what it became.
+  // Rewritten: compare each commit as it was with what it became, each range
+  // from where it left the target.
+  if (target === null) {
+    return {
+      kind: 'unknown',
+      summary: `The branch's history changed since it was handed off at ${short}, and no remote can be chosen to read its target from, so the change cannot be compared. Review the whole pull request against its target.`,
+    };
+  }
   const before = git(worktree, ['merge-base', previous, target]).stdout.trim();
   const after = git(worktree, ['merge-base', 'HEAD', target]).stdout.trim();
   if (before.length === 0 || after.length === 0) {

@@ -3097,20 +3097,42 @@ function noPullRequest(): never {
   throw new Error('the fake code host has no pull request');
 }
 
-// A handed-off ticket whose wrap-up committed its work, and whose code root's
-// main then gains `upstream` as change.txt.
+// A ticket handed off as wrap-up hands one off with pull requests on: its
+// work committed and pushed, the pull request's head the worktree's. Then the
+// code root's main gains `upstream`.
 async function handedOffThenUpstream(upstream: string) {
-  const harness = await reachWrapup({}, () => codeHostWithFeedback([]));
+  let worktree = '';
+  const harness = await reachWrapup({}, () => {
+    const host = codeHostWithFeedback([]);
+    // The pull request follows the branch, as a push makes it.
+    return {
+      ...host,
+      pullRequest: async (url: string) => {
+        const found = await host.pullRequest(url);
+        return found === null || worktree === ''
+          ? found
+          : {
+              ...found,
+              headBranch: git(worktree, ['rev-parse', '--abbrev-ref', 'HEAD']),
+              headSha: git(worktree, ['rev-parse', 'HEAD']),
+            };
+      },
+    };
+  });
   const { branch, runtime, service, work, wrapup } = harness;
+  worktree = work.cwd;
+  git(work.cwd, ['add', '-A']);
+  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
   runtime.emit(wrapup.runId, {
     kind: 'subagent_done',
-    output: handoff(wrapup.cwd, branch),
+    output: handoff(wrapup.cwd, branch).replace(
+      /## Merge commands[\s\S]*$/,
+      '## Merge commands\n\nhttps://github.com/geut/factory-skills/pull/7\n',
+    ),
     usage: sampleUsage(30),
   });
   await waitFor(() => service.status('proj-123').includes('ready_for_handoff'));
-  await service.syncPullRequests();
-  git(work.cwd, ['add', '-A']);
-  git(work.cwd, ['commit', '-q', '-m', 'Persist the filter']);
+
   const codeRoot = path.resolve(wrapup.cwd, '../../..');
   writeFileSync(path.join(codeRoot, upstream), 'upstream\n');
   git(codeRoot, ['add', upstream]);

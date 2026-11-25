@@ -142,3 +142,52 @@ test('for a ticket handed off before its head was kept, the reflog gives where t
   git(cwd, ['rebase', '-q', 'main']);
   assert.equal(reflogHead(cwd, 'factory/t'), handoff);
 });
+
+test('with no target to read, a rebase cannot be compared, and is never reported as other commits', () => {
+  const { cwd, handoff } = handedOff();
+  upstream(cwd, 'other.py', 'other\n');
+  git(cwd, ['rebase', '-q', 'main']);
+  const found = findRewrite({ previous: handoff, target: null, worktree: cwd });
+  assert.equal(found.kind, 'unknown');
+  assert.match(found.kind === 'unknown' ? found.summary : '', /no remote can be chosen/);
+  // Commits on top need no target, and stay no rewrite.
+  commit(cwd, 'b.py', 'round\n', 'Round 1');
+  const onTop = git(cwd, ['rev-parse', 'HEAD~1']);
+  assert.deepEqual(findRewrite({ previous: onTop, target: null, worktree: cwd }), {
+    kind: 'none',
+  });
+});
+
+test('a merge git cannot show, as on a git without --remerge-diff, is never taken as clean', () => {
+  const resolved = handedOff();
+  upstream(resolved.cwd, 'a.py', 'one\nupstream\nthree\n');
+  git(resolved.cwd, ['merge', '-q', '--no-edit', 'main'], true);
+  writeFileSync(path.join(resolved.cwd, 'a.py'), 'one\nboth\nthree\n');
+  git(resolved.cwd, ['add', 'a.py']);
+  git(resolved.cwd, ['commit', '-q', '--no-edit']);
+  // A git that does not know --remerge-diff, as before 2.36.
+  const shims = mkdtempSync(path.join(tmpdir(), 'factory-git-shim-'));
+  dirs.push(shims);
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(
+    path.join(shims, 'git'),
+    `#!/bin/sh\ncase " $* " in *" --remerge-diff "*) echo "fatal: unrecognized argument: --remerge-diff" >&2; exit 128;; esac\nexec ${JSON.stringify(real)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  const saved = process.env['PATH'];
+  process.env['PATH'] = `${shims}${path.delimiter}${saved ?? ''}`;
+  try {
+    const found = findRewrite({
+      previous: resolved.handoff,
+      target: 'main',
+      worktree: resolved.cwd,
+    });
+    assert.equal(found.kind, 'unknown');
+    assert.match(
+      found.kind === 'unknown' ? found.summary : '',
+      /git cannot show what the merge changed by hand: fatal: unrecognized argument: --remerge-diff/,
+    );
+  } finally {
+    process.env['PATH'] = saved;
+  }
+});

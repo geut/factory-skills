@@ -691,6 +691,7 @@ export async function validateWrapup(input: {
     .flatMap((item) => item.details.split('\n'));
   const detail = {
     checklist: checklist.result,
+    head: current.head,
     // Which format the body follows: only the default is the factory's to set.
     prFormat: prFormatInUse(input.prFormat),
     pullRequest: policy.length === 0 ? checked : null,

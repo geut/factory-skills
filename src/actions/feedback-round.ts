@@ -123,8 +123,8 @@ export async function listFeedback(input: {
 
 // What changed in the branch's history since the ticket was last handed off,
 // besides commits on top, as the round's item, or null when nothing did. The
-// handoff's head is the one the factory kept; a ticket handed off before it
-// kept them uses the branch's reflog.
+// handoff's head is the one the factory kept, as every handoff since does; a
+// ticket handed off before uses the branch's reflog.
 function rewriteSinceHandoff(snapshot: FactorySnapshot, worktree: string): RoundRewrite | null {
   const { execution } = snapshot;
   const previous =
@@ -133,12 +133,12 @@ function rewriteSinceHandoff(snapshot: FactorySnapshot, worktree: string): Round
   if (previous === null) {
     return null;
   }
+  // Never a stand-in such as where the ticket branched: a rebase onto a
+  // target that moved on would count the target's commits as the ticket's.
   const target =
-    (execution.worktreeBaseBranch === null
+    execution.worktreeBaseBranch === null
       ? null
-      : targetRefFor(worktree, execution.worktreeBaseBranch)) ??
-    execution.worktreeBaseSha ??
-    'HEAD';
+      : targetRefFor(worktree, execution.worktreeBaseBranch);
   const found = findRewrite({ previous, target, worktree });
   switch (found.kind) {
     case 'none':

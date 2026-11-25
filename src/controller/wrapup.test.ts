@@ -112,6 +112,7 @@ test('a passed validation sets ready_for_handoff once; a duplicate result is ign
       [{ details: 'ok', kind: 'schema', name: 'handoff headings', status: 'passed' }],
       {
         checklist: noIssue,
+        head: 'h0',
         prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
@@ -165,6 +166,7 @@ test('an accepted wrap-up ticks the met boxes and keeps one handoff comment with
             },
           ],
         },
+        head: 'h0',
         prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
@@ -216,6 +218,7 @@ function handoffUpdate(communication: FactorySnapshot['execution']['policy']['co
           met: [{ id: 'B1', key: '1:Reload keeps it.', text: 'Reload keeps it.' }],
           open: [],
         },
+        head: 'h0',
         prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
@@ -259,6 +262,7 @@ function acceptWithPullRequest(
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        head: 'h0',
         prFormat,
         pullRequest: {
           author: 'dpaez',
@@ -322,6 +326,7 @@ test('an accepted wrap-up queues the pull request body it built, once and only w
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        head: 'h0',
         prFormat: { path: '.github/pull_request_template.md', source: 'github' },
         pullRequest: {
           author: 'dpaez',
@@ -406,6 +411,7 @@ test('an accepted wrap-up names the project rule files the ticket changes', () =
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        head: 'h0',
         prFormat: { path: null, source: 'default' as const },
         pullRequest: null,
         roundFiles: [],
@@ -472,6 +478,7 @@ function failedWith(
   }
   const detail = {
     checklist: noIssue,
+    head: 'h0',
     prFormat: { path: null, source: 'default' as const },
     pullRequest: null,
     roundFiles: [],
@@ -588,6 +595,7 @@ test('a handoff keeps the pull request’s head on its run, for the next round t
       kind: 'validation_finished',
       report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
         checklist: noIssue,
+        head: 'h0',
         prFormat: { path: null, source: 'default' },
         pullRequest: {
           author: 'dpaez',
@@ -616,4 +624,30 @@ test('a handoff keeps the pull request’s head on its run, for the next round t
   const after = passed.snapshot ?? snapshot;
   assert.equal(after.execution.status, 'ready_for_handoff');
   assert.equal(after.runs.find((item) => item.id === runId)?.handoffHead, 'abc');
+});
+
+test('a handoff with no pull request head keeps the worktree’s HEAD instead', () => {
+  const { runId, snapshot } = finishedWrapup();
+  const passed = reduce({
+    event: {
+      actionId: validation(snapshot).id,
+      kind: 'validation_finished',
+      report: passedReport(WRAPUP_VALIDATOR_VERSION, [], {
+        checklist: noIssue,
+        head: 'worktree-head',
+        prFormat: { path: null, source: 'default' },
+        pullRequest: null,
+        roundFiles: [],
+        rules: [],
+        usage: '',
+      }),
+      runId,
+      stage: 'wrapup',
+    },
+    ids: randomIds(),
+    now,
+    snapshot,
+  });
+  const after = passed.snapshot ?? snapshot;
+  assert.equal(after.runs.find((item) => item.id === runId)?.handoffHead, 'worktree-head');
 });
