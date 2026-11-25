@@ -18,6 +18,7 @@ import { openBoxes } from '../stages/wrapup/checklist.ts';
 import { listedPaths } from '../stages/wrapup/handoff.ts';
 import { parseTitleTemplate } from '../stages/wrapup/title.ts';
 import { addTasks, review, run, session, task } from '../stories/fixtures.ts';
+import { syncWorktreeRefs, ticketBase } from './bases.ts';
 import { VALIDATION_LOGS } from './command-env.ts';
 import { validationContext } from './fixture.ts';
 import { captureWrapupState, wrapupValidator, type PullRequestLookup } from './wrapup.ts';
@@ -257,6 +258,65 @@ test('a complete handoff passes, and prose outside the headings is ignored', asy
         'no commit or merge',
         'pull-request policy',
       ],
+    );
+  }
+});
+
+test('after the branch is rebased onto a newer target, a pass lists only the ticket’s paths, rebase after rebase', async () => {
+  const value = fixture();
+  // An earlier pass committed the ticket's work on its branch.
+  git(value.worktree, ['add', '.']);
+  git(value.worktree, ['-c', 'commit.gpgsign=false', 'commit', '-qm', 'Persist the filter']);
+  git(value.codeRoot, ['remote', 'add', 'origin', value.codeRoot]);
+  for (const round of [1, 2]) {
+    // The target moves on, and a person rebases the ticket onto it.
+    mkdirSync(path.join(value.codeRoot, `upstream${round}`));
+    for (let index = 0; index < 20; index += 1) {
+      writeFileSync(path.join(value.codeRoot, `upstream${round}/file${index}.ts`), `${index}\n`);
+    }
+    git(value.codeRoot, ['add', `upstream${round}`]);
+    git(value.codeRoot, ['-c', 'commit.gpgsign=false', 'commit', '-qm', `upstream ${round}`]);
+    git(value.codeRoot, ['fetch', '-q', 'origin']);
+    git(value.worktree, ['-c', 'commit.gpgsign=false', 'rebase', '-q', 'origin/main']);
+    // The pass starts as wrap-up's input preparation starts it.
+    const head = git(value.worktree, ['rev-parse', 'HEAD']);
+    syncWorktreeRefs({ roundBase: head, targetBranch: 'main', worktree: value.worktree });
+    const compareBase = ticketBase(value.worktree, value.baseSha);
+    assert.notEqual(compareBase, value.baseSha);
+    const baseline: WrapupBaseline = {
+      boxes: [],
+      ...captureWrapupState({
+        baseBranch: 'main',
+        baseSha: compareBase,
+        branch,
+        codeRoot: value.codeRoot,
+        factoryRoot: value.factoryRoot,
+        ticketDir: path.join(value.factoryRoot, 'tickets/proj-1'),
+        worktree: value.worktree,
+      }),
+    };
+    const outcome = await validate(value, baseline, handoff(value));
+    assert.equal(outcome.status, 'passed', failures(outcome));
+    assert.match(
+      outcome.checks.find((item) => item.name === 'files section')?.details ?? '',
+      new RegExp(
+        `^2 changed paths listed, against ${compareBase}, its merge-base with the target; the ticket branched at ${value.baseSha}$`,
+      ),
+    );
+    // Against where the ticket branched, every upstream file would be the
+    // ticket's: the baseline a pass stored before it kept its compare base.
+    // A product change wrap-up makes is still its own, against the pass's
+    // baseline.
+    if (round === 2) {
+      writeFileSync(path.join(value.worktree, 'src/filter.ts'), 'export const filter = 3;\n');
+      const edited = await validate(value, baseline, handoff(value));
+      assert.match(failures(edited), /Wrap-up changed product code: src\/filter\.ts/);
+      git(value.worktree, ['checkout', '--', 'src/filter.ts']);
+    }
+    const stale = await validate(value, { ...baseline, compareBase: null }, handoff(value));
+    assert.match(
+      failures(stale),
+      new RegExp(`## Files does not list changed path upstream${round}/file0\\.ts`),
     );
   }
 });

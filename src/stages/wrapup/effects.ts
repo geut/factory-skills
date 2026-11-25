@@ -3,6 +3,7 @@ import { inspectWrapupInput } from '../../actions/wrapup-input.ts';
 import { factoryRootOf, ticketDirOf } from '../../controller/keys.ts';
 import type { FactorySnapshot } from '../../domain.ts';
 import type { ChecklistItem } from '../../ports/tracker.ts';
+import { roundBase, syncWorktreeRefs, ticketBase } from '../../validation/bases.ts';
 import { captureWrapupState, parseBaseline } from '../../validation/wrapup.ts';
 import type { InputContext, InputResult } from '../effects.ts';
 import { qaPaths, testPlan } from '../qa/criteria.ts';
@@ -70,11 +71,20 @@ export async function prepareWrapupInput({
     if (worktreeBaseSha === null || worktreeBranch === null || worktreePath === null) {
       return { kind: 'failed', message: 'The worktree is not ready for this execution.' };
     }
+    // The pass compares against the merge-base with the target: after a
+    // person rebased the branch onto a newer target, the target's own changes
+    // are not the ticket's paths.
+    const base = roundBase(snapshot) ?? worktreeBaseSha;
+    syncWorktreeRefs({
+      roundBase: base,
+      targetBranch: snapshot.execution.worktreeBaseBranch,
+      worktree: worktreePath,
+    });
     try {
       baseline = JSON.stringify({
         ...captureWrapupState({
           baseBranch: snapshot.execution.worktreeBaseBranch,
-          baseSha: worktreeBaseSha,
+          baseSha: ticketBase(worktreePath, worktreeBaseSha),
           branch: worktreeBranch,
           codeRoot: snapshot.execution.policy.codeRoot,
           factoryRoot,

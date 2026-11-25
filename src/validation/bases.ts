@@ -148,6 +148,18 @@ export function headCheck(worktree: string, base: string): ValidationCheck | { m
   };
 }
 
+// Where the ticket's own changes begin: the merge-base of HEAD with the
+// target, which follows the branch rebased onto a newer target or the target
+// merged in. `branched` (where the ticket started) without a target, or when
+// git finds none.
+export function ticketBase(worktree: string, branched: string): string {
+  if (git(worktree, ['rev-parse', '--verify', '--quiet', TARGET_REF]).code !== 0) {
+    return branched;
+  }
+  const shared = git(worktree, ['merge-base', 'HEAD', TARGET_REF]);
+  return shared.code === 0 && shared.stdout.length > 0 ? shared.stdout : branched;
+}
+
 // Why the worktree's history cannot answer what the ticket changed, or null
 // when it can: the round base is not a commit git has, or HEAD shares no
 // history with the target. Validation stops on it before any command, since

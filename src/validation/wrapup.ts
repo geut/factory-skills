@@ -206,6 +206,8 @@ function refSha(cwd: string, ref: string): string | null {
   return result.code === 0 ? result.stdout.trim() : null;
 }
 
+// `baseSha` is the commit the worktree is compared against: the pass's
+// compare base.
 export function captureWrapupState(input: {
   baseBranch: string | null;
   baseSha: string;
@@ -219,6 +221,7 @@ export function captureWrapupState(input: {
     baseHead:
       input.baseBranch === null ? null : refSha(input.codeRoot, `refs/heads/${input.baseBranch}`),
     branch: input.branch,
+    compareBase: input.baseSha,
     factory: factoryFiles(input.factoryRoot, input.ticketDir),
     head: gitOk(input.worktree, ['rev-parse', 'HEAD']).trim(),
     remotes: remoteRefs(input.worktree, input.branch),
@@ -238,8 +241,11 @@ export function parseBaseline(text: string): WrapupBaseline | null {
       'factory' in value &&
       'remotes' in value
     ) {
-      // A baseline taken before wrap-up read the issue's checklist has none.
-      return { boxes: [], ...(value as Omit<WrapupBaseline, 'boxes'>) };
+      // A baseline taken before wrap-up read the issue's checklist has none,
+      // and one stored before passes kept their compare base has none.
+      const compareBase =
+        'compareBase' in value && typeof value.compareBase === 'string' ? value.compareBase : null;
+      return { boxes: [], ...(value as Omit<WrapupBaseline, 'boxes'>), compareBase };
     }
   } catch {
     return null;
@@ -371,8 +377,11 @@ export async function validateWrapup(input: {
   let current: Omit<WrapupBaseline, 'boxes'>;
   let dirty: boolean;
   let branchExists: boolean;
+  // The pass compares against the base it started with; a baseline from
+  // before passes kept one, against where the ticket branched.
+  const compareBase = input.baseline.compareBase ?? input.baseSha;
   try {
-    current = captureWrapupState(input);
+    current = captureWrapupState({ ...input, baseSha: compareBase });
     dirty = gitOk(input.worktree, ['status', '--porcelain']).trim().length > 0;
     branchExists = refSha(input.codeRoot, `refs/heads/${input.branch}`) !== null;
   } catch (error: unknown) {
@@ -414,7 +423,16 @@ export async function validateWrapup(input: {
           .filter((file) => !actual.has(file) && !knownFactory.has(file))
           .map((file) => `## Files lists ${file}, which did not change.`),
       ],
-      `${actual.size} changed path${actual.size === 1 ? '' : 's'} listed`,
+      [
+        `${actual.size} changed path${actual.size === 1 ? '' : 's'} listed`,
+        // The branch was rebased onto a newer target, or the target merged
+        // in, since the ticket started: say what the paths are against.
+        ...(compareBase === input.baseSha
+          ? []
+          : [
+              `against ${compareBase}, its merge-base with the target; the ticket branched at ${input.baseSha}`,
+            ]),
+      ].join(', '),
     ),
   );
 

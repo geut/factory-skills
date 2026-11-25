@@ -343,6 +343,11 @@ export type WrapupBaseline = {
   // its prompt, corrections, and validation all use these.
   boxes: Array<IssueBox>;
   branch: string;
+  // The commit the pass compares the worktree against: the merge-base of
+  // HEAD with the target when the pass started, which follows a rebase onto
+  // a newer target. Null in a baseline stored before it was kept, which
+  // compares against where the ticket branched.
+  compareBase: string | null;
   factory: Record<string, string>;
   head: string;
   remotes: Record<string, string>;
