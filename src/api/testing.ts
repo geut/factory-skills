@@ -14,6 +14,7 @@ export const unusedCommands: FactoryCommands = {
   rerun: unused,
   retry: unused,
   retryRebased: unused,
+  retryRebasedPreview: unused,
   start: unused,
   stopRun: unused,
 };

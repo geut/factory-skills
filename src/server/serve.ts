@@ -370,6 +370,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     rerun: (key, options) => ready().rerun(key, options),
     retry: (key, options) => ready().retry(key, options),
     retryRebased: (key, options) => ready().retryRebased(key, options),
+    retryRebasedPreview: (key) => ready().retryRebasedPreview(key),
     start: (source, options) => ready().start(source, options),
     stopRun: (id, options) => ready().stopRun(id, options),
   };

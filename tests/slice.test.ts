@@ -2928,7 +2928,7 @@ test('a wrap-up pass paused on the target’s files after an authorized rebase c
   // Only a paused or failed pass is carried over, and a dry run is of one.
   assert.match(
     await service.command('retry proj-123 --rebased'),
-    /proj-123 is wrapup\/active; --rebased carries over a wrap-up pass that is paused or failed\./,
+    /proj-123 is wrapup\/active; --rebased carries over a wrap-up pass that is paused, failed, or waiting for you\./,
   );
   assert.match(
     await service.command('retry proj-123 --dry-run'),

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { PendingFeedback } from '../api/commands.ts';
+import { PendingFeedback, RebasedRetryPreview } from '../api/commands.ts';
 import { TicketControllerSteps } from '../api/reads.ts';
 import type { CommandProgress } from '../controller/command-progress.ts';
 import type { ParsedCommand } from '../controller/parse.ts';
@@ -178,11 +178,13 @@ export function createFactoryClient(input: {
     };
   }
 
-  // The pull request's pending feedback, through the server, which reads GitHub.
-  async function pendingFeedback(
+  // A read through the server: the body as `schema` parses it, or the
+  // problem it answered with.
+  async function get<T>(
     url: string,
-    key: string,
-  ): Promise<{ problem: string } | z.infer<typeof PendingFeedback>> {
+    route: string,
+    schema: z.ZodType<T>,
+  ): Promise<{ problem: string } | { value: T }> {
     let token: string;
     try {
       token = readFileSync(localTokenPath(input.factoryRoot), 'utf8').trim();
@@ -191,7 +193,7 @@ export function createFactoryClient(input: {
     }
     let response: Response;
     try {
-      response = await send(`${url}/v1/tickets/${key}/feedback`, {
+      response = await send(`${url}${route}`, {
         headers: { authorization: `Bearer ${token}` },
         method: 'GET',
       });
@@ -201,9 +203,9 @@ export function createFactoryClient(input: {
       };
     }
     const payload: unknown = await response.json().catch(() => ({}));
-    const listed = PendingFeedback.safeParse(payload);
-    if (response.status === 200 && listed.success) {
-      return listed.data;
+    const parsed = schema.safeParse(payload);
+    if (response.status === 200 && parsed.success) {
+      return { value: parsed.data };
     }
     const problem = ProblemBody.safeParse(payload);
     return {
@@ -211,6 +213,25 @@ export function createFactoryClient(input: {
         (problem.success ? (problem.data.detail ?? problem.data.title) : undefined) ??
         `The server answered ${response.status}.`,
     };
+  }
+
+  // The pull request's pending feedback, through the server, which reads GitHub.
+  async function pendingFeedback(
+    url: string,
+    key: string,
+  ): Promise<{ problem: string } | z.infer<typeof PendingFeedback>> {
+    const read = await get(url, `/v1/tickets/${key}/feedback`, PendingFeedback);
+    return 'problem' in read ? read : read.value;
+  }
+
+  // What `/factory retry --rebased` would carry over, through the server,
+  // which reads the ticket's git.
+  async function rebasedPreview(
+    url: string,
+    key: string,
+  ): Promise<{ problem: string } | z.infer<typeof RebasedRetryPreview>> {
+    const read = await get(url, `/v1/tickets/${key}/retries/rebased`, RebasedRetryPreview);
+    return 'problem' in read ? read : read.value;
   }
 
   // The commands long controller steps are running, by ticket key, from the
@@ -450,14 +471,20 @@ export function createFactoryClient(input: {
       if (key === null) {
         return `No factory execution matches ${parsed.ref}.`;
       }
+      if (parsed.kind === 'retry' && parsed.mode === 'rebased_dry_run') {
+        const previewed = await rebasedPreview(url, key);
+        return 'problem' in previewed ? previewed.problem : previewed.preview;
+      }
       sent =
         parsed.kind === 'reply'
           ? await post(url, `/v1/tickets/${key}/replies`, { answer: parsed.answer })
-          : await post(
-              url,
-              `/v1/tickets/${key}/${parsed.kind === 'retry' ? 'retries' : 'complete'}`,
-              undefined,
-            );
+          : parsed.kind === 'retry'
+            ? await post(
+                url,
+                `/v1/tickets/${key}/retries`,
+                parsed.mode === 'rebased' ? { rebased: true } : undefined,
+              )
+            : await post(url, `/v1/tickets/${key}/complete`, undefined);
     }
     return 'problem' in sent ? sent.problem : statusOf(open, sent.ticket);
   }

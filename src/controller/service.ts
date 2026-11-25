@@ -156,6 +156,8 @@ export type FactoryCommands = {
   // Carries a paused wrap-up pass over to a branch a person rebased, then
   // validates again.
   retryRebased: (key: string, options: CommandOptions) => CommandOutcome;
+  // What retryRebased would do; changes nothing but the worktree's refs.
+  retryRebasedPreview: (key: string) => RebasedPreviewOutcome;
   start: (source: TicketSource, options: CommandOptions) => Promise<CommandOutcome>;
   // Stops one running agent by its run id; the ticket pauses.
   stopRun: (runId: string, options: CommandOptions) => CommandOutcome;
@@ -169,6 +171,10 @@ export type PendingFeedbackOutcome =
       Awaited<ReturnType<typeof listFeedback>>,
       FeedbackRefusal
     >)
+  | { kind: 'refused'; message: string; reason: CommandRefusal };
+
+export type RebasedPreviewOutcome =
+  | { kind: 'preview'; preview: string; ticket: string }
   | { kind: 'refused'; message: string; reason: CommandRefusal };
 
 const piCommand: CommandOptions = { actor: null, idempotencyKey: null };
@@ -772,7 +778,7 @@ export function createFactoryService(input: {
   }
 
   function rebasedCommitted(snapshot: FactorySnapshot, options: CommandOptions): Committed {
-    const read = readRebased(snapshot);
+    const read = readRebased(snapshot, true);
     if (read.kind === 'refused') {
       return { kind: 'refused', message: read.message, reason: 'invalid_state' };
     }
@@ -1026,7 +1032,8 @@ export function createFactoryService(input: {
       return snapshot;
     }
     if (dryRun) {
-      return rebasedPreview(snapshot);
+      const preview = rebasedPreview(snapshot);
+      return preview.kind === 'preview' ? preview.text : preview.message;
     }
     const result = rebasedCommitted(snapshot, piCommand);
     if (result.kind === 'refused') {
@@ -1269,6 +1276,16 @@ export function createFactoryService(input: {
     },
     retry: (key, options) => byKey(key, (snapshot) => retryCommitted(snapshot, options)),
     retryRebased: (key, options) => byKey(key, (snapshot) => rebasedCommitted(snapshot, options)),
+    retryRebasedPreview: (key) => {
+      const snapshot = loadCurrentByFactoryKey(db, key);
+      if (snapshot === null) {
+        return { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' };
+      }
+      const preview = rebasedPreview(snapshot);
+      return preview.kind === 'preview'
+        ? { kind: 'preview', preview: preview.text, ticket: snapshot.ticket.displayRef }
+        : { kind: 'refused', message: preview.message, reason: 'invalid_state' };
+    },
     start: async (source, options) => accepted(await startCommitted(source, options)),
     stopRun: (id, options) => {
       const snapshot = loadSnapshotByRun(db, runIdOf(id));

@@ -1,7 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import type { WrapupBaseline } from '../domain.ts';
-import { syncWorktreeRefs, ticketBase, unreadableHistory } from './bases.ts';
+import {
+  syncWorktreeRefs,
+  TARGET_REF,
+  targetRefFor,
+  ticketBase,
+  unreadableHistory,
+} from './bases.ts';
 import { refSha, remoteRefs } from './wrapup.ts';
 
 // Carries a paused wrap-up pass over to its branch after a person rebased it
@@ -158,8 +164,9 @@ function contentHashes(
   return hashes;
 }
 
-// The pass carried over to the rebased branch, or why it cannot be. It
-// changes nothing but the worktree's refs, so a dry run is the same call.
+// The pass carried over to the rebased branch, or why it cannot be. With
+// `write`, the worktree's refs are brought up to date for the carried pass;
+// a dry run reads them, and what they would name, and changes nothing.
 export function carryPassOver(input: {
   baseBranch: string | null;
   baseline: WrapupBaseline;
@@ -169,22 +176,28 @@ export function carryPassOver(input: {
   // The feedback round's start, or null before a round.
   roundStart: string | null;
   worktree: string;
+  write: boolean;
 }): CarryResult {
   const { baseline, worktree } = input;
   const roundBase = input.roundStart ?? input.branched;
-  const synced = syncWorktreeRefs({
-    roundBase,
-    targetBranch: input.baseBranch,
-    worktree,
-  });
-  if (synced !== null) {
-    return { kind: 'refused', message: synced };
+  if (input.write) {
+    const synced = syncWorktreeRefs({
+      roundBase,
+      targetBranch: input.baseBranch,
+      worktree,
+    });
+    if (synced !== null) {
+      return { kind: 'refused', message: synced };
+    }
   }
-  const unreadable = unreadableHistory(worktree, roundBase);
+  // The target as the worktree's ref names it, or would once written.
+  const targetRef =
+    (input.baseBranch === null ? null : targetRefFor(worktree, input.baseBranch)) ?? TARGET_REF;
+  const unreadable = unreadableHistory(worktree, roundBase, targetRef);
   if (unreadable !== null) {
     return { kind: 'refused', message: unreadable };
   }
-  const compareBase = ticketBase(worktree, input.branched);
+  const compareBase = ticketBase(worktree, input.branched, targetRef);
   const start = mappedStart({
     compareBase,
     from: baseline.compareBase ?? input.branched,
@@ -209,13 +222,15 @@ export function carryPassOver(input: {
     return { kind: 'refused', message: round.message };
   }
   const roundStart = round?.commit ?? null;
-  const resynced = syncWorktreeRefs({
-    roundBase: roundStart ?? input.branched,
-    targetBranch: input.baseBranch,
-    worktree,
-  });
-  if (resynced !== null) {
-    return { kind: 'refused', message: resynced };
+  if (input.write) {
+    const resynced = syncWorktreeRefs({
+      roundBase: roundStart ?? input.branched,
+      targetBranch: input.baseBranch,
+      worktree,
+    });
+    if (resynced !== null) {
+      return { kind: 'refused', message: resynced };
+    }
   }
   const paths = Object.keys(baseline.worktree).sort();
   const target = contentHashes(worktree, compareBase, paths);

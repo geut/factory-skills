@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -7,6 +16,9 @@ import { initRepo } from '../../tests/git-repo.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import { FakeRuntime, sampleUsage } from '../runtime/fake.ts';
 import { type RunningServer, serve } from '../server/serve.ts';
+import { CONTEXT_SECTIONS } from '../stages/plan/context.ts';
+import { openStateDatabase } from '../state/database.ts';
+import { captureWrapupState } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import { createFactoryClient, noServerMessage } from './factory-client.ts';
 
@@ -230,5 +242,144 @@ test('a feedback round goes through the API and is refused before handoff', asyn
   assert.equal(parseFactoryCommand('feedback proj-123 --only').kind, 'invalid');
   assert.equal(parseFactoryCommand('feedback proj-123 --bogus').kind, 'invalid');
   assert.equal(parseFactoryCommand('feedback').kind, 'invalid');
+  client.close();
+});
+
+// Git for the test's own commits; throws on failure.
+function run(cwd: string, args: Array<string>): string {
+  const result = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], {
+    cwd,
+    encoding: 'utf8',
+    // CI has no git identity of its own; stash and rebase commit too.
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: 'factory@example.com',
+      GIT_AUTHOR_NAME: 'Factory',
+      GIT_COMMITTER_EMAIL: 'factory@example.com',
+      GIT_COMMITTER_NAME: 'Factory',
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr);
+  }
+  return result.stdout.trim();
+}
+// A wrap-up pass that started before passes kept their compare base, after a
+// person rebased the ticket onto a target that gained 40 files, with its
+// agent waiting on a question: what PLT-3432 hit on 0.6.9.
+test('retry --rebased, and its dry run, go through the server from Pi and recover a wrap-up waiting for you', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  const runtime = new FakeRuntime();
+  await serverFor(codeRoot, pi, runtime);
+  const client = createFactoryClient({ factoryRoot });
+  const launched = (stage: string) => runtime.launches.filter((item) => item.stage === stage);
+  const nth = (stage: string, index: number) => {
+    const found = launched(stage)[index];
+    if (found === undefined) {
+      throw new Error(`missing ${stage} run ${index}`);
+    }
+    return found;
+  };
+  const waitFor = async (label: string, check: () => boolean) => {
+    for (let tries = 0; tries < 500 && !check(); tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(check(), `timed out: ${label}\n${client.status('proj-123')}`);
+  };
+  await client.command(parseFactoryCommand('start proj-123.md'));
+  await waitFor('plan launch', () => runtime.launches.length === 1);
+  const [ticketName] = readdirSync(path.join(factoryRoot, 'tickets'));
+  const ticketDir = path.join(factoryRoot, 'tickets', ticketName ?? '');
+  writeFileSync(
+    path.join(factoryRoot, 'CONTEXT.md'),
+    CONTEXT_SECTIONS.map((section) => `## ${section}\nnone known yet\n`).join('\n'),
+  );
+  writeFileSync(path.join(ticketDir, 'plan.md'), '# Remember the filter\n\n## Outcome\nKept.\n');
+  writeFileSync(
+    path.join(ticketDir, '01-task-store-filter.md'),
+    '---\ntype: feature\nqa: e2e\nblocked_by: []\n---\n\n# Store the filter\n\n## Acceptance criteria\n- [ ] The filter survives a reload.\n',
+  );
+  runtime.emit(nth('plan', 0).runId, {
+    kind: 'subagent_done',
+    output: 'files',
+    usage: sampleUsage(),
+  });
+  await waitFor('work launch', () => launched('work').length === 1);
+  const work = launched('work')[0];
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor('review launch', () => launched('review').length === 1);
+  runtime.emit(nth('review', 0).runId, {
+    kind: 'subagent_done',
+    output:
+      '## Verdict\n\napprove\n\n## Summary\n\nChecked.\n\n## Verification\n\n- AC1: verified — change.txt:1\n\n## Findings\n\nnone\n',
+    usage: sampleUsage(),
+  });
+  await waitFor('wrap-up launch', () => launched('wrapup').length === 1);
+  const wrapup = launched('wrapup')[0];
+  if (wrapup === undefined) {
+    throw new Error('missing wrap-up run');
+  }
+
+  // The target gains 40 files, and a person rebases the ticket onto it.
+
+  mkdirSync(path.join(codeRoot, 'upstream'));
+  for (let index = 0; index < 40; index += 1) {
+    writeFileSync(path.join(codeRoot, `upstream/file${index}.ts`), `${index}\n`);
+  }
+  run(codeRoot, ['add', 'upstream']);
+  run(codeRoot, ['commit', '-qm', 'upstream']);
+  run(work.cwd, ['stash', '-q', '-u']);
+  run(work.cwd, ['rebase', '-q', 'main']);
+  run(work.cwd, ['stash', 'pop', '-q']);
+  // The pass's baseline, as 0.6.8 took it: against where the ticket branched.
+  const db = openStateDatabase(factoryRoot);
+  const branched = String(
+    db.prepare('SELECT worktree_base_sha FROM ticket_executions WHERE is_current = 1').get()?.[
+      'worktree_base_sha'
+    ],
+  );
+  const branch = run(work.cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const { compareBase: _base, ...legacy } = captureWrapupState({
+    baseBranch: 'main',
+    baseSha: branched,
+    branch,
+    codeRoot,
+    factoryRoot,
+    ticketDir,
+    worktree: work.cwd,
+  });
+  db.prepare(
+    "UPDATE agent_runs SET lifecycle_json = json_set(lifecycle_json, '$.baseline', ?) WHERE id = ?",
+  ).run(JSON.stringify({ ...legacy, boxes: [] }), wrapup.runId);
+  db.close();
+
+  // Validation demands the upstream files; the agent asks what to do.
+  const handoff = `## Outcome\n\nKept.\n\n## PR summary\n\nKeep it.\n\n## Files\n\n- \`change.txt\`\n\n## Tests\n\nNo validation commands are configured.\n\n## Issue checklist\n\nnone\n\n## Decisions\n\nnone\n\n## Operations\n\nnone\n\n## Limitations\n\nnone\n\n## Merge commands\n\ngit -C "${work.cwd}" add -- change.txt\ngit merge --ff-only "${branch}"\n`;
+  runtime.emit(wrapup.runId, { kind: 'subagent_done', output: handoff, usage: sampleUsage() });
+  await waitFor('wrap-up correction', () => launched('wrapup').length === 2);
+  runtime.emit(nth('wrapup', 1).runId, {
+    kind: 'caller_ping',
+    question: 'Should I list 40 files I did not change?',
+    usage: sampleUsage(),
+  });
+  await waitFor('waiting for user', () => /waiting_for_user/.test(client.status('proj-123')));
+  // Plain retry has nothing to retry.
+  assert.match(
+    await client.command(parseFactoryCommand('retry proj-123')),
+    /not waiting for retry/,
+  );
+
+  const preview = await client.command(parseFactoryCommand('retry proj-123 --rebased --dry-run'));
+  assert.match(preview, /dropped as the target's own \(40\): upstream\/file0\.ts/);
+  assert.match(preview, /kept \(1\): change\.txt/);
+  assert.match(client.status('proj-123'), /waiting_for_user/);
+
+  await client.command(parseFactoryCommand('retry proj-123 --rebased'));
+  await waitFor('ready for handoff', () => /ready_for_handoff/.test(client.status('proj-123')));
+  assert.doesNotMatch(client.status('proj-123'), /Should I list 40 files/);
   client.close();
 });

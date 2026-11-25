@@ -104,6 +104,7 @@ function carry(value: ReturnType<typeof ticket>, baseline: WrapupBaseline) {
     codeRoot: value.codeRoot,
     roundStart: null,
     worktree: value.worktree,
+    write: true,
   });
 }
 
@@ -220,6 +221,7 @@ test('a feedback round’s start moves with the rebase, so the round’s diff ho
     codeRoot: value.codeRoot,
     roundStart,
     worktree: value.worktree,
+    write: true,
   });
   assert.equal(result.kind, 'carried');
   const moved = result.kind === 'carried' ? (result.pass.roundStart ?? '') : '';
@@ -227,4 +229,27 @@ test('a feedback round’s start moves with the rebase, so the round’s diff ho
   assert.equal(git(value.worktree, ['diff', '--name-only', moved, 'HEAD']), 'src/b.ts');
   // The worktree's round-base ref follows it.
   assert.equal(git(value.worktree, ['rev-parse', 'refs/worktree/factory/round-base']), moved);
+});
+
+test('a dry run reads the worktree’s refs, and what they would name, and writes none', () => {
+  const value = ticket();
+  upstream(value.codeRoot, 4);
+  git(value.worktree, ['rebase', '-q', 'origin/main']);
+  const legacy = capture(value, value.branched);
+  const refs = () =>
+    spawnSync('git', ['for-each-ref', 'refs/worktree/'], { cwd: value.worktree, encoding: 'utf8' })
+      .stdout;
+  assert.equal(refs(), '');
+  const result = carryPassOver({
+    baseBranch: 'main',
+    baseline: legacy,
+    branched: value.branched,
+    codeRoot: value.codeRoot,
+    roundStart: null,
+    worktree: value.worktree,
+    write: false,
+  });
+  // The same answer as the real carry-over, against the ref it would write.
+  assert.equal(result.kind === 'carried' ? result.pass.dropped.length : null, 4);
+  assert.equal(refs(), '');
 });
