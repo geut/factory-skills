@@ -134,7 +134,7 @@ function piBinary(env: NodeJS.ProcessEnv): string | null {
 }
 
 // The files of the child handshake extension, which it imports side by side.
-const HANDSHAKE_FILES = ['child-handshake.ts', 'work-report.ts'] as const;
+const HANDSHAKE_FILES = ['child-handshake.ts', 'ticket-access.ts', 'work-report.ts'] as const;
 
 // The single executable carries the child handshake extension as assets and
 // writes them into the factory root, where each agent's Pi loads it with -e.
@@ -367,6 +367,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     feedback: (key, request, options) => ready().feedback(key, request, options),
     pendingFeedback: (key) => ready().pendingFeedback(key),
     reply: (key, answer, options) => ready().reply(key, answer, options),
+    requestWorkValidation: (key, token, tests) => ready().requestWorkValidation(key, token, tests),
     rerun: (key, options) => ready().rerun(key, options),
     retry: (key, options) => ready().retry(key, options),
     retryRebased: (key, options) => ready().retryRebased(key, options),
@@ -534,6 +535,7 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     log: input.out,
     notify: input.out,
     runtime,
+    serverUrl: url,
   });
 
   let closed = false;

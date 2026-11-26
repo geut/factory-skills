@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { postJson, ticketAccessFrom, validationSummary } from './ticket-access.ts';
 import {
   REPORT_NUDGE,
   WORK_REPORT,
@@ -106,6 +107,9 @@ export const REPORT_ATTEMPTS = 3;
 
 export const REPORT_DONE_DESCRIPTION =
   "Finish this factory stage: your report is this call's arguments, and the controller reads only them. Call it once, as your last tool call; the session ends after it. If the report is refused, fix the fields the error names and call it again. If a message still arrives, follow it. Do not call caller_ping after it.";
+
+export const RUN_VALIDATION_DESCRIPTION =
+  'Ask the controller to run the work validation commands on the worktree as it stands, and wait for their results; it takes as long as they do. Give the validation_selection your report will have. If they pass and you change nothing before calling subagent_done with the same validation_selection, the controller reuses this pass instead of running them again. Your own runs of the commands never count.';
 
 // What a refused report tells the agent.
 export function refusal(problems: ReadonlyArray<string>): string {
@@ -238,6 +242,55 @@ export default function factoryChildHandshake(
     name: 'subagent_done',
     parameters: report ? (WORK_REPORT_PARAMETERS as unknown as ToolParameters) : doneParameters,
   });
+  // A work run can ask the controller to validate while it iterates: the
+  // controller runs the commands, and a pass is reused at submission while
+  // nothing changes. Without the server's address, as when a factory runs
+  // without one, it says so.
+  if (report) {
+    const access = ticketAccessFrom(env);
+    pi.registerTool({
+      description: RUN_VALIDATION_DESCRIPTION,
+      async execute(_toolCallId, params, signal) {
+        if (access === null) {
+          throw new Error(
+            'run_validation is not available in this run; call subagent_done with your report, and the controller validates it then.',
+          );
+        }
+        const selection =
+          typeof params === 'object' && params !== null && 'validation_selection' in params
+            ? { validation_selection: params.validation_selection }
+            : {};
+        const answered = await postJson({
+          access,
+          body: selection,
+          route: `/v1/tickets/${encodeURIComponent(access.key)}/work-validations`,
+          ...(signal === undefined ? {} : { signal }),
+        });
+        if (answered.status !== 200) {
+          const problem =
+            typeof answered.payload === 'object' && answered.payload !== null
+              ? (answered.payload as { detail?: unknown; title?: unknown })
+              : {};
+          throw new Error(
+            `The controller did not run the validation: ${String(problem.detail ?? problem.title ?? `it answered ${answered.status}`)}`,
+          );
+        }
+        return {
+          content: [{ text: validationSummary(answered.payload), type: 'text' }],
+          details: undefined,
+        };
+      },
+      label: 'Validate',
+      name: 'run_validation',
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          validation_selection: WORK_REPORT_PARAMETERS.properties.validation_selection,
+        },
+        type: 'object',
+      } as unknown as ToolParameters,
+    });
+  }
   pi.registerTool({
     description:
       'Ask the human a question you cannot answer. This replaces the stage template. Do not use it to report that the work is finished.',

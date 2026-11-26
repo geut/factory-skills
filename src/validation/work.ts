@@ -3,14 +3,16 @@ import path from 'node:path';
 import { allowsEmptyDiff, type WorkCommand } from '../config.ts';
 import type { CommandReporter } from '../controller/command-progress.ts';
 import { factoryRootOf } from '../controller/keys.ts';
-import type { WorkValidationReport } from '../domain.ts';
+import type { RequestedValidation, WorkValidationReport } from '../domain.ts';
 import { isOsMetadata } from '../os-metadata.ts';
 import { missingReport } from '../runtime/work-report.ts';
 import { feedbackRoundOf } from '../stages/feedback.ts';
 import { runOutput } from '../stages/output.ts';
 import { taskCriteria, type Criterion } from '../stages/qa/criteria.ts';
+import { factoryVersion } from '../version.ts';
 import { headCheck, roundBase, syncWorktreeRefs, unreadableHistory } from './bases.ts';
 import { commandEnv, ensureValidationLogs } from './command-env.ts';
+import { workFingerprint } from './fingerprint.ts';
 import {
   errorReport,
   failedReport,
@@ -26,6 +28,7 @@ import {
   SELECTION_FIX,
   taskSelection,
   type ParsedSelection,
+  type SelectedTest,
 } from './selection.ts';
 
 export const WORK_VALIDATOR_VERSION = 'work.v1';
@@ -238,9 +241,14 @@ async function validateWork(input: {
   cwd: string;
   // Where the commands are told to keep their logs.
   factoryRoot: string;
+  // What the commands' inputs hash to now, given the selection; null when
+  // they cannot be read, which never reuses a pass.
+  fingerprint: (tests: Array<SelectedTest>) => string | null;
   // Why the run ended without a report, or null when it has one.
   missingReport: string | null;
   reportCommand: CommandReporter;
+  // The validation the run asked for while it iterated, if any.
+  requested: RequestedValidation | null;
   // The tests the worker proposed, for the commands.
   selection: ParsedSelection;
   // The branch the pull request targets, for the worktree's target ref.
@@ -333,18 +341,27 @@ async function validateWork(input: {
       }),
     );
   }
-  ensureValidationLogs(input.factoryRoot);
-  for (const [index, command] of input.commands.entries()) {
-    input.reportCommand({ command: command.name, index: index + 1, total: input.commands.length });
-    const result = await runCommand(
-      command,
-      input.cwd,
-      commandEnv({ factoryRoot: input.factoryRoot, tests }),
-    );
-    if (result.spawnError !== null) {
-      return errorReport(WORK_VALIDATOR_VERSION, result.spawnError);
+  // A pass the worker asked for in this run, on inputs that are still the
+  // same, stands for the commands; anything else runs them.
+  const reused = reusablePass({
+    fingerprint: input.fingerprint,
+    requested: input.requested,
+    tests,
+  });
+  if (reused !== null) {
+    checks.push(...reused);
+  } else {
+    const ran = await runWorkCommands({
+      commands: input.commands,
+      cwd: input.cwd,
+      factoryRoot: input.factoryRoot,
+      reportCommand: input.reportCommand,
+      tests,
+    });
+    if ('spawnError' in ran) {
+      return errorReport(WORK_VALIDATOR_VERSION, ran.spawnError);
     }
-    checks.push(commandCheck(command, input.cwd, result));
+    checks.push(...ran.checks);
   }
   const failures = failuresOf(checks);
   if (failures.length > 0) {
@@ -361,6 +378,54 @@ async function validateWork(input: {
     criteria: input.criteria,
     diff: final.diff,
   });
+}
+
+// The work commands, run as validation runs them: each in its own
+// environment, with the selection, logging where validators log.
+export async function runWorkCommands(input: {
+  commands: Array<WorkCommand>;
+  cwd: string;
+  factoryRoot: string;
+  reportCommand: CommandReporter;
+  tests: Array<SelectedTest>;
+}): Promise<{ checks: Array<ValidationCheck> } | { spawnError: string }> {
+  ensureValidationLogs(input.factoryRoot);
+  const checks: Array<ValidationCheck> = [];
+  for (const [index, command] of input.commands.entries()) {
+    input.reportCommand({ command: command.name, index: index + 1, total: input.commands.length });
+    const result = await runCommand(
+      command,
+      input.cwd,
+      commandEnv({ factoryRoot: input.factoryRoot, tests: input.tests }),
+    );
+    if (result.spawnError !== null) {
+      return { spawnError: result.spawnError };
+    }
+    checks.push(commandCheck(command, input.cwd, result));
+  }
+  return { checks };
+}
+
+// The checks of a requested validation that stand for the commands now, each
+// marked reused with when it ran and on what; null when it cannot stand: it
+// failed, its inputs changed while it ran, or they differ now.
+function reusablePass(input: {
+  fingerprint: (tests: Array<SelectedTest>) => string | null;
+  requested: RequestedValidation | null;
+  tests: Array<SelectedTest>;
+}): Array<ValidationCheck> | null {
+  const { requested } = input;
+  if (requested === null || !requested.passed || !requested.reusable) {
+    return null;
+  }
+  const now = input.fingerprint(input.tests);
+  if (now === null || now !== requested.fingerprint) {
+    return null;
+  }
+  return requested.checks.map((check) => ({
+    ...check,
+    details: `reused: ran at ${requested.finishedAt} in this run, on the same inputs (fingerprint ${requested.fingerprint.slice(0, 12)}); ${check.details}`,
+  }));
 }
 
 export const workValidator: Validator<'work'> = {
@@ -383,8 +448,23 @@ export const workValidator: Validator<'work'> = {
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
       factoryRoot: factoryRootOf(factoryDir),
+      fingerprint: (tests) => {
+        const found = workFingerprint({
+          base,
+          commands: policy.validation.work.commands,
+          executionId: snapshot.execution.id,
+          factoryRoot: factoryRootOf(factoryDir),
+          selection: tests,
+          validatorVersion: WORK_VALIDATOR_VERSION,
+          version: factoryVersion(),
+          worktree: worktreePath,
+        });
+        return 'fingerprint' in found ? found.fingerprint : null;
+      },
       missingReport: missingReport(runOutput(run)),
       reportCommand: deps.reportCommand,
+      // Only the run that asked: a later run, or another task's, revalidates.
+      requested: run.requestedValidation,
       // The selection as of the run validated: a retry of it gets the same.
       selection: task === null ? { kind: 'absent' } : taskSelection(snapshot, task.taskId, run),
       targetBranch: worktreeBaseBranch,

@@ -16,6 +16,7 @@ import {
   type ActionRecord,
   type Actor,
   type CarriedRecord,
+  type RequestedValidation,
   type AttentionRecord,
   type ControllerEvent,
   type ControllerResponse,
@@ -45,6 +46,7 @@ import { parseFeedbackRound } from '../stages/feedback.ts';
 import { isInputStage, stages, type InputStage } from '../stages/index.ts';
 import { isTitleTemplate, type TitleTemplate } from '../stages/wrapup/title.ts';
 import { FactoryDatabaseError, immediateTransaction } from '../state/database.ts';
+import type { ValidationCheck } from '../validation/report.ts';
 import { card, encodeCard } from './card.ts';
 import { keyOfFactoryDir } from './keys.ts';
 import { describeExisting, reduce } from './reduce.ts';
@@ -511,6 +513,37 @@ export function recordCarriedPass(
   );
 }
 
+// A validation a work run asked for, every one of them, kept as a domain event
+// on the ticket for audit and stats: the run keeps only its latest.
+export const REQUESTED_VALIDATION_RECORD = 'work_validation_ran';
+
+export function recordRequestedValidation(
+  db: DatabaseSync,
+  input: {
+    attached: boolean;
+    evidence: RequestedValidation;
+    executionId: ExecutionId;
+    runId: RunId;
+  },
+): void {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO events
+      (id, execution_id, run_id, direction, source, kind, dedupe_key, payload_json,
+       processing_status, received_at, processed_at)
+     VALUES (?, ?, ?, 'domain', 'controller', ?, ?, ?, 'processed', ?, ?)`,
+  ).run(
+    id,
+    input.executionId,
+    input.runId,
+    REQUESTED_VALIDATION_RECORD,
+    `requested-validation:${id}`,
+    JSON.stringify({ attached: input.attached, evidence: input.evidence }),
+    input.evidence.finishedAt,
+    input.evidence.finishedAt,
+  );
+}
+
 // A process the stray sweep stopped, or failed to stop, before one of this
 // execution's runs: kept as a domain event on the ticket for audit.
 export function recordStrayProcess(
@@ -804,6 +837,9 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
         paneName: nullableText(record, 'pane_name'),
         parentRunId: parent === null ? null : runId(parent),
         purpose: oneOf(text(record, 'purpose'), RUN_PURPOSES, 'run purpose'),
+        requestedValidation: requestedValidationFromLifecycle(
+          nullableText(record, 'lifecycle_json'),
+        ),
         resultContract: nullableText(record, 'result_contract'),
         resultError: nullableText(record, 'result_error'),
         resultHash: nullableText(record, 'result_hash'),
@@ -1320,16 +1356,67 @@ function insertSession(
 }
 
 function lifecycleJson(
-  run: Pick<RunRecord, 'baseline' | 'description' | 'handoffHead'>,
+  run: Pick<RunRecord, 'baseline' | 'description' | 'handoffHead' | 'requestedValidation'>,
 ): string | null {
-  if (run.description === null && run.baseline === null && run.handoffHead === null) {
+  if (
+    run.description === null &&
+    run.baseline === null &&
+    run.handoffHead === null &&
+    run.requestedValidation === null
+  ) {
     return null;
   }
   return JSON.stringify({
     baseline: run.baseline,
     description: run.description,
     ...(run.handoffHead === null ? {} : { handoffHead: run.handoffHead }),
+    ...(run.requestedValidation === null ? {} : { requestedValidation: run.requestedValidation }),
   });
+}
+
+// A run's requested validation, as stored; null when there is none, or it
+// does not read as one, which is never taken as a pass.
+function requestedValidationFromLifecycle(raw: string | null): RequestedValidation | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const value = isRecord(parsed) ? parsed['requestedValidation'] : undefined;
+    if (
+      !isRecord(value) ||
+      typeof value['fingerprint'] !== 'string' ||
+      typeof value['passed'] !== 'boolean' ||
+      typeof value['reusable'] !== 'boolean' ||
+      typeof value['startedAt'] !== 'string' ||
+      typeof value['finishedAt'] !== 'string' ||
+      !Array.isArray(value['checks'])
+    ) {
+      return null;
+    }
+    const checks = value['checks'].filter(
+      (check): check is ValidationCheck =>
+        isRecord(check) &&
+        typeof check['name'] === 'string' &&
+        typeof check['details'] === 'string' &&
+        (check['status'] === 'passed' ||
+          check['status'] === 'failed' ||
+          check['status'] === 'error'),
+    );
+    if (checks.length !== value['checks'].length) {
+      return null;
+    }
+    return {
+      checks,
+      fingerprint: value['fingerprint'],
+      finishedAt: value['finishedAt'],
+      passed: value['passed'],
+      reusable: value['reusable'],
+      startedAt: value['startedAt'],
+    };
+  } catch {
+    return null;
+  }
 }
 
 function handoffHeadFromLifecycle(raw: string | null): string | null {
@@ -1717,6 +1804,7 @@ function snapshotForEvent(db: DatabaseSync, event: ControllerEvent): FactorySnap
     case 'launch_failed':
     case 'reconciled':
     case 'stop':
+    case 'work_validation_requested':
       return loadByRun(db, event.runId);
     case 'worktree_ready':
     case 'worktree_failed':
@@ -1755,6 +1843,7 @@ function eventRunId(event: ControllerEvent): string | null {
     case 'reconciled':
     case 'stop':
     case 'retry_rebased':
+    case 'work_validation_requested':
       return event.runId;
     case 'start':
     case 'reply':

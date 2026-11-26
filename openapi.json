@@ -1670,6 +1670,68 @@
         }
       }
     },
+    "/v1/tickets/{key}/work-validations": {
+      "post": {
+        "operationId": "requestWorkValidation",
+        "security": [],
+        "summary": "Run the work validation commands for the ticket's running work run, when its agent asks; the run's submission reuses a pass while nothing it depends on changed",
+        "tags": [
+          "commands"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "schema": {
+              "description": "`Bearer` and the ticket's token, FACTORY_TICKET_TOKEN in its agents' environment. A client token does not work here.",
+              "type": "string"
+            },
+            "description": "`Bearer` and the ticket's token, FACTORY_TICKET_TOKEN in its agents' environment. A client token does not work here."
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "schema": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "required": true,
+            "description": "A ticket key: the name of its factory directory, `<slug>-<hash8>`."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestWorkValidation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The commands ran; their checks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestedValidationResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "A problem: the request was refused or failed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tickets/{key}/complete": {
       "post": {
         "operationId": "completeTicket",
@@ -2259,6 +2321,47 @@
           "rebased": {
             "description": "A person rebased the ticket's branch onto a newer target: carry the paused wrap-up pass over to it, dropping the paths that are the target's own, then validate again. A commit the rebase changed is refused.",
             "type": "boolean"
+          }
+        }
+      },
+      "RequestWorkValidation": {
+        "type": "object",
+        "properties": {
+          "validation_selection": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "focused",
+                  "default"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "tests": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "mode"
+            ]
           }
         }
       },
@@ -4640,6 +4743,9 @@
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
+          },
+          "workValidation": {
+            "$ref": "#/components/schemas/WorkValidationStats"
           }
         },
         "required": [
@@ -4656,7 +4762,8 @@
           "neededAPerson",
           "outcomes",
           "started",
-          "tokens"
+          "tokens",
+          "workValidation"
         ],
         "additionalProperties": false
       },
@@ -4701,6 +4808,45 @@
           "questions",
           "replies",
           "stops"
+        ],
+        "additionalProperties": false
+      },
+      "WorkValidationStats": {
+        "type": "object",
+        "properties": {
+          "ranMs": {
+            "type": "number",
+            "description": "Time the work validation commands ran for: at submissions that ran them, and at requests."
+          },
+          "requested": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Validations work runs asked for while they iterated."
+          },
+          "reused": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Submissions that reused a requested pass instead of running the commands."
+          },
+          "reusedMs": {
+            "type": "number",
+            "description": "Time the reused passes took when they ran: what reuse saved."
+          },
+          "submissions": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Work submissions the controller validated."
+          }
+        },
+        "required": [
+          "ranMs",
+          "requested",
+          "reused",
+          "reusedMs",
+          "submissions"
         ],
         "additionalProperties": false
       },
@@ -5216,6 +5362,9 @@
           },
           "waitingMs": {
             "type": "number"
+          },
+          "workValidation": {
+            "$ref": "#/components/schemas/WorkValidationStats"
           }
         },
         "required": [
@@ -5244,7 +5393,8 @@
           "tokensCacheWrite",
           "tokensInput",
           "tokensOutput",
-          "waitingMs"
+          "waitingMs",
+          "workValidation"
         ],
         "additionalProperties": false
       },
@@ -5445,6 +5595,9 @@
           "waitingMs": {
             "type": "number"
           },
+          "workValidation": {
+            "$ref": "#/components/schemas/WorkValidationStats"
+          },
           "definitions": {
             "type": "string",
             "const": "stats.v1"
@@ -5484,6 +5637,7 @@
           "tokensInput",
           "tokensOutput",
           "waitingMs",
+          "workValidation",
           "definitions",
           "factoryId",
           "type"
@@ -5700,6 +5854,97 @@
         "required": [
           "preview",
           "ticket"
+        ],
+        "additionalProperties": false
+      },
+      "RequestedValidationResult": {
+        "type": "object",
+        "properties": {
+          "attached": {
+            "type": "boolean",
+            "description": "Whether the result was kept on the run for its submission: false when the run ended while the commands ran."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "details": {
+                  "type": "string"
+                },
+                "durationMs": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "exitCode": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "outputExcerpt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "error"
+                  ]
+                }
+              },
+              "required": [
+                "details",
+                "kind",
+                "name",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "finishedAt": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reusable": {
+            "type": "boolean",
+            "description": "False when the inputs changed while the commands ran, by a formatter or an edit: the submission then runs them again."
+          },
+          "startedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attached",
+          "checks",
+          "fingerprint",
+          "finishedAt",
+          "passed",
+          "reusable",
+          "startedAt"
         ],
         "additionalProperties": false
       },

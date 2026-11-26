@@ -46,7 +46,9 @@ const REPORT =
   'When the work is done, call subagent_done with your report as its arguments: the controller reads only them, not your text. If it refuses the report, fix the fields it names and call it again.';
 
 const contract = 'factory.work.v3';
-const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write'];
+// `run_validation` asks the controller to run the validation commands now;
+// the child handshake provides it.
+const tools = ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'run_validation'];
 
 // The FACTORY.json limits this stage reads.
 // `missingReportCorrections` bounds the corrections in a row for runs that
@@ -151,6 +153,7 @@ export const work = defineStage<WorkInput, 'work', WorkPrepared>({
           ? "QA runs for this task and owns its end-to-end tests: write unit tests (and component tests where the project has them), keep the existing end-to-end suite passing, and leave every end-to-end test of this task's acceptance criteria, API requests included, to QA."
           : 'QA does not run for this task: add or update end-to-end coverage for its acceptance criteria where the project has a harness.',
         `The report's validation_selection goes to the validation commands below as ${SELECTION_ENV} JSON, and the project's validator decides how to run it: \`focused\` with the regression tests you found from your own diff, each a test file relative to the repository root with why it covers the change; or \`default\` with why, which leaves ${SELECTION_ENV} unset so the validator uses its default behavior. Every report states it again. The report's tests stay your account of what you ran.`,
+        'To check your work before you report, call run_validation with the validation_selection your report will have: the controller runs the validation commands below on the worktree as it stands and tells you the results. Run them that way rather than yourself when you can: if they pass and you change nothing more, your report reuses that pass instead of waiting for them again. Your own runs of them never count.',
         // Everything work validation checks, so nothing it rejects is a surprise.
         'Work validation checks that:',
         // A round may decline every item and change nothing.

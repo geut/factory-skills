@@ -21,7 +21,12 @@ import { DEFAULT_COMMUNICATION } from '../src/communication.ts';
 import { DEFAULT_LIMITS, writeCommunication } from '../src/config.ts';
 import { factoryRootOf } from '../src/controller/keys.ts';
 import { createFactoryService } from '../src/controller/service.ts';
-import { applyControllerEvent, loadGeneration } from '../src/controller/store.ts';
+import {
+  applyControllerEvent,
+  loadGeneration,
+  loadSnapshotByExecution,
+  ticketKeyOf,
+} from '../src/controller/store.ts';
 import { usageRows } from '../src/controller/usage.ts';
 import {
   executionId,
@@ -45,6 +50,7 @@ import { openStateDatabase } from '../src/state/database.ts';
 import { runFacts, ticketFacts, type TokenCategories } from '../src/stats/facts.ts';
 import { stageMeasures, summarize } from '../src/stats/measures.ts';
 import { ROUND_BASE_REF, TARGET_REF } from '../src/validation/bases.ts';
+import { ticketToken, ticketTokenSecret } from '../src/validation/ticket-token.ts';
 import { captureWrapupState } from '../src/validation/wrapup.ts';
 import { git, initRepo } from './git-repo.ts';
 
@@ -3389,5 +3395,190 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
     idempotencyKey: 'other',
   });
   assert.match(other.kind === 'refused' ? other.message : '', /not ready for handoff/);
+  await closeWhenIdle(db);
+});
+
+// A ticket whose worker is at work, with one validation command that counts
+// its runs in `counter`, and does `extra` too.
+async function workWithCountedValidation(extra = '') {
+  const { codeRoot, factoryRoot } = repo();
+  const counter = path.join(codeRoot, '..', `${path.basename(codeRoot)}-runs.txt`);
+  roots.push(counter);
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    `${JSON.stringify({
+      models: { review: 'review-model', work: 'work-model' },
+      validation: {
+        work: {
+          commands: [
+            { argv: ['sh', '-c', `echo run >> ${JSON.stringify(counter)}${extra}`], name: 'tests' },
+          ],
+        },
+      },
+    })}\n`,
+  );
+  writeFileSync(path.join(codeRoot, 'proj-123.md'), '# Remember the filter\n');
+  const db = openStateDatabase(factoryRoot, { create: true });
+  const runtime = new FakeRuntime();
+  const service = createFactoryService({ codeRoot, db, factoryRoot, github, runtime });
+  await service.command('start proj-123.md');
+  writePlanFiles(ticketDir(factoryRoot), '01-task-store-filter.md');
+  const planRun = runtime.launches[0]?.runId;
+  if (planRun === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(planRun, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'work').length === 1);
+  const work = launchesOf(runtime, 'work')[0];
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  await waitFor(() => service.status('proj-123').includes('Launched'));
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  const execution = String(
+    db.prepare('SELECT id FROM ticket_executions WHERE is_current = 1').get()?.['id'],
+  );
+  const loaded = loadSnapshotByExecution(db, executionId(execution));
+  const key = loaded === null ? '' : ticketKeyOf(loaded);
+  const token = ticketToken(ticketTokenSecret(factoryRoot), execution);
+  const runs = () =>
+    existsSync(counter) ? readFileSync(counter, 'utf8').split('\n').filter(Boolean).length : 0;
+  return { codeRoot, db, factoryRoot, key, runs, runtime, service, token, work };
+}
+
+test('a pass the worker asked for is reused by its submission when nothing changed', async () => {
+  const { db, key, runs, runtime, service, token, work } = await workWithCountedValidation();
+  const asked = await service.commands.requestWorkValidation(key, token, []);
+  assert.equal(asked.kind, 'validated');
+  assert.ok(
+    asked.kind === 'validated' &&
+      asked.evidence.passed &&
+      asked.evidence.reusable &&
+      asked.attached,
+  );
+  assert.equal(runs(), 1);
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  // The commands did not run again; the check says it is reused, and how.
+  assert.equal(runs(), 1);
+  const check: unknown = db
+    .prepare(
+      "SELECT json_extract(details_json, '$.details') AS details FROM validation_checks WHERE name = 'tests' ORDER BY rowid DESC LIMIT 1",
+    )
+    .get();
+  assert.match(
+    String((check as { details?: unknown } | undefined)?.details),
+    /^reused: ran at .* in this run, on the same inputs \(fingerprint [0-9a-f]{12}\); /,
+  );
+  // Stats: the commands ran once, at the request, and the submission reused it.
+  const took = asked.kind === 'validated' ? (asked.evidence.checks[0]?.durationMs ?? 0) : -1;
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  assert.deepEqual(ticket?.workValidation, {
+    ranMs: took,
+    requested: 1,
+    reused: 1,
+    reusedMs: took,
+    submissions: 1,
+  });
+  await closeWhenIdle(db);
+});
+
+test('any change after the requested pass, or a failed one, runs the commands again at submission', async () => {
+  const changed = await workWithCountedValidation();
+  await changed.service.commands.requestWorkValidation(changed.key, changed.token, []);
+  writeFileSync(path.join(changed.work.cwd, 'another.txt'), 'new\n');
+  changed.runtime.emit(changed.work.runId, {
+    kind: 'subagent_done',
+    output: 'stored it',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(changed.runtime, 'review').length === 1);
+  assert.equal(changed.runs(), 2);
+  const [ticket] = ticketFacts(changed.db, { now: new Date().toISOString() });
+  assert.deepEqual(
+    { ...ticket?.workValidation, ranMs: 0 },
+    { ranMs: 0, requested: 1, reused: 0, reusedMs: 0, submissions: 1 },
+  );
+  await closeWhenIdle(changed.db);
+
+  const failing = await workWithCountedValidation('; exit 1');
+  const asked = await failing.service.commands.requestWorkValidation(
+    failing.key,
+    failing.token,
+    [],
+  );
+  assert.ok(asked.kind === 'validated' && !asked.evidence.passed);
+  failing.runtime.emit(failing.work.runId, {
+    kind: 'subagent_done',
+    output: 'stored it',
+    usage: sampleUsage(),
+  });
+  // Never reused as a pass: it runs again, fails again, and the worker is corrected.
+  await waitFor(() => launchesOf(failing.runtime, 'work').length === 2);
+  assert.equal(failing.runs(), 2);
+  await closeWhenIdle(failing.db);
+});
+
+test('a command that changes files leaves nothing to reuse', async () => {
+  const { db, key, runs, runtime, service, token, work } = await workWithCountedValidation(
+    `; echo formatted >> ${JSON.stringify('formatted.txt')}`,
+  );
+  const asked = await service.commands.requestWorkValidation(key, token, []);
+  assert.ok(asked.kind === 'validated' && asked.evidence.passed && !asked.evidence.reusable);
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor(() => runs() === 2);
+  await closeWhenIdle(db);
+});
+
+test('only the ticket’s token, while its worker runs, and one request at a time', async () => {
+  const { db, key, runtime, service, token, work } = await workWithCountedValidation('; sleep 1');
+  const wrong = await service.commands.requestWorkValidation(key, 'f'.repeat(64), []);
+  assert.deepEqual(wrong.kind === 'refused' ? wrong.reason : null, 'unauthorized');
+  // Two at once: the second is refused while the first runs.
+  const [first, second] = await Promise.all([
+    service.commands.requestWorkValidation(key, token, []),
+    service.commands.requestWorkValidation(key, token, []),
+  ]);
+  assert.equal(first.kind, 'validated');
+  assert.match(second.kind === 'refused' ? second.message : '', /already running/);
+  // The result is kept on the run, for a restart to find.
+  assert.match(
+    String(
+      db.prepare('SELECT lifecycle_json FROM agent_runs WHERE id = ?').get(work.runId)?.[
+        'lifecycle_json'
+      ],
+    ),
+    /"requestedValidation":\{.*"passed":true,"reusable":true/,
+  );
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  // No worker runs now: nothing to validate for.
+  const late = await service.commands.requestWorkValidation(key, token, []);
+  assert.match(late.kind === 'refused' ? late.message : '', /has no work run running/);
+  await closeWhenIdle(db);
+});
+
+test('a requested pass survives a restart: the new server reuses it at submission', async () => {
+  const { codeRoot, db, factoryRoot, key, runs, service, token, work } =
+    await workWithCountedValidation();
+  const asked = await service.commands.requestWorkValidation(key, token, []);
+  assert.ok(asked.kind === 'validated' && asked.evidence.passed && asked.attached);
+  // The worker finishes while the server is down; the next one validates it.
+  applyControllerEvent(db, {
+    dedupeKey: `runtime:${work.runId}:terminal`,
+    event: {
+      kind: 'runtime_terminal',
+      runId: work.runId,
+      terminal: { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() },
+    },
+    ids: randomIds(),
+    now: '2026-11-26T00:00:00.000Z',
+    source: 'runtime',
+  });
+  const runtime = new FakeRuntime();
+  const restarted = createFactoryService({ codeRoot, db, factoryRoot, github, runtime });
+  await restarted.recover();
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  assert.equal(runs(), 1);
   await closeWhenIdle(db);
 });

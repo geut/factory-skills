@@ -31,6 +31,7 @@ import {
   type FactorySnapshot,
   type IdSource,
   type Policy,
+  type RequestedValidation,
   type RunId,
   type TerminalOutcome,
 } from '../domain.ts';
@@ -57,7 +58,11 @@ import { stages } from '../stages/index.ts';
 import { runReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
-import { roundStart } from '../validation/bases.ts';
+import { roundBase, roundStart } from '../validation/bases.ts';
+import { workFingerprint } from '../validation/fingerprint.ts';
+import { missingTests, type SelectedTest } from '../validation/selection.ts';
+import { isTicketToken, ticketTokenSecret } from '../validation/ticket-token.ts';
+import { runWorkCommands, WORK_VALIDATOR_VERSION } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import { createCommandBoard, type CommandProgress } from './command-progress.ts';
@@ -68,7 +73,7 @@ import {
   recordPullRequest,
   recordReview,
 } from './facts.ts';
-import { generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
+import { factoryRootOf, generationDir, keyOfFactoryDir, ticketDirOf } from './keys.ts';
 import { parseFactoryCommand, type ParsedCommand } from './parse.ts';
 
 type FeedbackCommand = Extract<ParsedCommand, { kind: 'feedback' }>;
@@ -97,6 +102,7 @@ import {
   loadSnapshotByRun,
   recordCard,
   recordCarriedPass,
+  recordRequestedValidation,
   requeueOrphanedPanes,
   requeueOrphanedTrackerUpdates,
   requeueOrphanedWorktrees,
@@ -150,6 +156,15 @@ export type FactoryCommands = {
   // Reads GitHub; changes nothing.
   pendingFeedback: (key: string) => Promise<PendingFeedbackOutcome>;
   reply: (key: string, answer: string, options: CommandOptions) => CommandOutcome;
+  // Runs the work validation commands for the ticket's running work run, on
+  // its worktree as it stands, when its agent asks with the ticket's token;
+  // the run's submission reuses the result while nothing it depends on
+  // changed.
+  requestWorkValidation: (
+    key: string,
+    token: string,
+    tests: Array<SelectedTest>,
+  ) => Promise<WorkValidationOutcome>;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
   retry: (key: string, options: CommandOptions) => CommandOutcome;
@@ -172,6 +187,20 @@ export type PendingFeedbackOutcome =
       FeedbackRefusal
     >)
   | { kind: 'refused'; message: string; reason: CommandRefusal };
+
+// What a validation a work agent asked for came to.
+export type WorkValidationOutcome =
+  | {
+      // Whether it was kept on the run: false when the run ended meanwhile.
+      attached: boolean;
+      evidence: RequestedValidation;
+      kind: 'validated';
+    }
+  | {
+      kind: 'refused';
+      message: string;
+      reason: 'invalid_state' | 'ticket_not_found' | 'unauthorized';
+    };
 
 export type RebasedPreviewOutcome =
   | { kind: 'preview'; preview: string; ticket: string }
@@ -275,6 +304,9 @@ export function createFactoryService(input: {
   now?: () => string;
   onActivity?: () => void;
   runtime?: FactorySubagentRuntime;
+  // Where this server answers, for agents to ask it for controller work with
+  // their ticket's token; without it, agents get no such access.
+  serverUrl?: string;
 }): FactoryService {
   const db = input.db ?? openStateDatabase(input.factoryRoot, { create: true });
   const runtime = input.runtime ?? createPiHerdrRuntime();
@@ -553,6 +585,7 @@ export function createFactoryService(input: {
           notify,
           now,
           runtime,
+          serverUrl: input.serverUrl ?? null,
           stopped: () => stopped,
           tracker: trackerFor,
           updatePullRequest: (url, change) =>
@@ -828,6 +861,121 @@ export function createFactoryService(input: {
       });
     }
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
+  }
+
+  // A requested validation runs at most once at a time per run, so two cannot
+  // race to attach their result to it.
+  const requestedRuns = new Set<string>();
+
+  async function requestWorkValidation(
+    key: string,
+    token: string,
+    tests: Array<SelectedTest>,
+  ): Promise<WorkValidationOutcome> {
+    const snapshot = loadCurrentByFactoryKey(db, key);
+    if (snapshot === null) {
+      return { kind: 'refused', message: `No ticket ${key}.`, reason: 'ticket_not_found' };
+    }
+    const { execution } = snapshot;
+    if (!isTicketToken(ticketTokenSecret(input.factoryRoot), execution.id, token)) {
+      return {
+        kind: 'refused',
+        message: `The ticket token is not ${snapshot.ticket.displayRef}'s.`,
+        reason: 'unauthorized',
+      };
+    }
+    const running = snapshot.runs.filter(
+      (run) =>
+        (run.status === 'running' || run.status === 'starting') &&
+        snapshot.sessions.find((item) => item.id === run.sessionId)?.stage === 'work',
+    );
+    const run = running.length === 1 ? running[0] : undefined;
+    const base = roundBase(snapshot);
+    if (run === undefined || execution.worktreePath === null || base === null) {
+      return {
+        kind: 'refused',
+        message: `${snapshot.ticket.displayRef} has no work run running; a validation is asked for while one works.`,
+        reason: 'invalid_state',
+      };
+    }
+    const missing = missingTests(tests, execution.worktreePath);
+    if (missing.length > 0) {
+      return { kind: 'refused', message: missing.join('\n'), reason: 'invalid_state' };
+    }
+    if (requestedRuns.has(run.id)) {
+      return {
+        kind: 'refused',
+        message: 'A validation this run asked for is already running; wait for its result.',
+        reason: 'invalid_state',
+      };
+    }
+    requestedRuns.add(run.id);
+    try {
+      const commands = execution.policy.validation.work.commands;
+      const fingerprint = () => {
+        const found = workFingerprint({
+          base,
+          commands,
+          executionId: execution.id,
+          factoryRoot: factoryRootOf(execution.factoryDir),
+          selection: tests,
+          validatorVersion: WORK_VALIDATOR_VERSION,
+          version: factoryVersion(),
+          worktree: execution.worktreePath ?? '',
+        });
+        return 'fingerprint' in found ? found.fingerprint : null;
+      };
+      const startedAt = now();
+      const before = fingerprint();
+      const ran = await runWorkCommands({
+        commands,
+        cwd: execution.worktreePath,
+        factoryRoot: factoryRootOf(execution.factoryDir),
+        reportCommand: () => undefined,
+        tests,
+      });
+      const after = fingerprint();
+      const checks =
+        'spawnError' in ran
+          ? [
+              {
+                command: null,
+                details: ran.spawnError,
+                durationMs: null,
+                exitCode: null,
+                kind: 'command' as const,
+                name: 'validation',
+                outputExcerpt: null,
+                status: 'error' as const,
+              },
+            ]
+          : ran.checks;
+      // A change while the commands ran, by a formatter or by the agent, or
+      // inputs git could not read, leave nothing to reuse.
+      const evidence: RequestedValidation = {
+        checks,
+        fingerprint: after ?? '',
+        finishedAt: now(),
+        passed: checks.every((check) => check.status === 'passed'),
+        reusable: before !== null && before === after,
+        startedAt,
+      };
+      const applied = apply(
+        { evidence, kind: 'work_validation_requested', runId: run.id },
+        `requested-validation:${run.id}:${startedAt}`,
+        'runtime',
+      );
+      const attached = applied.response.kind !== 'rejected';
+      recordRequestedValidation(db, {
+        attached,
+        evidence,
+        executionId: execution.id,
+        runId: run.id,
+      });
+      return { attached, evidence, kind: 'validated' };
+    } finally {
+      requestedRuns.delete(run.id);
+    }
   }
 
   // The human marks a ready-for-handoff ticket done. Repeating it is a no-op.
@@ -1267,6 +1415,7 @@ export function createFactoryService(input: {
     },
     reply: (key, answer, options) =>
       byKey(key, (snapshot) => replyCommitted(snapshot, answer, options)),
+    requestWorkValidation,
     rerun: async (key, options) => {
       const snapshot = loadCurrentByFactoryKey(db, key);
       if (snapshot === null) {

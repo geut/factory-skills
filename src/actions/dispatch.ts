@@ -15,6 +15,7 @@ import {
   loadSnapshotByRun,
   passedChecks,
   recordStrayProcess,
+  ticketKeyOf,
   ticketTab,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
@@ -41,6 +42,7 @@ import { readPlanLinks, type PlanLinks } from '../stages/plan/links.ts';
 import { roundBase, syncWorktreeRefs } from '../validation/bases.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
+import { ticketToken, ticketTokenSecret } from '../validation/ticket-token.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
 import { archiveStamp } from './leftovers.ts';
@@ -136,6 +138,8 @@ export async function dispatchPending(input: {
   notify: (message: string) => void;
   now: () => string;
   runtime: FactorySubagentRuntime;
+  // Where the server answers agents asking with their ticket's token.
+  serverUrl: string | null;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
@@ -197,6 +201,7 @@ async function perform(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    serverUrl: string | null;
     stopped: () => boolean;
     tracker: () => ConfiguredTracker | null;
     updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
@@ -323,6 +328,7 @@ async function launch(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    serverUrl: string | null;
   },
   action: Extract<ActionRecord, { kind: 'launch_run' | 'resume_run' }>,
   snapshot: FactorySnapshot,
@@ -384,6 +390,16 @@ async function launch(
     );
     return null;
   }
+  // Every agent of the ticket can ask the server for controller work with its
+  // ticket's token; each route checks what the ticket is doing.
+  const ticketAccess =
+    input.serverUrl === null
+      ? null
+      : {
+          key: ticketKeyOf(snapshot),
+          token: ticketToken(ticketTokenSecret(input.factoryRoot), snapshot.execution.id),
+          url: input.serverUrl,
+        };
   const spec: LaunchSpec = {
     cwd: action.cwd,
     mode,
@@ -406,6 +422,7 @@ async function launch(
     tab: ticketTab(snapshot),
     taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
+    ticketAccess,
     tools: stageTools(session.stage),
   };
   try {
