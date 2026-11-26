@@ -225,6 +225,7 @@ export function run(
     description: null,
     diffHash: null,
     endedAt: terminal === null ? null : at((input.minutesAgo ?? 5) - 4),
+    handoffHead: null,
     id: runId(`run-${owner.logicalKey}-${sequence}`),
     inputHash: null,
     paneId: `pane-${snapshot.runs.length + 1}`,

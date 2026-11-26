@@ -319,6 +319,9 @@ export type ReviewValidationReport = ValidationReport<
 export type WrapupValidationDetail = {
   // The issue's boxes wrap-up met or left open, and its decisions.
   checklist: IssueChecklist;
+  // The worktree's HEAD as validation found it: where the ticket is handed
+  // off when the pull request gives no head of its own.
+  head: string;
   // The format the pull request's body follows: the project's own (`agents`
   // or `github`), or the factory's `default`, and the file it came from.
   prFormat: PrFormatInUse;
@@ -615,6 +618,10 @@ export type RunRecord = {
   description: string | null;
   diffHash: string | null;
   endedAt: string | null;
+  // A wrap-up run that handed the ticket off: the pull request's head then.
+  // The next feedback round compares it with the head it starts from, to
+  // find a rebase that changed what was handed off.
+  handoffHead: string | null;
   id: RunId;
   inputHash: string | null;
   // For a return_to_work run: the per-task stage that sent the task back.

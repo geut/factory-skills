@@ -144,6 +144,7 @@ export const wrapup = defineStage<WrapupInput, 'wrapup', WrapupPrepared>({
     report.status === 'passed'
       ? {
           checklist: report.detail.checklist,
+          head: report.detail.head,
           kind: 'accept',
           notice: report.detail.usage,
           prFormat: report.detail.prFormat,

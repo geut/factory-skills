@@ -796,6 +796,7 @@ function loadRuns(db: DatabaseSync, execution: ExecutionId): Array<RunRecord> {
         description: descriptionFromLifecycle(nullableText(record, 'lifecycle_json')),
         diffHash: nullableText(record, 'diff_hash'),
         endedAt: nullableText(record, 'ended_at'),
+        handoffHead: handoffHeadFromLifecycle(nullableText(record, 'lifecycle_json')),
         id: runId(text(record, 'id')),
         inputHash: nullableText(record, 'input_hash'),
         origin: origin === null ? null : taskStage(origin),
@@ -1318,11 +1319,31 @@ function insertSession(
   );
 }
 
-function lifecycleJson(run: Pick<RunRecord, 'baseline' | 'description'>): string | null {
-  if (run.description === null && run.baseline === null) {
+function lifecycleJson(
+  run: Pick<RunRecord, 'baseline' | 'description' | 'handoffHead'>,
+): string | null {
+  if (run.description === null && run.baseline === null && run.handoffHead === null) {
     return null;
   }
-  return JSON.stringify({ baseline: run.baseline, description: run.description });
+  return JSON.stringify({
+    baseline: run.baseline,
+    description: run.description,
+    ...(run.handoffHead === null ? {} : { handoffHead: run.handoffHead }),
+  });
+}
+
+function handoffHeadFromLifecycle(raw: string | null): string | null {
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) && typeof parsed['handoffHead'] === 'string'
+      ? parsed['handoffHead']
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function baselineFromLifecycle(raw: string | null): string | null {

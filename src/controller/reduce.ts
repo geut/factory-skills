@@ -159,6 +159,7 @@ function addRun(
     // A resumed reviewer still answers for the diff its session was given.
     diffHash: parent !== null && parent.sessionId === session.id ? parent.diffHash : null,
     endedAt: null,
+    handoffHead: null,
     id: ids.run(),
     inputHash: sha256(prompt),
     origin: null,
@@ -1219,6 +1220,9 @@ function handOff(
   ids: IdSource,
   closing: {
     checklist: IssueChecklist | null;
+    // Where the ticket is handed off: the pull request's head after the
+    // push, or the worktree's HEAD without one.
+    handoffHead: string | null;
     // The format the body follows; null without a pull request.
     prFormat: PrFormatInUse | null;
     // The pull request wrap-up checked, and its head after the push.
@@ -1234,6 +1238,9 @@ function handOff(
   const ruleChanges = rules.length === 0 ? [] : ['', ruleChangesLine('factory', rules)];
   const ref = snapshot.ticket.displayRef;
   const definition = stages[session.stage];
+  // Where the pull request was when it was handed off: a later round finds a
+  // rebase by it.
+  run.handoffHead = closing.handoffHead;
   snapshot.execution.status = 'ready_for_handoff';
   snapshot.execution.retry = null;
   snapshot.execution.statusReasonCode = null;
@@ -1460,6 +1467,7 @@ function applyOutcome(
       if (step.kind === 'handoff') {
         return handOff(snapshot, session, run, outcome.notice ?? '', ids, {
           checklist: outcome.checklist ?? null,
+          handoffHead: outcome.pullRequestHead ?? outcome.head ?? null,
           prFormat: outcome.prFormat ?? null,
           pullRequestHead: outcome.pullRequestHead ?? null,
           pullRequestUrl: outcome.pullRequestUrl ?? null,
