@@ -417,13 +417,18 @@ function list(items: Array<string>): string {
   return items.length === 0 ? 'none' : items.join('\n');
 }
 
+// A selection as the report's `## Validation selection` section has it, which
+// work validation parses back.
+export function selectionSection(selection: WorkReport['selection']): string {
+  return selection.mode === 'default'
+    ? `none (${line(selection.reason).replaceAll(/[()]/g, '')})`
+    : selection.tests.map((test) => `- \`${test.path}\`: ${line(test.reason)}`).join('\n');
+}
+
 // The report as the work template (`factory.work.v3`), the reply the rest of
 // the controller, review, and the pull request read.
 export function renderWorkReport(report: WorkReport): string {
-  const selection =
-    report.selection.mode === 'default'
-      ? `none (${line(report.selection.reason).replaceAll(/[()]/g, '')})`
-      : report.selection.tests.map((test) => `- \`${test.path}\`: ${line(test.reason)}`).join('\n');
+  const selection = selectionSection(report.selection);
   const e2e =
     report.e2e === null
       ? 'not_reported'

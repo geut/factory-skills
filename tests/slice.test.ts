@@ -3398,6 +3398,9 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
   await closeWhenIdle(db);
 });
 
+// A selection that proposes no focused tests.
+const defaultSelection = { mode: 'default' as const, reason: 'no focused tests' };
+
 // A ticket whose worker is at work, with one validation command that counts
 // its runs in `counter`, and does `extra` too.
 async function workWithCountedValidation(extra = '', stages?: Record<string, unknown>) {
@@ -3449,7 +3452,7 @@ async function workWithCountedValidation(extra = '', stages?: Record<string, unk
 
 test('a pass the worker asked for is reused by its submission when nothing changed', async () => {
   const { db, key, runs, runtime, service, token, work } = await workWithCountedValidation();
-  const asked = await service.commands.requestWorkValidation(key, token, []);
+  const asked = await service.commands.requestWorkValidation(key, token, defaultSelection);
   assert.equal(asked.kind, 'validated');
   assert.ok(
     asked.kind === 'validated' &&
@@ -3486,7 +3489,11 @@ test('a pass the worker asked for is reused by its submission when nothing chang
 
 test('any change after the requested pass, or a failed one, runs the commands again at submission', async () => {
   const changed = await workWithCountedValidation();
-  await changed.service.commands.requestWorkValidation(changed.key, changed.token, []);
+  await changed.service.commands.requestWorkValidation(
+    changed.key,
+    changed.token,
+    defaultSelection,
+  );
   writeFileSync(path.join(changed.work.cwd, 'another.txt'), 'new\n');
   changed.runtime.emit(changed.work.runId, {
     kind: 'subagent_done',
@@ -3506,7 +3513,7 @@ test('any change after the requested pass, or a failed one, runs the commands ag
   const asked = await failing.service.commands.requestWorkValidation(
     failing.key,
     failing.token,
-    [],
+    defaultSelection,
   );
   assert.ok(asked.kind === 'validated' && !asked.evidence.passed);
   failing.runtime.emit(failing.work.runId, {
@@ -3524,7 +3531,7 @@ test('a command that changes files leaves nothing to reuse', async () => {
   const { db, key, runs, runtime, service, token, work } = await workWithCountedValidation(
     `; echo formatted >> ${JSON.stringify('formatted.txt')}`,
   );
-  const asked = await service.commands.requestWorkValidation(key, token, []);
+  const asked = await service.commands.requestWorkValidation(key, token, defaultSelection);
   assert.ok(asked.kind === 'validated' && asked.evidence.passed && !asked.evidence.reusable);
   runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
   await waitFor(() => runs() === 2);
@@ -3533,12 +3540,12 @@ test('a command that changes files leaves nothing to reuse', async () => {
 
 test('only the ticket’s token, while its worker runs, and one request at a time', async () => {
   const { db, key, runtime, service, token, work } = await workWithCountedValidation('; sleep 1');
-  const wrong = await service.commands.requestWorkValidation(key, 'f'.repeat(64), []);
+  const wrong = await service.commands.requestWorkValidation(key, 'f'.repeat(64), defaultSelection);
   assert.deepEqual(wrong.kind === 'refused' ? wrong.reason : null, 'unauthorized');
   // Two at once: the second is refused while the first runs.
   const [first, second] = await Promise.all([
-    service.commands.requestWorkValidation(key, token, []),
-    service.commands.requestWorkValidation(key, token, []),
+    service.commands.requestWorkValidation(key, token, defaultSelection),
+    service.commands.requestWorkValidation(key, token, defaultSelection),
   ]);
   assert.equal(first.kind, 'validated');
   assert.match(second.kind === 'refused' ? second.message : '', /already running/);
@@ -3554,7 +3561,7 @@ test('only the ticket’s token, while its worker runs, and one request at a tim
   runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
   await waitFor(() => launchesOf(runtime, 'review').length === 1);
   // No worker runs now: nothing to validate for.
-  const late = await service.commands.requestWorkValidation(key, token, []);
+  const late = await service.commands.requestWorkValidation(key, token, defaultSelection);
   assert.match(late.kind === 'refused' ? late.message : '', /has no work run running/);
   await closeWhenIdle(db);
 });
@@ -3562,7 +3569,7 @@ test('only the ticket’s token, while its worker runs, and one request at a tim
 test('a requested pass survives a restart: the new server reuses it at submission', async () => {
   const { codeRoot, db, factoryRoot, key, runs, service, token, work } =
     await workWithCountedValidation();
-  const asked = await service.commands.requestWorkValidation(key, token, []);
+  const asked = await service.commands.requestWorkValidation(key, token, defaultSelection);
   assert.ok(asked.kind === 'validated' && asked.evidence.passed && asked.attached);
   // The worker finishes while the server is down; the next one validates it.
   applyControllerEvent(db, {
@@ -3589,7 +3596,7 @@ test('QA’s files are always validated: a reused work pass never stands for the
     await workWithCountedValidation('', {
       qa: { commands: [{ argv: ['true'], name: 'e2e' }], enabled: true },
     });
-  await service.commands.requestWorkValidation(key, token, []);
+  await service.commands.requestWorkValidation(key, token, defaultSelection);
   runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
   await waitFor(() => launchesOf(runtime, 'qa').length === 1);
   // The submission reused the requested pass.
@@ -3609,7 +3616,7 @@ test('QA’s files are always validated: a reused work pass never stands for the
     throw new Error('missing QA run');
   }
   // QA's agent has the ticket's token too, but no work run runs: refused.
-  const fromQa = await service.commands.requestWorkValidation(key, token, []);
+  const fromQa = await service.commands.requestWorkValidation(key, token, defaultSelection);
   assert.match(fromQa.kind === 'refused' ? fromQa.message : '', /has no work run running/);
   runtime.emit(qaRun.runId, { kind: 'subagent_done', output: 'tested', usage: sampleUsage() });
   await waitFor(() => launchesOf(runtime, 'review').length === 1);
@@ -3627,5 +3634,23 @@ test('QA’s files are always validated: a reused work pass never stands for the
   const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
   assert.equal(ticket?.workValidation.submissions, 1);
   assert.equal(ticket?.workValidation.reused, 1);
+  await closeWhenIdle(db);
+});
+
+test('a selection is read as the submission reads it, so a pass is reused despite its spelling', async () => {
+  const { db, key, runs, runtime, service, token, work } = await workWithCountedValidation();
+  // `./`, a newline, and a trailing space, which the report normalizes.
+  const asked = await service.commands.requestWorkValidation(key, token, {
+    mode: 'focused',
+    tests: [{ path: './change.txt', reason: 'covers\n the change ' }],
+  });
+  assert.ok(asked.kind === 'validated' && asked.evidence.reusable && asked.attached);
+  runtime.emit(work.runId, {
+    kind: 'subagent_done',
+    output: '## Validation selection\n- `change.txt`: covers the change\n',
+    usage: sampleUsage(),
+  });
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  assert.equal(runs(), 1);
   await closeWhenIdle(db);
 });

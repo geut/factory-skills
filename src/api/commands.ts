@@ -302,9 +302,12 @@ const requestWorkValidation = defineRoute({
     if (token.length === 0) {
       throw new ProblemError('unauthorized', 'Send Authorization: Bearer <the ticket token>.');
     }
-    const selection = body?.validation_selection;
-    const tests = selection?.mode === 'focused' ? (selection.tests ?? []) : [];
-    const outcome = await context.commands.requestWorkValidation(params.key, token, tests);
+    const given = body?.validation_selection;
+    const selection =
+      given?.mode === 'focused'
+        ? { mode: 'focused' as const, tests: given.tests ?? [] }
+        : { mode: 'default' as const, reason: given?.reason ?? 'none given' };
+    const outcome = await context.commands.requestWorkValidation(params.key, token, selection);
     if (outcome.kind === 'refused') {
       throw new ProblemError(
         outcome.reason === 'invalid_state'

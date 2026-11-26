@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkCommand } from '../config.ts';
+import { TARGET_REF } from './bases.ts';
 import type { SelectedTest } from './selection.ts';
 
 // What work validation's commands depend on, as one hash: a pass the worker
 // asked for while it iterated counts at submission only when the inputs are
-// the same. It covers what git can see in the worktree, the factory root's
+// the same. It covers what git can see in the worktree, where the target ref
+// points, the factory root's
 // `scripts/` (where a project keeps its own validation scripts), and how the
 // commands are run. Ignored files, such as installed dependencies, are not
 // covered; a pass is only reused within the run that asked for it.
@@ -96,6 +98,9 @@ export function workFingerprint(
   if (untracked.code !== 0) {
     return { error: `Cannot list untracked files: ${untracked.stderr}` };
   }
+  // Where the target ref points now: a fetch moves it, and a command that
+  // compares with the target sees another one.
+  const target = git(worktree, ['rev-parse', '--verify', '--quiet', `${TARGET_REF}^{commit}`]);
   const hash = createHash('sha256');
   const part = (name: string, value: string | Buffer) => {
     hash.update(`${name}\0`);
@@ -106,6 +111,7 @@ export function workFingerprint(
   part('worktree', path.resolve(worktree));
   part('head', head.stdout.toString('utf8').trim());
   part('base', input.base);
+  part('target', target.code === 0 ? target.stdout.toString('utf8').trim() : 'none');
   part('diff', diff.stdout);
   for (const file of untracked.stdout
     .toString('utf8')

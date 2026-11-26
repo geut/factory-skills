@@ -406,6 +406,31 @@ export async function runWorkCommands(input: {
   return { checks };
 }
 
+// What the work commands' inputs hash to, given a selection: the one
+// fingerprint a requested validation and the submission both take, so they
+// cannot drift apart. Null when git cannot read them, which reuses nothing.
+export function workInputsFingerprint(input: {
+  base: string;
+  commands: Array<WorkCommand>;
+  executionId: string;
+  factoryDir: string;
+  worktree: string;
+}): (tests: Array<SelectedTest>) => string | null {
+  return (tests) => {
+    const found = workFingerprint({
+      base: input.base,
+      commands: input.commands,
+      executionId: input.executionId,
+      factoryRoot: factoryRootOf(input.factoryDir),
+      selection: tests,
+      validatorVersion: WORK_VALIDATOR_VERSION,
+      version: factoryVersion(),
+      worktree: input.worktree,
+    });
+    return 'fingerprint' in found ? found.fingerprint : null;
+  };
+}
+
 // The checks of a requested validation that stand for the commands now, each
 // marked reused with when it ran and on what; null when it cannot stand: it
 // failed, its inputs changed while it ran, or they differ now.
@@ -448,19 +473,13 @@ export const workValidator: Validator<'work'> = {
       criteria: task === null ? [] : taskCriteria(path.join(factoryDir, task.taskFile)),
       cwd: worktreePath,
       factoryRoot: factoryRootOf(factoryDir),
-      fingerprint: (tests) => {
-        const found = workFingerprint({
-          base,
-          commands: policy.validation.work.commands,
-          executionId: snapshot.execution.id,
-          factoryRoot: factoryRootOf(factoryDir),
-          selection: tests,
-          validatorVersion: WORK_VALIDATOR_VERSION,
-          version: factoryVersion(),
-          worktree: worktreePath,
-        });
-        return 'fingerprint' in found ? found.fingerprint : null;
-      },
+      fingerprint: workInputsFingerprint({
+        base,
+        commands: policy.validation.work.commands,
+        executionId: snapshot.execution.id,
+        factoryDir,
+        worktree: worktreePath,
+      }),
       missingReport: missingReport(runOutput(run)),
       reportCommand: deps.reportCommand,
       // Only the run that asked: a later run, or another task's, revalidates.

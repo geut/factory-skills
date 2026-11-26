@@ -367,7 +367,8 @@ export async function serve(input: ServeInput): Promise<ServeResult> {
     feedback: (key, request, options) => ready().feedback(key, request, options),
     pendingFeedback: (key) => ready().pendingFeedback(key),
     reply: (key, answer, options) => ready().reply(key, answer, options),
-    requestWorkValidation: (key, token, tests) => ready().requestWorkValidation(key, token, tests),
+    requestWorkValidation: (key, token, selection) =>
+      ready().requestWorkValidation(key, token, selection),
     rerun: (key, options) => ready().rerun(key, options),
     retry: (key, options) => ready().retry(key, options),
     retryRebased: (key, options) => ready().retryRebased(key, options),

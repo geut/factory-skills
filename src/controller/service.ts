@@ -54,15 +54,15 @@ import {
 } from '../ports/trackers.ts';
 import { createPiHerdrRuntime } from '../runtime/pi-herdr.ts';
 import type { FactorySubagentRuntime } from '../runtime/runtime.ts';
+import type { WorkReport } from '../runtime/work-report.ts';
 import { stages } from '../stages/index.ts';
 import { runReview } from '../stages/review/parse.ts';
 import { openStateDatabase } from '../state/database.ts';
 import { resolveTicket, type TicketSource } from '../tickets.ts';
 import { roundBase, roundStart } from '../validation/bases.ts';
-import { workFingerprint } from '../validation/fingerprint.ts';
-import { missingTests, type SelectedTest } from '../validation/selection.ts';
+import { missingTests, submittedSelection } from '../validation/selection.ts';
 import { isTicketToken, ticketTokenSecret } from '../validation/ticket-token.ts';
-import { runWorkCommands, WORK_VALIDATOR_VERSION } from '../validation/work.ts';
+import { runWorkCommands, workInputsFingerprint } from '../validation/work.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { factoryVersion } from '../version.ts';
 import { createCommandBoard, type CommandProgress } from './command-progress.ts';
@@ -163,7 +163,7 @@ export type FactoryCommands = {
   requestWorkValidation: (
     key: string,
     token: string,
-    tests: Array<SelectedTest>,
+    selection: WorkReport['selection'],
   ) => Promise<WorkValidationOutcome>;
   // Starts generation N+1 of a finished ticket from a fresh copy of its issue.
   rerun: (key: string, options: CommandOptions) => Promise<CommandOutcome>;
@@ -870,7 +870,7 @@ export function createFactoryService(input: {
   async function requestWorkValidation(
     key: string,
     token: string,
-    tests: Array<SelectedTest>,
+    selection: WorkReport['selection'],
   ): Promise<WorkValidationOutcome> {
     const snapshot = loadCurrentByFactoryKey(db, key);
     if (snapshot === null) {
@@ -898,6 +898,12 @@ export function createFactoryService(input: {
         reason: 'invalid_state',
       };
     }
+    // Read as the submission reads it, so both get the very same tests.
+    const read = submittedSelection(selection);
+    if (read.kind === 'invalid') {
+      return { kind: 'refused', message: read.problems.join('\n'), reason: 'invalid_state' };
+    }
+    const tests = read.kind === 'listed' ? read.tests : [];
     const missing = missingTests(tests, execution.worktreePath);
     if (missing.length > 0) {
       return { kind: 'refused', message: missing.join('\n'), reason: 'invalid_state' };
@@ -912,19 +918,14 @@ export function createFactoryService(input: {
     requestedRuns.add(run.id);
     try {
       const commands = execution.policy.validation.work.commands;
-      const fingerprint = () => {
-        const found = workFingerprint({
+      const fingerprint = () =>
+        workInputsFingerprint({
           base,
           commands,
           executionId: execution.id,
-          factoryRoot: factoryRootOf(execution.factoryDir),
-          selection: tests,
-          validatorVersion: WORK_VALIDATOR_VERSION,
-          version: factoryVersion(),
+          factoryDir: execution.factoryDir,
           worktree: execution.worktreePath ?? '',
-        });
-        return 'fingerprint' in found ? found.fingerprint : null;
-      };
+        })(tests);
       const startedAt = now();
       const before = fingerprint();
       const ran = await runWorkCommands({

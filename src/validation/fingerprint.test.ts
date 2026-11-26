@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
+import { TARGET_REF } from './bases.ts';
 import { type FingerprintInput, SCRIPTS_DIR, workFingerprint } from './fingerprint.ts';
 
 const dirs: Array<string> = [];
@@ -115,6 +116,25 @@ test('every input the commands depend on changes the hash', () => {
         ...input,
         commands: [{ argv: ['npm', 'run', 'all'], name: 'tests', timeoutMs: 1000 }],
       }),
+    ],
+    [
+      'the target moving, as a fetch moves it',
+      () => {
+        // The target ref points at a remote-tracking branch, as the
+        // controller sets it; a fetch moves that branch.
+        const head = git(input.worktree, ['rev-parse', 'HEAD']);
+        git(input.worktree, ['update-ref', 'refs/remotes/origin/main', head]);
+        git(input.worktree, ['symbolic-ref', TARGET_REF, 'refs/remotes/origin/main']);
+        return input;
+      },
+    ],
+    [
+      'the target moving again',
+      () => {
+        const moved = git(input.worktree, ['commit-tree', '-m', 'upstream', 'HEAD^{tree}']);
+        git(input.worktree, ['update-ref', 'refs/remotes/origin/main', moved]);
+        return input;
+      },
     ],
     ['another base', () => ({ ...input, base: 'f'.repeat(40) })],
     ['another validator', () => ({ ...input, validatorVersion: 'work.v2' })],
