@@ -3400,7 +3400,7 @@ test('a retried feedback round with the same Idempotency-Key gets the round it s
 
 // A ticket whose worker is at work, with one validation command that counts
 // its runs in `counter`, and does `extra` too.
-async function workWithCountedValidation(extra = '') {
+async function workWithCountedValidation(extra = '', stages?: Record<string, unknown>) {
   const { codeRoot, factoryRoot } = repo();
   const counter = path.join(codeRoot, '..', `${path.basename(codeRoot)}-runs.txt`);
   roots.push(counter);
@@ -3408,6 +3408,7 @@ async function workWithCountedValidation(extra = '') {
     path.join(factoryRoot, 'FACTORY.json'),
     `${JSON.stringify({
       models: { review: 'review-model', work: 'work-model' },
+      ...(stages === undefined ? {} : { stages }),
       validation: {
         work: {
           commands: [
@@ -3580,5 +3581,51 @@ test('a requested pass survives a restart: the new server reuses it at submissio
   await restarted.recover();
   await waitFor(() => launchesOf(runtime, 'review').length === 1);
   assert.equal(runs(), 1);
+  await closeWhenIdle(db);
+});
+
+test('QA’s files are always validated: a reused work pass never stands for them', async () => {
+  const { db, factoryRoot, key, runs, runtime, service, token, work } =
+    await workWithCountedValidation('', {
+      qa: { commands: [{ argv: ['true'], name: 'e2e' }], enabled: true },
+    });
+  await service.commands.requestWorkValidation(key, token, []);
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'qa').length === 1);
+  // The submission reused the requested pass.
+  assert.equal(runs(), 1);
+  // QA writes its test and output; its validation runs the work commands again.
+  const qaDir = path.join(ticketDir(factoryRoot), 'qa', '01');
+  mkdirSync(path.join(qaDir, 'screenshots'), { recursive: true });
+  writeFileSync(
+    path.join(qaDir, 'test-plan.md'),
+    '| AC | Test | Screenshot |\n| --- | --- | --- |\n| AC1 | e2e › AC1: filter survives a reload | screenshots/ac1.png |\n',
+  );
+  writeFileSync(path.join(qaDir, 'ledger.md'), '- Nothing left out.\n');
+  writeFileSync(path.join(qaDir, 'screenshots', 'ac1.png'), 'png');
+  writeFileSync(path.join(work.cwd, 'filter.e2e.txt'), 'AC1 test\n');
+  const qaRun = launchesOf(runtime, 'qa')[0];
+  if (qaRun === undefined) {
+    throw new Error('missing QA run');
+  }
+  // QA's agent has the ticket's token too, but no work run runs: refused.
+  const fromQa = await service.commands.requestWorkValidation(key, token, []);
+  assert.match(fromQa.kind === 'refused' ? fromQa.message : '', /has no work run running/);
+  runtime.emit(qaRun.runId, { kind: 'subagent_done', output: 'tested', usage: sampleUsage() });
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  assert.equal(runs(), 2);
+  const details = db
+    .prepare(
+      "SELECT json_extract(c.details_json, '$.details') AS details FROM validation_checks AS c JOIN validation_runs AS v ON v.id = c.validation_id WHERE c.name = 'tests' ORDER BY v.created_at, c.rowid",
+    )
+    .all()
+    .map((row) => String(row['details']));
+  assert.equal(details.length, 2);
+  assert.match(details[0] ?? '', /^reused: /);
+  assert.doesNotMatch(details[1] ?? '', /^reused: /);
+  // Stats count work submissions only; QA's run of the commands is QA's.
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(ticket?.workValidation.submissions, 1);
+  assert.equal(ticket?.workValidation.reused, 1);
   await closeWhenIdle(db);
 });
