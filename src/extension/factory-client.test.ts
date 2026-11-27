@@ -385,6 +385,23 @@ test('retry --rebased, and its dry run, go through the server from Pi and recove
   client.close();
 });
 
+test('an agent starts without a ticket token when the server cannot make one', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  // The secret's path is taken, so it can be neither read nor written.
+  mkdirSync(path.join(factoryRoot, 'runtime', 'ticket-token.key'), { recursive: true });
+  const runtime = new FakeRuntime();
+  await serverFor(codeRoot, pi, runtime);
+  const client = createFactoryClient({ factoryRoot });
+  await client.command(parseFactoryCommand('start proj-123.md'));
+  for (let tries = 0; tries < 200 && runtime.launches.length === 0; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const plan = runtime.launches[0];
+  assert.ok(plan !== undefined);
+  assert.equal(plan.ticketAccess, null);
+  client.close();
+});
+
 test('a work agent asks the server to validate with its ticket’s token, and its submission reuses the pass', async () => {
   const { codeRoot, factoryRoot, pi } = repository();
   const counter = path.join(codeRoot, 'runs.txt');

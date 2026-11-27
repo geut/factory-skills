@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listProcesses } from '../actions/strays.ts';
@@ -977,8 +977,11 @@ export function createPiHerdrRuntime(options?: {
         tools: spec.tools,
         worktree: spec.cwd,
       }),
-      { mode: 0o755 },
+      // The script carries the ticket's token: only its owner reads it, and a
+      // resumed session's earlier script is narrowed too.
+      { mode: 0o700 },
     );
+    chmodSync(scriptFile, 0o700);
     const paneId = await openIn(spec.tab, spec.cwd, scriptFile);
     const renamed = await run(herdrRenameArgs(paneId, spec.paneName));
     if (renamed.code !== 0) {

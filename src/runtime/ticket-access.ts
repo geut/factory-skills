@@ -87,11 +87,13 @@ export function validationSummary(payload: unknown): string {
   const passed = payload['passed'] === true;
   const reusable = payload['reusable'] === true;
   const attached = payload['attached'] !== false;
-  const verdict = passed
-    ? reusable && attached
-      ? 'Validation passed. If you change nothing more and call subagent_done with the same validation_selection, the controller reuses this pass instead of running the commands again.'
-      : 'Validation passed, but files changed while the commands ran, so the controller runs them again when you submit.'
-    : 'Validation failed. Fix what failed, then ask again or submit.';
+  const verdict = !passed
+    ? 'Validation failed. Fix what failed, then ask again or submit.'
+    : !attached
+      ? 'Validation passed, but your run ended before the result came back, so it is not kept.'
+      : reusable
+        ? 'Validation passed. If you change nothing more and call subagent_done with the same validation_selection, the controller reuses this pass instead of running the commands again.'
+        : 'Validation passed, but it cannot be reused: files changed while the commands ran, or git could not read the inputs. The controller runs the commands again when you submit; asking again will not help unless files were still changing.';
   return [
     verdict,
     '',

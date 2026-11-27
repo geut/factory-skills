@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -968,8 +968,13 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
   // A resume opens its pane before closing the finished one, so the tab stays.
   paneTabs.delete('p1');
   paneTabs.delete('p2');
+  // A resumed session's script, left readable by an earlier launch, is not.
+  writeFileSync(path.join(directory, 'r5.jsonl.sh'), '', { mode: 0o755 });
   await restarted.resume({ ...spec('repo#1', 'r5', 'p4'), mode: 'resume' });
   assert.deepEqual(layout(), ['split p2', 'split p4', 'close p4']);
+  // Launch scripts carry the ticket's token, so only their owner reads them.
+  assert.equal(statSync(path.join(directory, 'r4.jsonl.sh')).mode & 0o777, 0o700);
+  assert.equal(statSync(path.join(directory, 'r5.jsonl.sh')).mode & 0o777, 0o700);
 
   // A tab whose panes are all gone is made again.
   paneTabs.delete('p3');

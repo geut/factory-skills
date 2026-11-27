@@ -323,6 +323,27 @@ function launchProjectConfig(
   };
 }
 
+function launchTicketAccess(
+  input: { factoryRoot: string; notify: (message: string) => void; serverUrl: string | null },
+  snapshot: FactorySnapshot,
+): LaunchSpec['ticketAccess'] {
+  if (input.serverUrl === null) {
+    return null;
+  }
+  try {
+    return {
+      key: ticketKeyOf(snapshot),
+      token: ticketToken(ticketTokenSecret(input.factoryRoot), snapshot.execution.id),
+      url: input.serverUrl,
+    };
+  } catch (error: unknown) {
+    input.notify(
+      `${snapshot.ticket.displayRef}: the agent starts without a ticket token: ${messageOf(error)}`,
+    );
+    return null;
+  }
+}
+
 async function launch(
   input: {
     db: DatabaseSync;
@@ -394,15 +415,9 @@ async function launch(
     return null;
   }
   // Every agent of the ticket can ask the server for controller work with its
-  // ticket's token; each route checks what the ticket is doing.
-  const ticketAccess =
-    input.serverUrl === null
-      ? null
-      : {
-          key: ticketKeyOf(snapshot),
-          token: ticketToken(ticketTokenSecret(input.factoryRoot), snapshot.execution.id),
-          url: input.serverUrl,
-        };
+  // ticket's token; each route checks what the ticket is doing. The agent can
+  // do without it, so a token that cannot be made is only reported.
+  const ticketAccess = launchTicketAccess(input, snapshot);
   const spec: LaunchSpec = {
     cwd: action.cwd,
     mode,
