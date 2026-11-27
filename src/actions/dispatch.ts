@@ -137,6 +137,8 @@ export async function dispatchPending(input: {
   log: (line: string) => void;
   notify: (message: string) => void;
   now: () => string;
+  // A validation the run asked for that is still running, or null.
+  requestedInFlight: (runId: RunId) => Promise<void> | null;
   runtime: FactorySubagentRuntime;
   // Where the server answers agents asking with their ticket's token.
   serverUrl: string | null;
@@ -200,6 +202,7 @@ async function perform(
     log: (line: string) => void;
     notify: (message: string) => void;
     now: () => string;
+    requestedInFlight: (runId: RunId) => Promise<void> | null;
     runtime: FactorySubagentRuntime;
     serverUrl: string | null;
     stopped: () => boolean;
@@ -663,10 +666,24 @@ async function runValidation(
     findPullRequest: PullRequestLookup;
     ids: IdSource;
     now: () => string;
+    requestedInFlight: (runId: RunId) => Promise<void> | null;
   },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  snapshot: FactorySnapshot,
+  given: FactorySnapshot,
 ): Promise<RunId | null> {
+  // A validation the run asked for that is still running, as when its agent
+  // gave up waiting and submitted: wait for it rather than run the same
+  // commands beside it in the worktree, then validate with its result.
+  const inFlight = input.requestedInFlight(action.runId);
+  let snapshot = given;
+  if (inFlight !== null) {
+    const extend = effects.work.validator.leaseMs?.(given);
+    if (extend !== undefined) {
+      extendActionLease(input.db, action.id, input.now(), extend);
+    }
+    await inFlight;
+    snapshot = loadSnapshotByRun(input.db, action.runId) ?? given;
+  }
   const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
   const session = run === null ? null : sessionForRun(snapshot, run);
   if (run === null || session === null) {

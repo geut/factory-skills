@@ -3654,3 +3654,19 @@ test('a selection is read as the submission reads it, so a pass is reused despit
   assert.equal(runs(), 1);
   await closeWhenIdle(db);
 });
+
+test('a submission while its requested validation runs waits for it and reuses it, never running beside it', async () => {
+  const { db, key, runs, runtime, service, token, work } =
+    await workWithCountedValidation('; sleep 1');
+  // The agent stops waiting and submits while the commands still run.
+  const pending = service.commands.requestWorkValidation(key, token, defaultSelection);
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  const asked = await pending;
+  assert.ok(asked.kind === 'validated' && asked.evidence.passed && asked.attached);
+  await waitFor(() => launchesOf(runtime, 'review').length === 1);
+  // One run of the commands: the submission took the requested pass.
+  assert.equal(runs(), 1);
+  const [ticket] = ticketFacts(db, { now: new Date().toISOString() });
+  assert.equal(ticket?.workValidation.reused, 1);
+  await closeWhenIdle(db);
+});

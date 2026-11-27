@@ -2114,9 +2114,19 @@ export function reduce(input: {
     case 'work_validation_requested': {
       const run = snapshot.runs.find((item) => item.id === event.runId) ?? null;
       const session = run === null ? null : sessionFor(snapshot, run.sessionId);
-      // Kept only on the work run that still runs: a run that ended meanwhile
-      // submits what it was validated on at submission, not this.
-      if (run === null || session?.stage !== 'work' || run.status === 'terminal') {
+      // Kept on the work run while it runs, or while its submission's
+      // validation is still to come: that validation waits for this request
+      // and reuses it if nothing changed. A run already validated keeps what
+      // it was validated on.
+      const awaited =
+        run !== null &&
+        snapshot.actions.some(
+          (action) =>
+            action.kind === 'validate_run' &&
+            action.runId === run.id &&
+            (action.status === 'pending' || action.status === 'leased'),
+        );
+      if (run === null || session?.stage !== 'work' || (run.status === 'terminal' && !awaited)) {
         return reject(
           existing,
           'The work run that asked for this validation is no longer running.',

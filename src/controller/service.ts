@@ -310,6 +310,10 @@ export function createFactoryService(input: {
 }): FactoryService {
   const db = input.db ?? openStateDatabase(input.factoryRoot, { create: true });
   const runtime = input.runtime ?? createPiHerdrRuntime();
+  // The validation each run asked for that is still running: at most one per
+  // run, so two cannot race to attach their result, and the run's submission
+  // waits for it instead of running the commands beside it.
+  const requestedRuns = new Map<string, Promise<void>>();
   const clients: TrackerClients = {
     github: input.github ?? githubCliClient(),
     linear: input.linear ?? linearFromEnv(process.env),
@@ -584,6 +588,7 @@ export function createFactoryService(input: {
           log,
           notify,
           now,
+          requestedInFlight: (runId) => requestedRuns.get(runId) ?? null,
           runtime,
           serverUrl: input.serverUrl ?? null,
           stopped: () => stopped,
@@ -863,10 +868,6 @@ export function createFactoryService(input: {
     return committed(applied, snapshot.ticket.displayRef, 'invalid_state');
   }
 
-  // A requested validation runs at most once at a time per run, so two cannot
-  // race to attach their result to it.
-  const requestedRuns = new Set<string>();
-
   async function requestWorkValidation(
     key: string,
     token: string,
@@ -915,7 +916,8 @@ export function createFactoryService(input: {
         reason: 'invalid_state',
       };
     }
-    requestedRuns.add(run.id);
+    const settled = Promise.withResolvers<void>();
+    requestedRuns.set(run.id, settled.promise);
     try {
       const commands = execution.policy.validation.work.commands;
       const fingerprint = () =>
@@ -976,6 +978,7 @@ export function createFactoryService(input: {
       return { attached, evidence, kind: 'validated' };
     } finally {
       requestedRuns.delete(run.id);
+      settled.resolve();
     }
   }
 

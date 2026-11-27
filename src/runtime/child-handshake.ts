@@ -109,7 +109,7 @@ export const REPORT_DONE_DESCRIPTION =
   "Finish this factory stage: your report is this call's arguments, and the controller reads only them. Call it once, as your last tool call; the session ends after it. If the report is refused, fix the fields the error names and call it again. If a message still arrives, follow it. Do not call caller_ping after it.";
 
 export const RUN_VALIDATION_DESCRIPTION =
-  'Ask the controller to run the work validation commands on the worktree as it stands, and wait for their results; it takes as long as they do. Give the validation_selection your report will have. If they pass and you change nothing before calling subagent_done with the same validation_selection, the controller reuses this pass instead of running them again. Your own runs of the commands never count.';
+  "Get an early result from the controller's gate: it runs the work validation commands on the worktree as it stands, and this waits for their results, as long as they take. Use it only when you need that result before you submit; otherwise run focused tests yourself and submit, and the controller runs the gate. Give the validation_selection your report will have: if they pass and nothing changes before subagent_done with the same validation_selection, the controller reuses this pass.";
 
 // What a refused report tells the agent.
 export function refusal(problems: ReadonlyArray<string>): string {
