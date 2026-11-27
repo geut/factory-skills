@@ -234,6 +234,7 @@ export function run(
     paneName: `${owner.stage} ${snapshot.ticket.displayRef}`,
     parentRunId: input.parent?.id ?? null,
     purpose,
+    requestedValidation: null,
     resultContract: null,
     resultError: parsed?.kind === 'invalid' ? parsed.failures.join('\n') : null,
     resultHash: null,

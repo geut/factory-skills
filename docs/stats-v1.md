@@ -46,6 +46,8 @@ All times are in milliseconds.
 - **Follow-up commits:** pull request commits made after handoff.
 - **Tokens and cost:** the ticket's total usage. `tokens` is split into four categories: `tokensInput`, `tokensOutput`, `tokensCacheRead`, and `tokensCacheWrite`. They are disjoint: `tokensInput` excludes cached input, which is `tokensCacheRead`. `tokens` is the total Pi reports, not a sum the factory computes; Pi reports it as the sum of the four categories (every provider seen so far: Anthropic, OpenAI, Kimi), so the categories add up to `tokens` without double counting. Run rows in the export carry the same fields. A ticket or run with no recorded usage has `tokens: 0` and null categories, so "unknown" is not mistaken for "none".
 
+- **Work validation:** how the controller ran the work validation commands. **Submissions** are the work runs it validated; **reused** are those that reused a pass their run asked for (`run_validation`) on the same inputs instead of running the commands; **requested** counts those asks. **`ranMs`** is the time the commands ran, at submissions that ran them and at requests; **`reusedMs`** is the time the reused passes took when they ran, what reuse saved. Comparing `ranMs` per submission across windows or factory versions measures the change; every submission still has its validation, so reuse never lowers coverage.
+
 ## Stage measures (per stage and model setup)
 
 - **First-pass acceptance:** the share of initial runs, among those validated, whose output passed validation.

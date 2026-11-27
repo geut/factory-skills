@@ -504,7 +504,7 @@ test("Pi's own loader runs the handshake from a directory beside its report modu
   dirs.push(dir);
   const runtime = path.join(dir, 'runtime');
   mkdirSync(runtime);
-  for (const name of ['child-handshake.ts', 'work-report.ts']) {
+  for (const name of ['child-handshake.ts', 'ticket-access.ts', 'work-report.ts']) {
     copyFileSync(new URL(`./${name}`, import.meta.url), path.join(runtime, name));
   }
   const saved = process.env['FACTORY_REPORT'];

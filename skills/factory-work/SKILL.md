@@ -39,7 +39,7 @@ Tests should exercise public behavior, not mirror implementation. For a behavior
 
 An end-to-end test proves a criterion from outside the code: through a browser, an HTTP API (a request through the framework's test client), a job, or a CLI. The prompt says whether QA runs for this task. When it does, QA owns the end-to-end tests for the task's acceptance criteria: write unit tests (and component tests and stories where the project has them), keep the existing end-to-end suite passing, and leave every from-the-outside test of the task's criteria, API requests included, to QA. When QA does not run, add or update end-to-end coverage for the task's user stories when the project has a viable harness; if automation is unavailable or disproportionately expensive, record the reason and a concrete human verification path in the task.
 
-Run focused checks while working, then the relevant broader suite once. Do not spend budget repeatedly running an unchanged full suite.
+While iterating, follow the project's testing instructions and run focused tests directly from the ticket worktree. Do not invoke the configured validation script directly. Use `run_validation` only when you need an early result from the controller's gate (see [references/output.md](references/output.md)). Otherwise, submit the usual `subagent_done(report)`: record what you ran in `tests` and nominate relevant repository-relative test files with reasons in `validation_selection`. The controller owns the submission gate.
 
 ## Finish the work stage
 

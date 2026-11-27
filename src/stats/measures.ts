@@ -93,6 +93,13 @@ export function summarize(facts: Array<TicketFacts>) {
     outcomes,
     started: facts.length,
     tokens: facts.reduce((sum, item) => sum + item.tokens, 0),
+    workValidation: {
+      ranMs: facts.reduce((sum, item) => sum + item.workValidation.ranMs, 0),
+      requested: facts.reduce((sum, item) => sum + item.workValidation.requested, 0),
+      reused: facts.reduce((sum, item) => sum + item.workValidation.reused, 0),
+      reusedMs: facts.reduce((sum, item) => sum + item.workValidation.reusedMs, 0),
+      submissions: facts.reduce((sum, item) => sum + item.workValidation.submissions, 0),
+    },
   };
 }
 

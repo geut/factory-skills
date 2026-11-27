@@ -15,6 +15,7 @@ import { afterEach, test } from 'node:test';
 import { initRepo } from '../../tests/git-repo.ts';
 import { parseFactoryCommand } from '../controller/parse.ts';
 import { FakeRuntime, sampleUsage } from '../runtime/fake.ts';
+import { postJson, validationSummary } from '../runtime/ticket-access.ts';
 import { type RunningServer, serve } from '../server/serve.ts';
 import { CONTEXT_SECTIONS } from '../stages/plan/context.ts';
 import { openStateDatabase } from '../state/database.ts';
@@ -381,5 +382,105 @@ test('retry --rebased, and its dry run, go through the server from Pi and recove
   await client.command(parseFactoryCommand('retry proj-123 --rebased'));
   await waitFor('ready for handoff', () => /ready_for_handoff/.test(client.status('proj-123')));
   assert.doesNotMatch(client.status('proj-123'), /Should I list 40 files/);
+  client.close();
+});
+
+test('an agent starts without a ticket token when the server cannot make one', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  // The secret's path is taken, so it can be neither read nor written.
+  mkdirSync(path.join(factoryRoot, 'runtime', 'ticket-token.key'), { recursive: true });
+  const runtime = new FakeRuntime();
+  await serverFor(codeRoot, pi, runtime);
+  const client = createFactoryClient({ factoryRoot });
+  await client.command(parseFactoryCommand('start proj-123.md'));
+  for (let tries = 0; tries < 200 && runtime.launches.length === 0; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const plan = runtime.launches[0];
+  assert.ok(plan !== undefined);
+  assert.equal(plan.ticketAccess, null);
+  client.close();
+});
+
+test('a work agent asks the server to validate with its ticket’s token, and its submission reuses the pass', async () => {
+  const { codeRoot, factoryRoot, pi } = repository();
+  const counter = path.join(codeRoot, 'runs.txt');
+  writeFileSync(
+    path.join(factoryRoot, 'FACTORY.json'),
+    JSON.stringify({
+      models: { review: 'review-model', work: 'work-model' },
+      validation: {
+        work: {
+          commands: [
+            { argv: ['sh', '-c', `echo run >> ${JSON.stringify(counter)}`], name: 'tests' },
+          ],
+        },
+      },
+    }),
+  );
+  run(codeRoot, ['add', '-A']);
+  run(codeRoot, ['commit', '-qm', 'config']);
+  const runtime = new FakeRuntime();
+  await serverFor(codeRoot, pi, runtime);
+  const client = createFactoryClient({ factoryRoot });
+  await client.command(parseFactoryCommand('start proj-123.md'));
+  for (let tries = 0; tries < 200 && runtime.launches.length === 0; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const [ticketName] = readdirSync(path.join(factoryRoot, 'tickets'));
+  const ticketDir = path.join(factoryRoot, 'tickets', ticketName ?? '');
+  writeFileSync(
+    path.join(factoryRoot, 'CONTEXT.md'),
+    CONTEXT_SECTIONS.map((section) => `## ${section}\nnone known yet\n`).join('\n'),
+  );
+  writeFileSync(path.join(ticketDir, 'plan.md'), '# Remember the filter\n\n## Outcome\nKept.\n');
+  writeFileSync(
+    path.join(ticketDir, '01-task-store-filter.md'),
+    '---\ntype: feature\nqa: e2e\nblocked_by: []\n---\n\n# Store the filter\n\n## Acceptance criteria\n- [ ] The filter survives a reload.\n',
+  );
+  const plan = runtime.launches[0];
+  if (plan === undefined) {
+    throw new Error('missing plan run');
+  }
+  runtime.emit(plan.runId, { kind: 'subagent_done', output: 'files', usage: sampleUsage() });
+  const working = () => runtime.launches.find((item) => item.stage === 'work');
+  for (let tries = 0; tries < 300 && working() === undefined; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const work = working();
+  if (work === undefined) {
+    throw new Error('missing work run');
+  }
+  // The launch hands the agent the server's address, its ticket's key, and token.
+  const access = work.ticketAccess;
+  assert.ok(access !== null && access.url.startsWith('http://'));
+  writeFileSync(path.join(work.cwd, 'change.txt'), 'changed\n');
+  for (let tries = 0; tries < 200 && !/Launched/.test(client.status('proj-123')); tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const route = `/v1/tickets/${encodeURIComponent(access.key)}/work-validations`;
+  // Another token, a client's or a guess, is refused.
+  const refused = await postJson({ access: { ...access, token: 'f'.repeat(64) }, body: {}, route });
+  assert.equal(refused.status, 401);
+  // As the handshake's run_validation asks.
+  const asked = await postJson({
+    access,
+    body: { validation_selection: { mode: 'default', reason: 'none' } },
+    route,
+  });
+  assert.equal(asked.status, 200);
+  assert.match(validationSummary(asked.payload), /^Validation passed\. If you change nothing more/);
+  assert.equal(readFileSync(counter, 'utf8'), 'run\n');
+  runtime.emit(work.runId, { kind: 'subagent_done', output: 'stored it', usage: sampleUsage() });
+  for (
+    let tries = 0;
+    tries < 300 && !runtime.launches.some((item) => item.stage === 'review');
+    tries += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(runtime.launches.some((item) => item.stage === 'review'));
+  // The submission reused the pass: the command ran once.
+  assert.equal(readFileSync(counter, 'utf8'), 'run\n');
   client.close();
 });

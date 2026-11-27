@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { factoryIdentity } from '../controller/facts.ts';
 import { keyOfFactoryDir } from '../controller/keys.ts';
+import { REQUESTED_VALIDATION_RECORD } from '../controller/store.ts';
 import type { RunPurpose, StageName } from '../domain.ts';
 
 // Fact rows for factory stats, `stats.v1`, computed on every read from the raw
@@ -86,7 +87,62 @@ export type TicketFacts = {
   startToHandoffMs: number | null;
   tokens: number;
   waitingMs: number;
+  workValidation: WorkValidationFacts;
 } & TokenCategories;
+
+// How the controller ran the work validation commands for a ticket: at each
+// submission, unless a pass the worker asked for was reused, and whenever a
+// worker asked. Times are the commands' own.
+export type WorkValidationFacts = {
+  // Command time the controller spent: submissions that ran them, and requests.
+  ranMs: number;
+  // Validations the work runs asked for while they iterated.
+  requested: number;
+  // Submissions that reused a requested pass instead of running the commands.
+  reused: number;
+  // Command time the reused passes took when they ran: what reuse saved.
+  reusedMs: number;
+  // Work submissions the controller validated.
+  submissions: number;
+};
+
+const REUSED_CHECK = "coalesce(json_extract(c.details_json, '$.details'), '') LIKE 'reused:%'";
+
+function workValidationFacts(db: DatabaseSync, execution: string): WorkValidationFacts {
+  const runs = `FROM validation_runs AS v
+       JOIN agent_runs AS r ON r.id = v.run_id
+       JOIN agent_sessions AS s ON s.id = r.session_id`;
+  const finishedWork = `v.execution_id = ? AND s.stage = 'work' AND v.status IN ('passed', 'failed', 'error')`;
+  const submissions = db
+    .prepare(`SELECT count(*) AS n ${runs} WHERE ${finishedWork}`)
+    .get(execution);
+  const checks = db
+    .prepare(
+      `SELECT
+         coalesce(sum(CASE WHEN ${REUSED_CHECK} THEN 0 ELSE coalesce(c.duration_ms, 0) END), 0) AS ran,
+         coalesce(sum(CASE WHEN ${REUSED_CHECK} THEN coalesce(c.duration_ms, 0) ELSE 0 END), 0) AS reused_ms,
+         count(DISTINCT CASE WHEN ${REUSED_CHECK} THEN v.id END) AS reused
+       ${runs}
+       JOIN validation_checks AS c ON c.validation_id = v.id
+       WHERE ${finishedWork} AND c.kind = 'command'`,
+    )
+    .get(execution);
+  const requested = db
+    .prepare(
+      `SELECT count(*) AS n,
+         coalesce(sum((SELECT sum(coalesce(json_extract(j.value, '$.durationMs'), 0))
+                       FROM json_each(e.payload_json, '$.evidence.checks') AS j)), 0) AS ms
+       FROM events AS e WHERE e.execution_id = ? AND e.kind = ?`,
+    )
+    .get(execution, REQUESTED_VALIDATION_RECORD);
+  return {
+    ranMs: Number(checks?.['ran'] ?? 0) + Number(requested?.['ms'] ?? 0),
+    requested: Number(requested?.['n'] ?? 0),
+    reused: Number(checks?.['reused'] ?? 0),
+    reusedMs: Number(checks?.['reused_ms'] ?? 0),
+    submissions: Number(submissions?.['n'] ?? 0),
+  };
+}
 
 type Interval = {
   endedAt: string | null;
@@ -370,6 +426,7 @@ export function ticketFacts(
       tokens: Number(row['tokens_total'] ?? 0),
       ...tokenCategories(row),
       waitingMs,
+      workValidation: workValidationFacts(db, execution),
     };
   });
 }

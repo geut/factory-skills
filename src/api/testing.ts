@@ -11,6 +11,7 @@ export const unusedCommands: FactoryCommands = {
   feedback: unused,
   pendingFeedback: unused,
   reply: unused,
+  requestWorkValidation: unused,
   rerun: unused,
   retry: unused,
   retryRebased: unused,

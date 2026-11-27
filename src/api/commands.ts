@@ -267,6 +267,95 @@ export const PendingFeedback = z
   })
   .meta({ id: 'PendingFeedback' });
 
+export const RequestedValidationResult = z
+  .object({
+    attached: z.boolean().meta({
+      description:
+        'Whether the result was kept on the run for its submission: false when the run ended while the commands ran.',
+    }),
+    checks: z.array(
+      z.object({
+        command: z.string().nullable().optional(),
+        details: z.string(),
+        durationMs: z.number().nullable().optional(),
+        exitCode: z.number().nullable().optional(),
+        kind: z.string(),
+        name: z.string(),
+        outputExcerpt: z.string().nullable().optional(),
+        status: z.enum(['passed', 'failed', 'error']),
+      }),
+    ),
+    fingerprint: z.string(),
+    finishedAt: z.string(),
+    passed: z.boolean(),
+    reusable: z.boolean().meta({
+      description:
+        'False when the inputs changed while the commands ran, by a formatter or an edit: the submission then runs them again.',
+    }),
+    startedAt: z.string(),
+  })
+  .meta({ id: 'RequestedValidationResult' });
+
+const requestWorkValidation = defineRoute({
+  handler: async ({ body, context, headers, params }) => {
+    const token = /^Bearer\s+(\S+)$/i.exec(headers.authorization ?? '')?.[1] ?? '';
+    if (token.length === 0) {
+      throw new ProblemError('unauthorized', 'Send Authorization: Bearer <the ticket token>.');
+    }
+    const given = body?.validation_selection;
+    const selection =
+      given?.mode === 'focused'
+        ? { mode: 'focused' as const, tests: given.tests ?? [] }
+        : { mode: 'default' as const, reason: given?.reason ?? 'none given' };
+    const outcome = await context.commands.requestWorkValidation(params.key, token, selection);
+    if (outcome.kind === 'refused') {
+      throw new ProblemError(
+        outcome.reason === 'invalid_state'
+          ? 'invalid_state'
+          : outcome.reason === 'unauthorized'
+            ? 'unauthorized'
+            : 'ticket_not_found',
+        outcome.message,
+      );
+    }
+    return {
+      body: { ...outcome.evidence, attached: outcome.attached },
+      status: 200,
+    };
+  },
+  method: 'POST',
+  operationId: 'requestWorkValidation',
+  path: '/v1/tickets/{key}/work-validations',
+  request: {
+    body: z
+      .object({
+        validation_selection: z
+          .object({
+            mode: z.enum(['focused', 'default']),
+            reason: z.string().optional(),
+            tests: z.array(z.object({ path: z.string(), reason: z.string() })).optional(),
+          })
+          .optional(),
+      })
+      .optional()
+      .meta({ id: 'RequestWorkValidation' }),
+    headers: z.object({
+      authorization: z.string().optional().meta({
+        description:
+          "`Bearer` and the ticket's token, FACTORY_TICKET_TOKEN in its agents' environment. A client token does not work here.",
+      }),
+    }),
+    params: TicketParams,
+  },
+  responses: {
+    200: { description: 'The commands ran; their checks.', schema: RequestedValidationResult },
+  },
+  scope: null,
+  summary:
+    "Run the work validation commands for the ticket's running work run, when its agent asks; the run's submission reuses a pass while nothing it depends on changed",
+  tags: ['commands'],
+});
+
 export const RebasedRetryPreview = z
   .object({
     preview: z.string().meta({
@@ -356,6 +445,7 @@ export const commandRoutes = [
   replyToTicket,
   retryTicket,
   previewRebasedRetry,
+  requestWorkValidation,
   completeTicket,
   cancelTicket,
   startFeedbackRound,

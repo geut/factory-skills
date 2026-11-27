@@ -15,6 +15,7 @@ import {
   loadSnapshotByRun,
   passedChecks,
   recordStrayProcess,
+  ticketKeyOf,
   ticketTab,
 } from '../controller/store.ts';
 import { usageTable } from '../controller/usage.ts';
@@ -41,6 +42,7 @@ import { readPlanLinks, type PlanLinks } from '../stages/plan/links.ts';
 import { roundBase, syncWorktreeRefs } from '../validation/bases.ts';
 import { recordValidation } from '../validation/record.ts';
 import { errorReport } from '../validation/report.ts';
+import { ticketToken, ticketTokenSecret } from '../validation/ticket-token.ts';
 import type { PullRequestLookup } from '../validation/wrapup.ts';
 import { applyActionEvent } from './apply.ts';
 import { archiveStamp } from './leftovers.ts';
@@ -135,7 +137,11 @@ export async function dispatchPending(input: {
   log: (line: string) => void;
   notify: (message: string) => void;
   now: () => string;
+  // A validation the run asked for that is still running, or null.
+  requestedInFlight: (runId: RunId) => Promise<void> | null;
   runtime: FactorySubagentRuntime;
+  // Where the server answers agents asking with their ticket's token.
+  serverUrl: string | null;
   // True once the host is shutting down: leave the remaining actions pending.
   stopped: () => boolean;
   // The tracker for tracker updates, or null when FACTORY.json has none.
@@ -196,7 +202,9 @@ async function perform(
     log: (line: string) => void;
     notify: (message: string) => void;
     now: () => string;
+    requestedInFlight: (runId: RunId) => Promise<void> | null;
     runtime: FactorySubagentRuntime;
+    serverUrl: string | null;
     stopped: () => boolean;
     tracker: () => ConfiguredTracker | null;
     updatePullRequest: (url: string, change: PullRequestChange) => Promise<void>;
@@ -315,6 +323,27 @@ function launchProjectConfig(
   };
 }
 
+function launchTicketAccess(
+  input: { factoryRoot: string; notify: (message: string) => void; serverUrl: string | null },
+  snapshot: FactorySnapshot,
+): LaunchSpec['ticketAccess'] {
+  if (input.serverUrl === null) {
+    return null;
+  }
+  try {
+    return {
+      key: ticketKeyOf(snapshot),
+      token: ticketToken(ticketTokenSecret(input.factoryRoot), snapshot.execution.id),
+      url: input.serverUrl,
+    };
+  } catch (error: unknown) {
+    input.notify(
+      `${snapshot.ticket.displayRef}: the agent starts without a ticket token: ${messageOf(error)}`,
+    );
+    return null;
+  }
+}
+
 async function launch(
   input: {
     db: DatabaseSync;
@@ -323,6 +352,7 @@ async function launch(
     notify: (message: string) => void;
     now: () => string;
     runtime: FactorySubagentRuntime;
+    serverUrl: string | null;
   },
   action: Extract<ActionRecord, { kind: 'launch_run' | 'resume_run' }>,
   snapshot: FactorySnapshot,
@@ -384,6 +414,10 @@ async function launch(
     );
     return null;
   }
+  // Every agent of the ticket can ask the server for controller work with its
+  // ticket's token; each route checks what the ticket is doing. The agent can
+  // do without it, so a token that cannot be made is only reported.
+  const ticketAccess = launchTicketAccess(input, snapshot);
   const spec: LaunchSpec = {
     cwd: action.cwd,
     mode,
@@ -406,6 +440,7 @@ async function launch(
     tab: ticketTab(snapshot),
     taskLabel: taskLabel(snapshot, session),
     thinking: session.thinking,
+    ticketAccess,
     tools: stageTools(session.stage),
   };
   try {
@@ -646,10 +681,24 @@ async function runValidation(
     findPullRequest: PullRequestLookup;
     ids: IdSource;
     now: () => string;
+    requestedInFlight: (runId: RunId) => Promise<void> | null;
   },
   action: Extract<ActionRecord, { kind: 'validate_run' }>,
-  snapshot: FactorySnapshot,
+  given: FactorySnapshot,
 ): Promise<RunId | null> {
+  // A validation the run asked for that is still running, as when its agent
+  // gave up waiting and submitted: wait for it rather than run the same
+  // commands beside it in the worktree, then validate with its result.
+  const inFlight = input.requestedInFlight(action.runId);
+  let snapshot = given;
+  if (inFlight !== null) {
+    const extend = effects.work.validator.leaseMs?.(given);
+    if (extend !== undefined) {
+      extendActionLease(input.db, action.id, input.now(), extend);
+    }
+    await inFlight;
+    snapshot = loadSnapshotByRun(input.db, action.runId) ?? given;
+  }
   const run = snapshot.runs.find((item) => item.id === action.runId) ?? null;
   const session = run === null ? null : sessionForRun(snapshot, run);
   if (run === null || session === null) {

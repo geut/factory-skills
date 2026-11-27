@@ -38,4 +38,8 @@ Required: `status`, `summary`, `validation_selection`.
 
 `subagent_done` checks the report before it ends the run: the required fields, that each selected test is a file in the worktree, and in a feedback round that every item is answered once. A refused report comes back as a tool error naming the fields; fix them and call it again. A turn that ends without the call is asked for it. No project checks run until a report is accepted. Leave the work uncommitted.
 
+## An early result from the gate
+
+`run_validation` is opt-in: use it only when you need an early result from the controller's gate before you submit. It runs `validation.work.commands` on the worktree as it stands, with the `validation_selection` you give it, and waits for their results. While iterating, run focused tests yourself instead, and never invoke the configured validation script directly. Give it the selection your report will have. If they pass and nothing changes before you call `subagent_done` with the same selection (no edit, no new or deleted file, no change to the factory root's `scripts/`, no move of the target branch), the controller reuses that pass instead of running the commands again; otherwise it runs the normal gate. If you submit while it still runs, the controller waits for it. Your own runs of the commands, and what your report says about them, never count as validation.
+
 `caller_ping` is the only other terminal call, and it replaces the report when you need a decision.

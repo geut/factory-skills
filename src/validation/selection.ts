@@ -4,7 +4,9 @@ import {
   MAX_REASON,
   MAX_TESTS,
   repositoryPath,
+  selectionSection,
   type SelectedTest,
+  type WorkReport,
 } from '../runtime/work-report.ts';
 import { runOutput } from '../stages/output.ts';
 
@@ -115,6 +117,13 @@ export function parseSelection(output: string): ParsedSelection {
     );
   }
   return problems.length === 0 ? { kind: 'listed', tests } : { kind: 'invalid', problems };
+}
+
+// A selection given as a report's arguments, as work validation reads it at
+// submission: rendered into the report's section and parsed back, so a
+// validation asked for with it gets the very tests the submission would.
+export function submittedSelection(selection: WorkReport['selection']): ParsedSelection {
+  return parseSelection(`## ${SELECTION_HEADING}\n${selectionSection(selection)}\n`);
 }
 
 // What `tests` names that the worktree does not have as a file, by the rule

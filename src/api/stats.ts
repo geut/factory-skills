@@ -57,6 +57,25 @@ const Interventions = z
   })
   .meta({ id: 'Interventions' });
 
+const WorkValidation = z
+  .object({
+    ranMs: z.number().meta({
+      description:
+        'Time the work validation commands ran for: at submissions that ran them, and at requests.',
+    }),
+    requested: z
+      .int()
+      .meta({ description: 'Validations work runs asked for while they iterated.' }),
+    reused: z.int().meta({
+      description: 'Submissions that reused a requested pass instead of running the commands.',
+    }),
+    reusedMs: z.number().meta({
+      description: 'Time the reused passes took when they ran: what reuse saved.',
+    }),
+    submissions: z.int().meta({ description: 'Work submissions the controller validated.' }),
+  })
+  .meta({ id: 'WorkValidationStats' });
+
 const Summary = z
   .object({
     ...Envelope,
@@ -97,6 +116,7 @@ const Summary = z
     }),
     started: z.int(),
     tokens: z.int(),
+    workValidation: WorkValidation,
   })
   .meta({ id: 'StatsSummary' });
 
@@ -169,6 +189,7 @@ const TicketRow = z
     tokens: z.int(),
     ...tokenCategoryFields,
     waitingMs: z.number(),
+    workValidation: WorkValidation,
   })
   .meta({ id: 'StatsTicketRow' });
 

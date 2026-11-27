@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -142,6 +142,7 @@ test('herdr launch opens the factory plugin argv pane', () => {
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
     thinking: 'medium',
+    ticketAccess: null,
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
@@ -178,10 +179,17 @@ test('herdr launch opens the factory plugin argv pane', () => {
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
     thinking: 'medium',
+    ticketAccess: { key: 'proj-123', token: 'secret-token', url: 'http://127.0.0.1:7731' },
     tools: 'read,bash,grep,find,ls,caller_ping,subagent_done',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
   assert.match(work, /\nexport FACTORY_REPORT=work\nexport FACTORY_FEEDBACK_ITEMS='F1,F2'\n/);
+  // The agent can ask the server for controller work with its ticket's token.
+  assert.match(
+    work,
+    /\nexport FACTORY_SERVER_URL='http:\/\/127\.0\.0\.1:7731'\nexport FACTORY_TICKET_KEY='proj-123'\nexport FACTORY_TICKET_TOKEN='secret-token'\n/,
+  );
+  assert.doesNotMatch(script, /FACTORY_TICKET_TOKEN/);
   assert.doesNotMatch(work, /FACTORY_REPLY_REQUIRED/);
   assert.deepEqual(herdrRenameArgs('pane-1', '🔎 owner/repo#3'), [
     'pane',
@@ -235,6 +243,7 @@ test("an agent's shell gets the server's PATH and BASH_ENV verbatim", () => {
       sessionFile,
       skillsPath: '/pkg/skills',
       thinking: 'medium',
+      ticketAccess: null,
       tools: 'read,bash',
       worktree: directory,
     }),
@@ -612,6 +621,7 @@ test('resume prompts a live pane and replaces a dead one', async () => {
     stage: 'work' as const,
     taskLabel: 'Fix lint · 2 left',
     thinking: 'medium',
+    ticketAccess: null,
     tools: 'read,bash',
   };
   const reused = await runtime.resume(spec);
@@ -921,6 +931,7 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
     tab: { key: `${ticket}-key`, label: ticket },
     taskLabel: null,
     thinking: 'medium',
+    ticketAccess: null,
     tools: 'read',
   });
   // What happened to panes, in order: `split <target>` and `close <pane>`.
@@ -957,8 +968,13 @@ test('each agent opens in its own pane in the ticket tab, and the tab outlives e
   // A resume opens its pane before closing the finished one, so the tab stays.
   paneTabs.delete('p1');
   paneTabs.delete('p2');
+  // A resumed session's script, left readable by an earlier launch, is not.
+  writeFileSync(path.join(directory, 'r5.jsonl.sh'), '', { mode: 0o755 });
   await restarted.resume({ ...spec('repo#1', 'r5', 'p4'), mode: 'resume' });
   assert.deepEqual(layout(), ['split p2', 'split p4', 'close p4']);
+  // Launch scripts carry the ticket's token, so only their owner reads them.
+  assert.equal(statSync(path.join(directory, 'r4.jsonl.sh')).mode & 0o777, 0o700);
+  assert.equal(statSync(path.join(directory, 'r5.jsonl.sh')).mode & 0o777, 0o700);
 
   // A tab whose panes are all gone is made again.
   paneTabs.delete('p3');
@@ -1033,6 +1049,7 @@ test('a tab that cannot be made falls back to the server pane', async () => {
     tab: { key: 'k', label: 'repo#1' },
     taskLabel: null,
     thinking: 'medium',
+    ticketAccess: null,
     tools: 'read',
   });
   const plugin = calls.find((args) => args[0] === 'plugin') ?? [];
@@ -1083,6 +1100,7 @@ test('a pane that fails to open closes the tab made for it', async () => {
       tab: { key: 'k', label: 'repo#1' },
       taskLabel: null,
       thinking: 'medium',
+      ticketAccess: null,
       tools: 'read',
     });
 
@@ -1116,6 +1134,7 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
     thinking: 'high',
+    ticketAccess: null,
     tools: 'read,grep,find,ls',
     worktree: '/repo/.factory/worktrees/proj-1',
   });
@@ -1144,6 +1163,7 @@ test('a reviewer launch runs untrusted, with its skill by path and the prompts i
     sessionFile: '/tmp/session.jsonl',
     skillsPath: '/pkg/skills',
     thinking: 'high',
+    ticketAccess: null,
     tools: 'read,grep,find,ls',
     worktree: '/repo/.factory/worktrees/proj-1',
   });

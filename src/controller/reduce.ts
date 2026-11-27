@@ -167,6 +167,7 @@ function addRun(
     paneName: null,
     parentRunId: parent?.id ?? null,
     purpose,
+    requestedValidation: null,
     resultContract: null,
     resultError: null,
     resultHash: null,
@@ -2109,6 +2110,33 @@ export function reduce(input: {
       });
       snapshot.execution.status = 'resuming';
       return finish(snapshot, 'Reply stored. Resuming the session.');
+    }
+    case 'work_validation_requested': {
+      const run = snapshot.runs.find((item) => item.id === event.runId) ?? null;
+      const session = run === null ? null : sessionFor(snapshot, run.sessionId);
+      // Kept on the work run while it runs, or while its submission's
+      // validation is still to come: that validation waits for this request
+      // and reuses it if nothing changed. A run already validated keeps what
+      // it was validated on.
+      const awaited =
+        run !== null &&
+        snapshot.actions.some(
+          (action) =>
+            action.kind === 'validate_run' &&
+            action.runId === run.id &&
+            (action.status === 'pending' || action.status === 'leased'),
+        );
+      if (run === null || session?.stage !== 'work' || (run.status === 'terminal' && !awaited)) {
+        return reject(
+          existing,
+          'The work run that asked for this validation is no longer running.',
+        );
+      }
+      run.requestedValidation = event.evidence;
+      return finish(
+        snapshot,
+        `Recorded a requested validation: ${event.evidence.passed ? 'passed' : 'failed'}${event.evidence.reusable ? '' : ', not reusable'}.`,
+      );
     }
     case 'retry_rebased': {
       if (event.ticketId !== snapshot.ticket.id) {

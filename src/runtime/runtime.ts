@@ -50,6 +50,9 @@ export type LaunchSpec = {
   tab?: TicketTab | null;
   taskLabel: string | null;
   thinking: string;
+  // Where the server answers the ticket's agents, and the ticket's token for
+  // it; null without a server address, as in tests.
+  ticketAccess: { key: string; token: string; url: string } | null;
   tools: string;
 };
 

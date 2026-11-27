@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listProcesses } from '../actions/strays.ts';
@@ -11,6 +11,7 @@ import {
   type UsageTotals,
 } from '../domain.ts';
 import { shellQuote } from '../shell.ts';
+import { SERVER_URL_ENV, TICKET_KEY_ENV, TICKET_TOKEN_ENV } from '../validation/ticket-token.ts';
 import { connectHerdrEvents, type PaneExitSource } from './herdr-events.ts';
 import { HERDR_PLUGIN_ENTRYPOINT, HERDR_PLUGIN_ID, LAUNCH_SCRIPT_ENV } from './herdr-plugin.ts';
 import { runStatusLabel } from './policy.ts';
@@ -323,6 +324,14 @@ function reportLines(report: LaunchReport | null): string {
   return `export FACTORY_REPORT=${WORK_REPORT}\nexport FACTORY_FEEDBACK_ITEMS=${shellQuote(report.feedbackItems.join(','))}\n`;
 }
 
+// The server's address and the ticket's token, for the agent to ask the
+// server for controller work.
+function ticketAccessLines(access: { key: string; token: string; url: string } | null): string {
+  return access === null
+    ? ''
+    : `export ${SERVER_URL_ENV}=${shellQuote(access.url)}\nexport ${TICKET_KEY_ENV}=${shellQuote(access.key)}\nexport ${TICKET_TOKEN_ENV}=${shellQuote(access.token)}\n`;
+}
+
 export function renderLaunchScript(input: {
   env: ForwardedEnv;
   handshakePath: string;
@@ -340,6 +349,7 @@ export function renderLaunchScript(input: {
   // The factory's skills directory, where a `base` stage's skill is.
   skillsPath: string;
   thinking: string;
+  ticketAccess: { key: string; token: string; url: string } | null;
   tools: string;
   // The agent's cwd. Exported as FACTORY_WORKTREE, with FACTORY_RUN_ID, it marks
   // every process the agent starts, even after its pane is gone, so the stray
@@ -355,7 +365,7 @@ export PI_SUBAGENT_AUTO_EXIT=1
 export FACTORY_CHILD=1
 export FACTORY_WORKTREE=${shellQuote(input.worktree)}
 export FACTORY_RUN_ID=${runId}
-${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${reportLines(input.report)}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
+${ticketAccessLines(input.ticketAccess)}${input.replyRequired ? 'export FACTORY_REPLY_REQUIRED=1\n' : ''}${reportLines(input.report)}${shellQuote(input.piBin)} --session ${session} -e ${shellQuote(input.handshakePath)} --model ${shellQuote(input.model)} --thinking ${shellQuote(input.thinking)} --tools ${shellQuote(input.tools)}${projectConfigArgs(input.projectConfig, input.skillsPath)} ${shellQuote(`@${input.promptFile}`)}
 code=$?
 printf "%s %s\\n" "$code" ${runId} > ${session}.exitcode
 exit "$code"
@@ -963,11 +973,15 @@ export function createPiHerdrRuntime(options?: {
         sessionFile: spec.sessionFile,
         skillsPath,
         thinking: spec.thinking,
+        ticketAccess: spec.ticketAccess,
         tools: spec.tools,
         worktree: spec.cwd,
       }),
-      { mode: 0o755 },
+      // The script carries the ticket's token: only its owner reads it, and a
+      // resumed session's earlier script is narrowed too.
+      { mode: 0o700 },
     );
+    chmodSync(scriptFile, 0o700);
     const paneId = await openIn(spec.tab, spec.cwd, scriptFile);
     const renamed = await run(herdrRenameArgs(paneId, spec.paneName));
     if (renamed.code !== 0) {

@@ -73,7 +73,8 @@ writeFileSync(
         [PI_EXTENSION_ASSET]: piExtension,
         'schema.sql': path.join(root, 'src', 'state', 'schema.sql'),
         [SKILLS_MANIFEST_ASSET]: skillsManifest,
-        // The handshake imports it from beside itself.
+        // The handshake imports these from beside itself.
+        'ticket-access.ts': path.join(root, 'src', 'runtime', 'ticket-access.ts'),
         'work-report.ts': path.join(root, 'src', 'runtime', 'work-report.ts'),
         ...Object.fromEntries(
           carriedSkills.map((file) => [skillAssetKey(file), path.join(root, 'skills', file)]),

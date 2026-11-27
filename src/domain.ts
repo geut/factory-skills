@@ -10,7 +10,7 @@ import type { Criterion } from './stages/qa/criteria.ts';
 import type { IssueBox, IssueChecklist } from './stages/wrapup/checklist.ts';
 import type { PrFormatInUse } from './stages/wrapup/pr-format.ts';
 import type { TitleTemplate } from './stages/wrapup/title.ts';
-import type { ValidationReport } from './validation/report.ts';
+import type { ValidationCheck, ValidationReport } from './validation/report.ts';
 
 export type TicketId = string & { readonly __brand: 'TicketId' };
 export type ExecutionId = string & { readonly __brand: 'ExecutionId' };
@@ -453,7 +453,22 @@ export type ControllerEvent =
       runId: RunId;
       ticketId: TicketId;
     }
+  // A work run's requested validation finished: kept on the run for its
+  // submission, if the run still runs.
+  | { evidence: RequestedValidation; kind: 'work_validation_requested'; runId: RunId }
   | { kind: 'reconciled'; observation: ReconcileObservation; runId: RunId };
+
+// A validation a work run asked the controller for while it iterated: the
+// commands' checks, and the fingerprint of what they depended on, before and
+// after them. It is reusable only when nothing changed while they ran.
+export type RequestedValidation = {
+  checks: Array<ValidationCheck>;
+  fingerprint: string;
+  finishedAt: string;
+  passed: boolean;
+  reusable: boolean;
+  startedAt: string;
+};
 
 // What carrying a wrap-up pass over to a rebased branch changed.
 export type CarriedRecord = {
@@ -630,6 +645,9 @@ export type RunRecord = {
   paneName: string | null;
   parentRunId: RunId | null;
   purpose: RunPurpose;
+  // A work run's latest validation it asked the controller for while it
+  // iterated: its submission reuses it when nothing it depends on changed.
+  requestedValidation: RequestedValidation | null;
   resultContract: string | null;
   resultError: string | null;
   resultHash: string | null;
